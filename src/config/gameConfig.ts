@@ -21,20 +21,36 @@ export const GAME = {
   BG_COLOR: '#0b1020',
 } as const;
 
-/** 스테이지(맵) 규격 — 플랫폼 하나짜리 심플 맵 */
+/**
+ * 스테이지(맵) 규격.
+ *
+ * 4인 난투에서는 지면 하나만 두면 전원이 한 줄에 뭉쳐 밀치기 싸움이 된다.
+ * 공중 발판을 둬 도망·기습·낙하 공격 같은 선택지를 만든다.
+ */
 export const STAGE = {
   /** 지면 윗면 Y좌표 */
   GROUND_Y: 590,
   /** 지면 두께 */
   GROUND_H: 40,
   /** 지면 좌측 끝 */
-  LEFT: 150,
+  LEFT: 110,
   /** 지면 우측 끝 */
-  RIGHT: 1130,
+  RIGHT: 1170,
   /** 이 Y좌표 아래로 떨어지면 장외 → 즉시 상장폐지 */
   BLAST_BOTTOM: 900,
   /** 좌우 장외 여유 */
   BLAST_MARGIN: 260,
+
+  /**
+   * 공중 발판. 아래에서 점프해 통과할 수 있고 위에서만 착지한다.
+   */
+  PLATFORMS: [
+    { x: 300, y: 430, w: 230 },
+    { x: 980, y: 430, w: 230 },
+    { x: 640, y: 300, w: 210 },
+  ],
+  /** 공중 발판 두께 */
+  PLATFORM_H: 18,
 } as const;
 
 /** 렌더링 깊이(z-order) */
@@ -264,14 +280,20 @@ export const IMPACT = {
 /* AI 난이도                                                           */
 /* ------------------------------------------------------------------ */
 
-/** 명세 기준 난이도: 중간 */
+/**
+ * 명세 기준 난이도: 중간.
+ *
+ * 초기값(반응 220ms / 공격 후 대기 420ms)은 사람이 상대하기에 너무 빨라
+ * 플레이테스트에서 플레이어가 계속 먼저 상장폐지됐다.
+ * 사람이 거리를 재고 반응할 여유를 주는 값으로 낮췄다.
+ */
 export const AI_MEDIUM: AIDifficulty = {
   label: '중간',
-  decisionInterval: 180,
-  reactionDelay: 220,
-  evadeChance: 0.35,
-  heavyRatio: 0.35,
-  attackCooldown: 420,
+  decisionInterval: 220,
+  reactionDelay: 320,
+  evadeChance: 0.28,
+  heavyRatio: 0.3,
+  attackCooldown: 620,
 };
 
 /* ------------------------------------------------------------------ */

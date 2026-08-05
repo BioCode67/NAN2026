@@ -28,10 +28,16 @@ interface FighterHud {
   bar: Phaser.GameObjects.Rectangle;
   skillBar: Phaser.GameObjects.Rectangle;
   skillLabel: Phaser.GameObjects.Text;
+  itemIcon: Phaser.GameObjects.Text;
 }
 
-/** HUD 게이지 바 길이 */
-const HUD_BAR_W = 300;
+/** HUD 패널 규격 — 4명이 한 줄에 들어가야 한다 */
+const HUD_PANEL_W = 296;
+const HUD_PANEL_H = 78;
+const HUD_GAP = 16;
+const HUD_Y = 624;
+/** 주가 진행바 길이 */
+const HUD_BAR_W = 186;
 
 /**
  * 전투 씬 — 게임의 본체.
@@ -46,6 +52,7 @@ export class BattleScene extends Phaser.Scene {
   private battleData!: BattleSceneData;
 
   private ground!: Phaser.GameObjects.Rectangle;
+  private platforms: Phaser.GameObjects.Rectangle[] = [];
   private fighters: BaseCharacter[] = [];
   private player!: BaseCharacter;
   private ais: AISystem[] = [];
@@ -66,6 +73,8 @@ export class BattleScene extends Phaser.Scene {
   private battleActive = false;
   /** EventBus 구독 해제 함수들 */
   private disposers: Array<() => void> = [];
+  /** 상장폐지된 순서 — 등수 계산에 쓴다 */
+  private koOrder: string[] = [];
 
   constructor() {
     super({ key: 'Battle' });
@@ -76,7 +85,9 @@ export class BattleScene extends Phaser.Scene {
     this.fighters = [];
     this.ais = [];
     this.huds = [];
+    this.platforms = [];
     this.disposers = [];
+    this.koOrder = [];
     this.battleActive = false;
 
     this.buildBackground();
@@ -173,11 +184,39 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.STAGE - 1);
 
     // 장외 경고선
-    [STAGE.LEFT, STAGE.RIGHT].forEach((x) => {
+    [STAGE.LEFT, STAGE.RIGHT].forEach((px) => {
       this.add
-        .rectangle(x, STAGE.GROUND_Y - 200, 3, 400, 0xef4444, 0.2)
+        .rectangle(px, STAGE.GROUND_Y - 220, 3, 440, 0xef4444, 0.2)
         .setDepth(DEPTH.STAGE);
     });
+
+    this.buildPlatforms();
+  }
+
+  /**
+   * 공중 발판.
+   *
+   * 아래에서 점프해 통과하고 위에서만 착지하도록 아래쪽 충돌을 끈다.
+   * (막혀 있으면 점프로 올라갈 수 없어 발판이 벽이 되어버린다)
+   */
+  private buildPlatforms(): void {
+    for (const p of STAGE.PLATFORMS) {
+      const plat = this.add
+        .rectangle(p.x, p.y, p.w, STAGE.PLATFORM_H, 0x3a4c80)
+        .setDepth(DEPTH.STAGE);
+      this.physics.add.existing(plat, true);
+
+      const body = plat.body as Phaser.Physics.Arcade.StaticBody;
+      body.checkCollision.down = false;
+      body.checkCollision.left = false;
+      body.checkCollision.right = false;
+
+      this.add
+        .rectangle(p.x, p.y - STAGE.PLATFORM_H / 2 + 2, p.w, 4, 0x93c5fd)
+        .setDepth(DEPTH.STAGE + 1);
+
+      this.platforms.push(plat);
+    }
   }
 
   /* ================================================================ */
@@ -186,11 +225,19 @@ export class BattleScene extends Phaser.Scene {
 
   private spawnFighters(): void {
     const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
+    const total = 1 + this.battleData.aiIds.length;
 
-    /* 플레이어 */
+    /*
+     * 스테이지 폭을 인원수로 나눠 고르게 배치한다.
+     * 플레이어는 맨 왼쪽에서 시작해 오른쪽을 본다.
+     */
+    const usable = STAGE.RIGHT - STAGE.LEFT - 260;
+    const gap = total > 1 ? usable / (total - 1) : 0;
+    const startX = STAGE.LEFT + 130;
+
     this.player = new BaseCharacter(
       this,
-      STAGE.LEFT + 220,
+      startX,
       spawnY,
       CHARACTERS[this.battleData.playerId],
       'player',
@@ -199,11 +246,10 @@ export class BattleScene extends Phaser.Scene {
     this.player.facing = 1;
     this.fighters.push(this.player);
 
-    /* AI 봇 (배열이므로 인원 확장이 자유롭다) */
     this.battleData.aiIds.forEach((id, i) => {
       const bot = new BaseCharacter(
         this,
-        STAGE.RIGHT - 220 - i * 140,
+        startX + gap * (i + 1),
         spawnY,
         CHARACTERS[id],
         'ai',
@@ -213,8 +259,11 @@ export class BattleScene extends Phaser.Scene {
       this.fighters.push(bot);
     });
 
-    /* 지면 충돌 + 파이터 간 밀림 */
-    this.fighters.forEach((f) => this.physics.add.collider(f, this.ground));
+    /* 지면·발판 충돌 + 파이터 간 밀림 */
+    this.fighters.forEach((f) => {
+      this.physics.add.collider(f, this.ground);
+      this.platforms.forEach((p) => this.physics.add.collider(f, p));
+    });
     this.physics.add.collider(this.fighters, this.fighters);
   }
 
@@ -355,6 +404,7 @@ export class BattleScene extends Phaser.Scene {
         if (!victim || !victim.alive) return;
 
         victim.kill();
+        this.koOrder.push(p.fighterId);
         this.announce(`${p.name} 상장폐지!`, '#ff5a5a', 1400);
         this.cameras.main.shake(340, 0.02);
 
@@ -412,12 +462,14 @@ export class BattleScene extends Phaser.Scene {
       this.player.say(this.player.pickQuote('intro'), this.player.cfg.colors.accent);
     });
 
-    // AI 인트로 대사는 살짝 늦춰 겹치지 않게 한다
-    this.time.delayedCall(1700, () => {
-      this.fighters
-        .filter((f) => f.side === 'ai')
-        .forEach((f) => f.say(f.pickQuote('intro'), f.cfg.colors.accent));
-    });
+    // AI가 여럿이므로 대사를 한 명씩 순서대로 띄운다 (한꺼번에 뜨면 안 읽힌다)
+    this.fighters
+      .filter((f) => f.side === 'ai')
+      .forEach((f, i) => {
+        this.time.delayedCall(1700 + i * 700, () => {
+          if (f.alive) f.say(f.pickQuote('intro'), f.cfg.colors.accent);
+        });
+      });
   }
 
   private checkBattleEnd(): void {
@@ -466,15 +518,26 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.OVERLAY + 1);
     title.setStroke('#0b1020', 10);
 
+    // 플레이어가 몇 등이었는지 알려준다 (KO 순서의 역순 = 등수)
+    const total = this.fighters.length;
+    const playerRank = total - this.koOrder.indexOf(this.player.fighterId);
+    const rankText = playerWon
+      ? `${total}명 중 최후의 1인`
+      : `${total}명 중 ${playerRank}위`;
+
     this.add
       .text(
         GAME.WIDTH / 2,
         358,
-        winner ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%` : '전원 상장폐지',
+        winner
+          ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%\n${rankText}`
+          : '전원 상장폐지',
         {
           fontFamily: GAME.FONT,
           fontSize: '20px',
           color: '#cbd5e1',
+          align: 'center',
+          lineSpacing: 8,
         },
       )
       .setOrigin(0.5)
@@ -558,44 +621,49 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setDepth(DEPTH.HUD);
 
-    this.fighters.forEach((fighter) => {
+    /* 인원수만큼 패널을 가로로 고르게 배치한다 (1P는 항상 맨 왼쪽) */
+    const n = this.fighters.length;
+    const totalW = n * HUD_PANEL_W + (n - 1) * HUD_GAP;
+    const startX = (GAME.WIDTH - totalW) / 2;
+
+    this.fighters.forEach((fighter, i) => {
       const isPlayer = fighter.side === 'player';
-      const x = isPlayer ? 34 : GAME.WIDTH - 34 - 420;
-      const y = 618;
+      const x = startX + i * (HUD_PANEL_W + HUD_GAP);
+      const y = HUD_Y;
 
       this.add
-        .rectangle(x, y, 420, 84, 0x0b1020, 0.78)
+        .rectangle(x, y, HUD_PANEL_W, HUD_PANEL_H, 0x0b1020, 0.8)
         .setOrigin(0)
-        .setStrokeStyle(2, fighter.cfg.colors.accent, 0.5)
+        // 플레이어 패널만 테두리를 밝게 해 눈에 띄게 한다
+        .setStrokeStyle(isPlayer ? 3 : 2, fighter.cfg.colors.accent, isPlayer ? 0.95 : 0.45)
         .setDepth(DEPTH.HUD);
 
-      // 캐릭터 색 아바타
       this.add
-        .circle(x + 40, y + 42, 25, fighter.cfg.colors.body)
+        .circle(x + 30, y + 39, 21, fighter.cfg.colors.body)
         .setStrokeStyle(3, fighter.cfg.colors.accent)
         .setDepth(DEPTH.HUD + 1);
 
       this.add
-        .text(x + 78, y + 9, fighter.cfg.name, {
+        .text(x + 58, y + 8, fighter.cfg.name, {
           fontFamily: GAME.FONT,
-          fontSize: '17px',
+          fontSize: '14px',
           color: '#ffffff',
           fontStyle: 'bold',
         })
         .setDepth(DEPTH.HUD + 1);
 
       this.add
-        .text(x + 78, y + 31, isPlayer ? '1P' : `CPU (${AI_MEDIUM.label})`, {
+        .text(x + 58, y + 27, isPlayer ? '1P' : `CPU (${AI_MEDIUM.label})`, {
           fontFamily: GAME.FONT,
-          fontSize: '11px',
-          color: '#7f93bd',
+          fontSize: '10px',
+          color: isPlayer ? '#4ade80' : '#7f93bd',
         })
         .setDepth(DEPTH.HUD + 1);
 
       const percent = this.add
-        .text(x + 404, y + 5, '100%', {
+        .text(x + HUD_PANEL_W - 12, y + 5, '100%', {
           fontFamily: GAME.FONT,
-          fontSize: '28px',
+          fontSize: '22px',
           color: '#ffffff',
           fontStyle: 'bold',
         })
@@ -603,9 +671,9 @@ export class BattleScene extends Phaser.Scene {
         .setDepth(DEPTH.HUD + 1);
 
       const tierLabel = this.add
-        .text(x + 404, y + 38, '보통', {
+        .text(x + HUD_PANEL_W - 12, y + 30, '보통', {
           fontFamily: GAME.FONT,
-          fontSize: '12px',
+          fontSize: '10px',
           color: '#cbd5e1',
         })
         .setOrigin(1, 0)
@@ -613,34 +681,48 @@ export class BattleScene extends Phaser.Scene {
 
       // 주가 진행바
       this.add
-        .rectangle(x + 78, y + 55, HUD_BAR_W, 13, 0x1a2440)
+        .rectangle(x + 58, y + 48, HUD_BAR_W, 12, 0x1a2440)
         .setOrigin(0)
         .setDepth(DEPTH.HUD + 1);
       const bar = this.add
-        .rectangle(x + 78, y + 55, HUD_BAR_W / 3, 13, TIERS[StockTier.NORMAL].color)
+        .rectangle(x + 58, y + 48, HUD_BAR_W / 3, 12, TIERS[StockTier.NORMAL].color)
         .setOrigin(0)
         .setDepth(DEPTH.HUD + 2);
 
       // 스킬 쿨다운
       this.add
-        .rectangle(x + 78, y + 73, HUD_BAR_W, 5, 0x1a2440)
+        .rectangle(x + 58, y + 64, HUD_BAR_W, 5, 0x1a2440)
         .setOrigin(0)
         .setDepth(DEPTH.HUD + 1);
       const skillBar = this.add
-        .rectangle(x + 78, y + 73, HUD_BAR_W, 5, fighter.cfg.colors.accent)
+        .rectangle(x + 58, y + 64, HUD_BAR_W, 5, fighter.cfg.colors.accent)
         .setOrigin(0)
         .setDepth(DEPTH.HUD + 2);
 
       const skillLabel = this.add
-        .text(x + 78 + HUD_BAR_W + 8, y + 68, 'L', {
+        .text(x + 58 + HUD_BAR_W + 6, y + 60, 'L', {
           fontFamily: GAME.FONT,
-          fontSize: '12px',
+          fontSize: '11px',
           color: '#4ade80',
           fontStyle: 'bold',
         })
         .setDepth(DEPTH.HUD + 2);
 
-      this.huds.push({ fighter, percent, tierLabel, bar, skillBar, skillLabel });
+      // 장착 아이템 아이콘
+      const itemIcon = this.add
+        .text(x + HUD_PANEL_W - 12, y + 46, '', { fontSize: '18px' })
+        .setOrigin(1, 0)
+        .setDepth(DEPTH.HUD + 2);
+
+      this.huds.push({
+        fighter,
+        percent,
+        tierLabel,
+        bar,
+        skillBar,
+        skillLabel,
+        itemIcon,
+      });
     });
   }
 
@@ -662,6 +744,13 @@ export class BattleScene extends Phaser.Scene {
       const ready = 1 - hud.fighter.getSkillCooldownRatio();
       hud.skillBar.width = Math.max(0, HUD_BAR_W * ready);
       hud.skillLabel.setColor(ready >= 1 ? '#4ade80' : '#5d739f');
+
+      // 장착 아이템
+      hud.itemIcon.setText(hud.fighter.getItem()?.cfg.icon ?? '');
+
+      // 상장폐지된 파이터는 패널 전체를 어둡게
+      hud.percent.setAlpha(hud.fighter.alive ? 1 : 0.4);
+      hud.bar.setAlpha(hud.fighter.alive ? 1 : 0.4);
     }
   }
 

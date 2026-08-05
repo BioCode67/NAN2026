@@ -5,6 +5,9 @@ import { DEPTH, GAME } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import type { BattleSceneData, CharacterConfig, CharacterId } from '../types';
 
+/** AI 봇 수 — 명세의 1P vs 3AI */
+const AI_COUNT = 3;
+
 /** 캐릭터 카드 규격 */
 const CARD_W = 196;
 const CARD_H = 268;
@@ -239,7 +242,7 @@ export class SelectScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         676,
-        '← → / A D : 선택      Enter · Space · 클릭 : 결정',
+        '← → / A D : 선택      Enter · Space · 클릭 : 결정      (나머지 3명이 AI로 참전)',
         {
           fontFamily: GAME.FONT,
           fontSize: '15px',
@@ -330,9 +333,11 @@ export class SelectScene extends Phaser.Scene {
 
     const playerId = CHARACTER_ORDER[this.selectedIndex]!;
 
-    // MVP: AI 1명. 배열이므로 인원을 늘리기만 하면 확장된다.
-    const others = CHARACTER_ORDER.filter((id) => id !== playerId);
-    const aiId = others[Phaser.Math.Between(0, others.length - 1)]!;
+    // 1P vs 3AI — 남은 4명 중 3명을 무작위로 뽑는다
+    const others = Phaser.Utils.Array.Shuffle(
+      CHARACTER_ORDER.filter((id) => id !== playerId),
+    );
+    const aiIds = others.slice(0, AI_COUNT);
 
     const card = this.cards[this.selectedIndex]!;
     this.tweens.add({
@@ -343,7 +348,7 @@ export class SelectScene extends Phaser.Scene {
       ease: 'Quad.easeOut',
     });
 
-    const data: BattleSceneData = { playerId, aiIds: [aiId] };
+    const data: BattleSceneData = { playerId, aiIds };
     this.cameras.main.fadeOut(280, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.start('Battle', data);

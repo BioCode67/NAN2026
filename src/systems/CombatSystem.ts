@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, GAME, IMPACT } from '../config/gameConfig';
+import { DEPTH, FIGHTER, GAME, IMPACT } from '../config/gameConfig';
 import type { AttackConfig } from '../types';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
@@ -144,10 +144,17 @@ export class CombatSystem {
     const hitX = Phaser.Math.Clamp(hitbox.centerX, target.x - 40, target.x + 40);
     const hitY = target.y - 8;
 
+    // 방어 성공 여부는 receiveHit이 상태를 바꾸기 전에 확인해야 한다
+    const guarded = target.isGuarding();
+
     /* 0) 타격음 — 공격 종류에 따라 두께가 달라진다 */
-    sound.play(
-      atk.type === 'light' ? 'hitLight' : atk.type === 'heavy' ? 'hitHeavy' : 'hitSkill',
-    );
+    if (guarded) {
+      sound.play('land', 0.9);
+    } else {
+      sound.play(
+        atk.type === 'light' ? 'hitLight' : atk.type === 'heavy' ? 'hitHeavy' : 'hitSkill',
+      );
+    }
 
     /* 1) 히트스탑 */
     this.applyHitstop(atk.hitstop);
@@ -163,10 +170,14 @@ export class CombatSystem {
     /* 4) 히트 플래시 + 5) 스쿼시 & 스트레치 + 넉백/경직 */
     target.receiveHit(atk, attacker.x);
 
-    /* 6) 주가 변동 */
-    const result = this.stock.applyHit(attacker, target, atk.damage);
+    /* 6) 주가 변동 — 방어에 성공했으면 피해가 크게 줄어든다 */
+    const baseDamage = guarded
+      ? Math.max(1, atk.damage * FIGHTER.GUARD_DAMAGE_MUL)
+      : atk.damage;
+    const result = this.stock.applyHit(attacker, target, baseDamage);
 
     /* 7) 데미지 플로팅 */
+    if (guarded) this.floatText(target.x, hitY - 54, 'GUARD!', '#93c5fd');
     this.floatText(hitX, hitY - 30, `-${result.damage}%`, '#ff5a5a');
     this.floatText(
       attacker.x,

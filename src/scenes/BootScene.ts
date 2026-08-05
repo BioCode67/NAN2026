@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { GAME } from '../config/gameConfig';
+import { SHEET_DEFS, animKey, metaKey } from '../config/spriteSheets';
+import type { Pose, SheetMeta } from '../config/spriteSheets';
 
 /**
  * 리소스 로딩 씬.
@@ -15,14 +17,73 @@ export class BootScene extends Phaser.Scene {
   preload(): void {
     this.buildLoadingUI();
 
-    // 여기에 실제 에셋을 추가한다.
-    // 예) this.load.image('stage-bg', 'assets/stage.png');
-    //     this.load.audio('hit', 'assets/sfx/hit.mp3');
+    /*
+     * 1단계: 스프라이트 시트 메타데이터.
+     * 프레임 크기가 캐릭터마다 다르므로 시트를 로드하기 전에 먼저 읽어야 한다.
+     * (메타는 tools/process-sheet.mjs 가 PNG와 함께 생성한다)
+     */
+    for (const def of SHEET_DEFS) {
+      this.load.json(metaKey(def.key), `sprites/${def.key}.json`);
+    }
   }
 
   create(): void {
     this.generateTextures();
-    this.scene.start('Select');
+    this.loadSpriteSheets();
+  }
+
+  /** 2단계: 메타를 읽어 실제 시트를 로드하고 애니메이션을 등록한다 */
+  private loadSpriteSheets(): void {
+    let queued = 0;
+
+    for (const def of SHEET_DEFS) {
+      const meta = this.cache.json.get(metaKey(def.key)) as SheetMeta | undefined;
+      if (!meta) {
+        console.warn(`[Boot] ${def.key} 메타데이터를 찾지 못해 도형 아트로 대체합니다.`);
+        continue;
+      }
+
+      this.load.spritesheet(def.key, `sprites/${def.key}.png`, {
+        frameWidth: meta.frameWidth,
+        frameHeight: meta.frameHeight,
+      });
+      queued++;
+    }
+
+    if (queued === 0) {
+      this.scene.start('Select');
+      return;
+    }
+
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+      this.registerAnimations();
+      this.scene.start('Select');
+    });
+    this.load.start();
+  }
+
+  /** 여러 프레임짜리 포즈만 Phaser 애니메이션으로 등록한다 (단일 프레임은 setFrame으로 충분) */
+  private registerAnimations(): void {
+    for (const def of SHEET_DEFS) {
+      if (!this.textures.exists(def.key)) continue;
+
+      for (const [pose, frames] of Object.entries(def.poses)) {
+        if (!Array.isArray(frames) || frames.length < 2) continue;
+
+        const key = animKey(def.key, pose as Pose);
+        if (this.anims.exists(key)) continue;
+
+        // 달리기만 반복하고 나머지(스킬 등)는 1회 재생 후 마지막 프레임 유지
+        const looping = pose === 'run' || pose === 'walk';
+
+        this.anims.create({
+          key,
+          frames: this.anims.generateFrameNumbers(def.key, { frames }),
+          frameRate: def.frameRate ?? 9,
+          repeat: looping ? -1 : 0,
+        });
+      }
+    }
   }
 
   /* ---------------------------------------------------------------- */

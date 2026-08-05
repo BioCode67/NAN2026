@@ -54,6 +54,9 @@ export class BattleScene extends Phaser.Scene {
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
+  /** 더블탭 대시 판정용 */
+  private lastTapDir: -1 | 0 | 1 = 0;
+  private lastTapAt = 0;
 
   /** 전투 진행 중인가 (인트로/결과 화면에서는 false) */
   private battleActive = false;
@@ -287,16 +290,38 @@ export class BattleScene extends Phaser.Scene {
     const p = this.player;
     if (!p.alive) return;
 
+    const JustDown = Phaser.Input.Keyboard.JustDown;
     const left = this.keys.left!.isDown;
     const right = this.keys.right!.isDown;
+    const onGround = p.body.blocked.down || p.body.touching.down;
+
+    /* S — 지상에서는 방어, 공중에서는 급강하 */
+    p.setGuard(this.keys.down!.isDown && onGround);
+    if (this.keys.down!.isDown && !onGround) p.fastFall();
+
+    /* A/D 더블탭 → 대시 */
+    if (JustDown(this.keys.left!) && this.checkDoubleTap(-1)) p.dash(-1);
+    if (JustDown(this.keys.right!) && this.checkDoubleTap(1)) p.dash(1);
+
     p.moveHorizontal(left && !right ? -1 : right && !left ? 1 : 0);
 
-    const JustDown = Phaser.Input.Keyboard.JustDown;
     if (JustDown(this.keys.jump!) || JustDown(this.keys.up!)) p.jump();
-    if (this.keys.down!.isDown) p.fastFall();
     if (JustDown(this.keys.light!)) p.attack('light');
     if (JustDown(this.keys.heavy!)) p.attack('heavy');
     if (JustDown(this.keys.skill!)) this.castSkill(p);
+  }
+
+  /** 같은 방향키를 짧은 간격으로 두 번 눌렀는가 */
+  private checkDoubleTap(dir: -1 | 1): boolean {
+    const now = this.time.now;
+    const isDouble =
+      this.lastTapDir === dir && now - this.lastTapAt <= FIGHTER.DOUBLE_TAP_MS;
+
+    this.lastTapDir = dir;
+    this.lastTapAt = now;
+    // 3연타가 연속 대시로 이어지지 않도록 기록을 지운다
+    if (isDouble) this.lastTapDir = 0;
+    return isDouble;
   }
 
   /** 스킬 시전 — 시전 시 부가 효과(도박 등)까지 처리한다 */
@@ -387,6 +412,12 @@ export class BattleScene extends Phaser.Scene {
 
     this.battleActive = false;
     const winner = alive[0] ?? null;
+
+    // 승리 포즈
+    if (winner) {
+      winner.setGuard(false);
+      winner.showVictory();
+    }
 
     eventBus.emit('battle:end', {
       winnerId: winner?.fighterId ?? null,
@@ -494,7 +525,7 @@ export class BattleScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         20,
-        'WASD 이동 · SPACE 점프(2단) · J 약공격 · K 강공격 · L 시그니처 · R 재시작',
+        'WASD 이동 · SPACE 점프(2단) · S 방어 · AA/DD 대시 · J 약공격 · K 강공격 · L 시그니처 · R 재시작',
         {
           fontFamily: GAME.FONT,
           fontSize: '13px',

@@ -178,6 +178,16 @@ export const FIGHTER = {
   INVULN_MS: 180,
   /** 착지 시 스쿼시 연출 임계 낙하속도 */
   LAND_SQUASH_VY: 500,
+  /** 대시 지속 (ms) */
+  DASH_MS: 220,
+  /** 대시 재사용 대기 (ms) */
+  DASH_COOLDOWN: 600,
+  /** 방어 시 피해 배율 */
+  GUARD_DAMAGE_MUL: 0.3,
+  /** 방어 시 넉백 배율 */
+  GUARD_KNOCKBACK_MUL: 0.35,
+  /** 더블탭 대시로 인정할 최대 간격 (ms) */
+  DOUBLE_TAP_MS: 260,
 } as const;
 
 /* ------------------------------------------------------------------ */

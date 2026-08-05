@@ -11,8 +11,9 @@ import {
   TIERS,
 } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
-import { ARM_X, buildFighterArt } from './CharacterArt';
-import type { FighterArt } from './CharacterArt';
+import { createFighterView } from './FighterView';
+import type { FighterView } from './FighterView';
+import type { Pose } from '../config/spriteSheets';
 import { StockTier } from '../types';
 import type {
   AttackConfig,
@@ -56,13 +57,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 스쿼시&스트레치 대상. 게이지가 같이 찌그러지지 않도록 분리했다. */
   private readonly visual: Phaser.GameObjects.Container;
   private readonly aura: Phaser.GameObjects.Arc;
-  private readonly art: FighterArt;
-  /** 플래시 복원용 원래 색 (art.flashParts와 같은 순서) */
-  private readonly baseColors: number[];
+  /** 겉모습 — 스프라이트 시트 또는 도형 아트 */
+  private readonly view: FighterView;
   private readonly shadow: Phaser.GameObjects.Ellipse;
-  /** 팔·다리 기본 위치 — 걷기/공격 모션 복원 기준 */
-  private readonly armHomeY: number;
-  private readonly legHomeY: number;
 
   private readonly gauge: Phaser.GameObjects.Container;
   private readonly gaugeFill: Phaser.GameObjects.Rectangle;
@@ -89,6 +86,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private skillReadyAt = 0;
 
   // FIGHTER.MAX_JUMPS는 as const라 리터럴 타입(2)이므로 number로 명시한다
+  /** 방어 중인가 (S 유지) */
+  private guarding = false;
+  /** 승리 포즈 고정 */
+  private victorious = false;
+  /** 대시 포즈가 유지되는 시각 */
+  private dashUntil = 0;
+  /** 다음 대시가 가능한 시각 */
+  private dashReadyAt = 0;
+
   private jumpsLeft: number = FIGHTER.MAX_JUMPS;
   private wasOnGround = true;
   /** 착지 스쿼시 판정을 위한 최대 낙하속도 기록 */
@@ -130,12 +136,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.aura.setVisible(false);
 
     /* SD 대두 아트 — 머리/몸통/팔다리 + 캐릭터별 소품(머리·안경·수염·입) */
-    this.art = buildFighterArt(scene, cfg);
-    this.baseColors = this.art.flashParts.map((p) => p.fillColor);
-    this.armHomeY = this.art.armFront.y;
-    this.legHomeY = this.art.legL.y;
-
-    this.visual = scene.add.container(0, 0, [this.aura, ...this.art.parts]);
+    this.view = createFighterView(scene, cfg);
+    this.visual = scene.add.container(0, 0, [this.aura, ...this.view.parts]);
 
     /* 머리 위 미니 게이지 [===🔥 220%===] */
     const gaugeY = -FIGHTER.BODY_H / 2 - 34;
@@ -187,10 +189,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /* 조작 API — 플레이어 입력과 AI가 동일하게 호출한다                */
   /* ================================================================ */
 
-  /** 행동 가능 상태인가 (경직/공격 중이 아닌가) */
+  /** 행동 가능 상태인가 (경직/공격/방어 중이 아닌가) */
   canAct(): boolean {
     return (
       this.alive &&
+      !this.guarding &&
       this.attackPhase === 'none' &&
       this.scene.time.now >= this.stunUntil
     );
@@ -200,8 +203,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   moveHorizontal(dir: -1 | 0 | 1): void {
     if (!this.alive || this.scene.time.now < this.stunUntil) return;
 
-    // 공격 중에는 이동 불가 (관성만 유지)
-    if (this.attackPhase !== 'none') return;
+    // 공격·방어 중에는 이동 불가 (관성만 유지)
+    if (this.attackPhase !== 'none' || this.guarding) return;
+    // 대시 중에는 대시 속도를 덮어쓰지 않는다
+    if (this.scene.time.now < this.dashUntil) return;
 
     if (dir === 0) {
       this.body.setAccelerationX(0);
@@ -238,6 +243,52 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (!onGround && this.body.velocity.y > -50) {
       this.body.setVelocityY(Math.max(this.body.velocity.y, 300) + 40);
     }
+  }
+
+  /**
+   * 방어 자세 유지 (지상에서만).
+   * 방어 중에는 이동·공격이 막히는 대신 피해와 넉백이 크게 줄어든다.
+   */
+  setGuard(on: boolean): void {
+    if (!this.alive) {
+      this.guarding = false;
+      return;
+    }
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    const free =
+      this.attackPhase === 'none' && this.scene.time.now >= this.stunUntil;
+
+    this.guarding = on && onGround && free;
+    if (this.guarding) this.body.setVelocityX(0);
+  }
+
+  isGuarding(): boolean {
+    return this.guarding;
+  }
+
+  /** 전투 승리 — 승리 포즈로 고정한다 */
+  showVictory(): void {
+    if (!this.alive) return;
+    this.victorious = true;
+    this.guarding = false;
+    this.body.setVelocityX(0);
+    this.pulseSquash(0.85, 1.2, 260);
+  }
+
+  /** 대시 — 짧게 치고 나간다 */
+  dash(dir: -1 | 1): boolean {
+    if (!this.canAct()) return false;
+
+    const now = this.scene.time.now;
+    if (now < this.dashReadyAt) return false;
+
+    this.dashReadyAt = now + FIGHTER.DASH_COOLDOWN;
+    this.dashUntil = now + FIGHTER.DASH_MS;
+    this.setFacing(dir);
+    this.body.setVelocityX(this.cfg.stats.speed * this.speedMul * 2.1 * dir);
+    this.pulseSquash(1.28, 0.84, 150);
+    sound.play('doubleJump');
+    return true;
   }
 
   /** 약공격(J) / 강공격(K) */
@@ -350,15 +401,21 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     const now = this.scene.time.now;
     const dir = this.x >= fromX ? 1 : -1;
-    // 무게가 무거울수록 덜 밀린다
-    const kbScale = 1 / this.cfg.stats.weight;
+    const guarded = this.guarding;
+
+    // 무게가 무거울수록, 방어 중이면 더욱 덜 밀린다
+    const kbScale =
+      (1 / this.cfg.stats.weight) *
+      (guarded ? FIGHTER.GUARD_KNOCKBACK_MUL : 1);
 
     this.body.setVelocity(
       atk.knockbackX * dir * kbScale,
       atk.knockbackY * kbScale,
     );
 
-    const stun = atk.effect === 'stun' ? (atk.effectDuration ?? atk.hitstun) : atk.hitstun;
+    const base =
+      atk.effect === 'stun' ? (atk.effectDuration ?? atk.hitstun) : atk.hitstun;
+    const stun = guarded ? base * 0.4 : base;
     this.stunUntil = now + stun;
     this.invulnUntil = now + FIGHTER.INVULN_MS;
 
@@ -376,12 +433,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 히트 플래시 — 1프레임 흰색 점멸 */
   flash(): void {
-    this.art.flashParts.forEach((p) => p.setFillStyle(0xffffff));
-
-    this.scene.time.delayedCall(IMPACT.FLASH_MS, () => {
-      if (!this.scene || !this.alive) return;
-      this.art.flashParts.forEach((p, i) => p.setFillStyle(this.baseColors[i]));
-    });
+    this.view.flash();
   }
 
   /** 스쿼시 & 스트레치 */
@@ -416,7 +468,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     sound.play('ko');
 
     // 회색으로 식으며 위로 사라진다
-    this.art.flashParts.forEach((p) => p.setFillStyle(0x5b6577));
+    this.view.setPose('lose');
+    this.view.setDefeated();
 
     this.scene.tweens.add({
       targets: this,
@@ -601,8 +654,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     }
     this.wasOnGround = onGround;
 
-    /* 걷기 모션 — 다리와 뒤팔을 번갈아 흔든다 */
-    this.animateStride(time, onGround);
+    /* 상태에 맞는 포즈 + 시간 기반 모션 */
+    this.view.setPose(this.computePose(onGround));
+    this.view.update(time, onGround);
 
     /* 시각 갱신 */
     this.visual.setScale(this.facing * this.squash.x, this.squash.y);
@@ -631,27 +685,42 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   }
 
   /**
-   * 걷기/공중 자세.
-   * 지상에서 이동 중이면 다리를 번갈아 흔들고,
-   * 공중에서는 다리를 살짝 모아 점프 자세를 만든다.
+   * 현재 상태에서 재생할 포즈를 결정한다.
+   * 스프라이트 시트든 도형 아트든 이 한 곳이 판단 기준이 된다.
    */
-  private animateStride(time: number, onGround: boolean): void {
-    const { legL, legR, armBack } = this.art;
-    const moving = Math.abs(this.body.velocity.x) > 40;
+  private computePose(onGround: boolean): Pose {
+    if (!this.alive) return 'lose';
+    if (this.victorious) return 'win';
 
-    if (onGround && moving) {
-      const swing = Math.sin(time * 0.022) * 4;
-      legL.y = this.legHomeY + swing;
-      legR.y = this.legHomeY - swing;
-      armBack.y = this.armHomeY - swing * 0.5;
-      return;
+    const now = this.scene.time.now;
+
+    // 경직 중 — 크게 날아가면 넉백, 아니면 피격
+    if (now < this.stunUntil) {
+      const flung =
+        Math.abs(this.body.velocity.x) > 420 || this.body.velocity.y < -320;
+      return flung ? 'knockback' : 'hit';
     }
 
-    // 공중에서는 다리를 살짝 들어올린다
-    const lift = onGround ? 0 : 4;
-    legL.y = this.legHomeY - lift;
-    legR.y = this.legHomeY - lift * 0.5;
-    armBack.y = this.armHomeY;
+    if (this.guarding && onGround) return 'guard';
+
+    if (this.attackPhase !== 'none' && this.currentAttack) {
+      switch (this.currentAttack.type) {
+        case 'light':
+          return 'attackJ';
+        case 'heavy':
+          return 'attackK';
+        default:
+          return 'skill';
+      }
+    }
+
+    if (now < this.dashUntil) return 'dash';
+    if (!onGround) return 'jump';
+
+    const vx = Math.abs(this.body.velocity.x);
+    if (vx > this.cfg.stats.speed * 0.75) return 'run';
+    if (vx > 40) return 'walk';
+    return 'idle';
   }
 
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */
@@ -660,19 +729,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const cy = this.y - 6;
 
     sound.play('whiff');
-
-    /* 앞팔을 쭉 뻗었다 되돌린다 */
-    const arm = this.art.armFront;
-    this.scene.tweens.killTweensOf(arm);
-    arm.setPosition(ARM_X, this.armHomeY);
-    this.scene.tweens.add({
-      targets: arm,
-      x: ARM_X + (atk.type === 'light' ? 20 : 30),
-      y: this.armHomeY - 6,
-      duration: Math.max(60, atk.active * 0.5),
-      yoyo: true,
-      ease: 'Quad.easeOut',
-    });
+    this.view.triggerAttack(atk.type, atk.active);
 
     const swing = this.scene.add
       .ellipse(
@@ -752,6 +809,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.auraTween?.stop();
     this.flameEmitter?.destroy();
     this.shadow.destroy();
+    this.view.destroy();
     super.destroy(fromScene);
   }
 }

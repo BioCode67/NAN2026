@@ -13,6 +13,7 @@ import { BaseCharacter } from '../characters/BaseCharacter';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
+import { ProjectileSystem } from '../systems/ProjectileSystem';
 import { sound } from '../systems/SoundSystem';
 import { StockSystem } from '../systems/StockSystem';
 import { StockTier } from '../types';
@@ -50,6 +51,7 @@ export class BattleScene extends Phaser.Scene {
 
   private stock!: StockSystem;
   private combat!: CombatSystem;
+  private projectiles!: ProjectileSystem;
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
@@ -216,10 +218,16 @@ export class BattleScene extends Phaser.Scene {
 
   private setupSystems(): void {
     this.stock = new StockSystem(eventBus);
+    this.projectiles = new ProjectileSystem(this);
     this.combat = new CombatSystem(this, this.stock, eventBus);
 
-    this.fighters.forEach((f) => this.stock.register(f));
+    this.fighters.forEach((f) => {
+      this.stock.register(f);
+      // 투사체 스킬(빌 게이츠맨의 블루스크린 등) 발사 연결
+      f.onSpawnProjectile = (owner, atk) => this.projectiles.spawn(owner, atk);
+    });
     this.combat.setFighters(this.fighters);
+    this.combat.setProjectiles(this.projectiles);
 
     /* AI 부착 — 플레이어를 추적 대상으로 삼는다 */
     this.fighters
@@ -688,6 +696,8 @@ export class BattleScene extends Phaser.Scene {
 
     for (const f of this.fighters) f.update(time, delta);
 
+    this.projectiles.update(time, delta);
+
     if (this.battleActive) {
       this.combat.update(time);
       this.checkBlastZones();
@@ -703,6 +713,7 @@ export class BattleScene extends Phaser.Scene {
     this.disposers = [];
     this.combat?.reset();
     this.stock?.reset();
+    this.projectiles?.reset();
     sound.stopBgm();
   }
 }

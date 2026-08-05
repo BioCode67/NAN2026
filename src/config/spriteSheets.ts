@@ -55,6 +55,29 @@ export interface SpriteSheetDef {
  * 등록하지 않은 캐릭터는 코드로 그린 도형 아트(CharacterArt)로 자동 대체된다.
  */
 export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
+  gates: {
+    key: 'billgates',
+    displayHeight: 116,
+    frameRate: 9,
+    poses: {
+      idle: 0,
+      walk: 1,
+      run: [2, 3],
+      jump: 4,
+      attackJ: 5,
+      attackK: 6,
+      // 7 = 에너지볼 발사 자세. 8은 캐릭터가 아니라 투사체 단독 스프라이트라
+      // 포즈가 아니라 skill.projectile.frame 으로 쓴다.
+      skill: 7,
+      hit: 9,
+      knockback: 10,
+      guard: 11,
+      dash: 12,
+      win: 13,
+      lose: 14,
+    },
+  },
+
   jobs: {
     key: 'stevejobs',
     displayHeight: 116,

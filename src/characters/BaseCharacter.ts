@@ -3,9 +3,7 @@ import {
   DEPTH,
   FIGHTER,
   GAME,
-  HEAVY_ATTACK,
   IMPACT,
-  LIGHT_ATTACK,
   STAGE,
   STOCK,
   TIERS,
@@ -50,6 +48,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 바라보는 방향 (1 = 오른쪽, -1 = 왼쪽) */
   facing: 1 | -1 = 1;
+  /** 투사체 발사 요청 — BattleScene이 ProjectileSystem에 연결한다 */
+  onSpawnProjectile?: (owner: BaseCharacter, atk: AttackConfig) => void;
   /** 생존 여부 */
   alive = true;
 
@@ -291,11 +291,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     return true;
   }
 
-  /** 약공격(J) / 강공격(K) */
+  /** 약공격(J) / 강공격(K) — 캐릭터마다 속도·리치·위력이 다르다 */
   attack(type: Exclude<AttackType, 'skill'>): boolean {
     if (!this.canAct()) return false;
-    const atk = type === 'light' ? LIGHT_ATTACK : HEAVY_ATTACK;
-    this.beginAttack(atk);
+    this.beginAttack(type === 'light' ? this.cfg.light : this.cfg.heavy);
     return true;
   }
 
@@ -347,10 +346,12 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.pulseSquash(1.12, 0.9, atk.startup);
   }
 
-  /** 현재 활성 히트박스 (없으면 null) */
+  /** 현재 활성 히트박스 (투사체 공격이거나 비활성이면 null) */
   getHitbox(): Phaser.Geom.Rectangle | null {
     if (this.attackPhase !== 'active' || !this.currentAttack) return null;
     const a = this.currentAttack;
+    // 투사체 공격은 근접 판정이 없다 — 판정은 ProjectileSystem이 맡는다
+    if (a.projectile) return null;
     const cx = this.x + this.facing * (FIGHTER.BODY_W / 2 + a.range / 2);
     const cy = this.y - 6;
     this.hitboxRect.setTo(
@@ -725,11 +726,17 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */
   private spawnSwing(atk: AttackConfig): void {
-    const cx = this.x + this.facing * (FIGHTER.BODY_W / 2 + atk.range / 2);
-    const cy = this.y - 6;
-
     sound.play('whiff');
     this.view.triggerAttack(atk.type, atk.active);
+
+    // 투사체 공격이면 탄을 쏘고 근접 스윙은 그리지 않는다
+    if (atk.projectile) {
+      this.onSpawnProjectile?.(this, atk);
+      return;
+    }
+
+    const cx = this.x + this.facing * (FIGHTER.BODY_W / 2 + atk.range / 2);
+    const cy = this.y - 6;
 
     const swing = this.scene.add
       .ellipse(

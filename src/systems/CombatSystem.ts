@@ -4,6 +4,7 @@ import type { AttackConfig } from '../types';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 import type { EventBus } from './EventBus';
+import type { ProjectileSystem } from './ProjectileSystem';
 import type { StockSystem } from './StockSystem';
 
 /** 지속 피해(DOT) 상태 */
@@ -30,6 +31,7 @@ const DOT_INTERVAL = 1000;
  */
 export class CombatSystem {
   private fighters: BaseCharacter[] = [];
+  private projectiles?: ProjectileSystem;
 
   /** 히트스탑 종료 시각 */
   private hitstopUntil = 0;
@@ -62,6 +64,11 @@ export class CombatSystem {
   /** 판정 대상 파이터 목록 등록 */
   setFighters(fighters: BaseCharacter[]): void {
     this.fighters = fighters;
+  }
+
+  /** 투사체 시스템 연결 (없으면 근접 판정만 수행) */
+  setProjectiles(projectiles: ProjectileSystem): void {
+    this.projectiles = projectiles;
   }
 
   /* ================================================================ */
@@ -131,6 +138,35 @@ export class CombatSystem {
         this.resolveHit(attacker, target, atk, hitbox);
       }
     }
+
+    this.resolveProjectileHits();
+  }
+
+  /** 날아가는 탄의 판정 — 근접과 같은 연출 경로를 탄다 */
+  private resolveProjectileHits(): void {
+    if (!this.projectiles) return;
+
+    for (const pr of this.projectiles.getActive()) {
+      const owner = this.fighters.find((f) => f.fighterId === pr.ownerId);
+      if (!owner) continue;
+
+      for (const target of this.fighters) {
+        if (target.fighterId === pr.ownerId || !target.alive) continue;
+        if (pr.hasHit(target.fighterId) || target.isInvulnerable()) continue;
+
+        const tb = target.body;
+        this.targetRect.setTo(tb.x, tb.y, tb.width, tb.height);
+        if (
+          !Phaser.Geom.Intersects.RectangleToRectangle(pr.rect, this.targetRect)
+        ) {
+          continue;
+        }
+
+        pr.markHit(target.fighterId);
+        // 넉백 방향은 시전자가 아니라 탄이 날아온 쪽 기준이어야 자연스럽다
+        this.resolveHit(owner, target, pr.atk, pr.rect, pr.x);
+      }
+    }
   }
 
   /** 타격 1회 처리 — 명세의 7단계 연출을 순서대로 실행한다 */
@@ -139,6 +175,7 @@ export class CombatSystem {
     target: BaseCharacter,
     atk: AttackConfig,
     hitbox: Phaser.Geom.Rectangle,
+    fromX: number = attacker.x,
   ): void {
     // 타격 지점 = 히트박스와 피격자 바디가 겹치는 지점
     const hitX = Phaser.Math.Clamp(hitbox.centerX, target.x - 40, target.x + 40);
@@ -168,7 +205,7 @@ export class CombatSystem {
     this.spawnImpact(hitX, hitY, attacker.cfg.colors.accent, atk);
 
     /* 4) 히트 플래시 + 5) 스쿼시 & 스트레치 + 넉백/경직 */
-    target.receiveHit(atk, attacker.x);
+    target.receiveHit(atk, fromX);
 
     /* 6) 주가 변동 — 방어에 성공했으면 피해가 크게 줄어든다 */
     const baseDamage = guarded

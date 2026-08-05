@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { HEAVY_ATTACK, LIGHT_ATTACK, STAGE } from '../config/gameConfig';
+import { STAGE } from '../config/gameConfig';
 import type { AIDifficulty, AIState } from '../types';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 
@@ -85,7 +85,10 @@ export class AISystem {
 
   private decideState(target: BaseCharacter): AIState {
     const dist = Math.abs(target.x - this.self.x);
-    const skillRange = this.self.cfg.skill.range;
+    const skill = this.self.cfg.skill;
+    // 투사체 스킬은 멀리서도 쓸 수 있다
+    const skillRange = skill.projectile ? 520 : skill.range;
+    const reach = this.self.cfg.heavy.range;
 
     // 상대가 공격 모션에 들어갔고 사거리 안이면 회피를 시도한다
     if (
@@ -102,12 +105,12 @@ export class AISystem {
     }
 
     // 근접 사거리면 공격
-    if (dist < HEAVY_ATTACK.range + 40) {
+    if (dist < reach + 40) {
       return 'ATTACK';
     }
 
     // 너무 멀면 추적
-    if (dist > LIGHT_ATTACK.range) {
+    if (dist > this.self.cfg.light.range) {
       return 'CHASE';
     }
 
@@ -134,7 +137,7 @@ export class AISystem {
 
       case 'ATTACK': {
         // 사거리를 유지하며 미세 조정
-        if (dist > HEAVY_ATTACK.range) this.self.moveHorizontal(dir);
+        if (dist > this.self.cfg.heavy.range) this.self.moveHorizontal(dir);
         else this.self.moveHorizontal(0);
 
         if (this.attackCooldown <= 0) {
@@ -142,7 +145,8 @@ export class AISystem {
             Phaser.Math.FloatBetween(0, 1) < this.difficulty.heavyRatio;
           const ok = this.self.attack(useHeavy ? 'heavy' : 'light');
           if (ok) {
-            const atk = useHeavy ? HEAVY_ATTACK : LIGHT_ATTACK;
+            // 캐릭터마다 딜레이가 다르므로 자기 공격 데이터로 계산한다
+            const atk = useHeavy ? this.self.cfg.heavy : this.self.cfg.light;
             this.attackCooldown =
               atk.startup +
               atk.active +

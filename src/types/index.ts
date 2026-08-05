@@ -112,6 +112,24 @@ export type SkillEffect =
   /** 주가 도박 (리츠고!) */
   | 'gamble';
 
+/** 투사체 정의 — 근접 히트박스 대신 날아가는 탄을 만든다 */
+export interface ProjectileConfig {
+  /** 수평 이동 속도 (px/s) */
+  speed: number;
+  /** 최대 생존 시간 (ms) */
+  lifespan: number;
+  /** 캐릭터 스프라이트 시트에서 쓸 프레임. 없으면 원형 도형으로 그린다 */
+  frame?: number;
+  /** 화면에 표시할 크기 (px) */
+  displayHeight: number;
+  /** 발사 지점 높이 보정 (음수 = 위) */
+  offsetY: number;
+  /** 중력 영향 (0 = 직선) */
+  gravity?: number;
+  /** 적중 후에도 관통하는가 */
+  pierce?: boolean;
+}
+
 /** 하나의 공격 동작을 정의하는 데이터 */
 export interface AttackConfig {
   type: AttackType;
@@ -154,6 +172,8 @@ export interface AttackConfig {
   effectDuration?: number;
   /** 스킬 전용 — 시전 시 자신이 튀어오르는 속도 (음수 = 위로) */
   selfLaunch?: number;
+  /** 있으면 근접 히트박스 대신 투사체를 발사한다 */
+  projectile?: ProjectileConfig;
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +253,12 @@ export interface CharacterConfig {
 
   art: ArtConfig;
   passive: PassiveConfig;
+  /**
+   * 기본 공격도 캐릭터마다 다르다.
+   * 속도형·리치형·한방형의 차이가 여기서 갈린다.
+   */
+  light: AttackConfig;
+  heavy: AttackConfig;
   skill: AttackConfig;
   quotes: QuoteSet;
 }

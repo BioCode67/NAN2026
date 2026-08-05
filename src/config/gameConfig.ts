@@ -228,6 +228,18 @@ export const HEAVY_ATTACK: AttackConfig = {
   shake: 0.016,
 };
 
+/**
+ * 기본 공격 템플릿에서 캐릭터별 공격을 만든다.
+ * 달라지는 값만 적으면 되므로 캐릭터 데이터가 짧아진다.
+ */
+export function melee(
+  type: 'light' | 'heavy',
+  over: Partial<AttackConfig> & { name: string },
+): AttackConfig {
+  const base = type === 'light' ? LIGHT_ATTACK : HEAVY_ATTACK;
+  return { ...base, ...over, type };
+}
+
 /* ------------------------------------------------------------------ */
 /* 타격감 연출 파라미터                                                */
 /* ------------------------------------------------------------------ */

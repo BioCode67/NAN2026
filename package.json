@@ -1,0 +1,28 @@
+{
+  "name": "delisting-brawl",
+  "version": "0.1.0",
+  "description": "상장폐지 대난투 (Delisting Brawl) - 2D SD 대난투 게임",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "phaser",
+    "typescript",
+    "game",
+    "brawler"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0"
+  }
+}

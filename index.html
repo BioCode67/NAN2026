@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>상장폐지 대난투 | Delisting Brawl</title>
+    <meta
+      name="description"
+      content="CEO와 밈 캐릭터들이 주가를 걸고 싸우는 2D SD 대난투 게임"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #05070f;
+        font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR',
+          sans-serif;
+        /* 스페이스바/방향키로 페이지가 스크롤되지 않도록 */
+        overscroll-behavior: none;
+      }
+
+      #game-root {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #game-root canvas {
+        display: block;
+        /* 캔버스 주변 은은한 광원 */
+        box-shadow: 0 0 60px rgba(80, 130, 255, 0.25);
+      }
+
+      /* 게임 로딩 전 표시되는 초기 화면 */
+      #preloader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        color: #8fa6d8;
+        letter-spacing: 0.2em;
+        font-size: 14px;
+        transition: opacity 0.4s ease;
+        pointer-events: none;
+      }
+
+      #preloader.hidden {
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-root"></div>
+
+    <div id="preloader">
+      <div style="font-size: 24px; color: #e8eeff; letter-spacing: 0.1em">
+        상장폐지 대난투
+      </div>
+      <div>DELISTING BRAWL</div>
+      <div style="font-size: 12px; opacity: 0.6">불러오는 중…</div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

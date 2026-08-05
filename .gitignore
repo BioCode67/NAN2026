@@ -30,3 +30,6 @@ desktop.ini
 # Vite 캐시
 .vite/
 node_modules/.vite/
+
+# 스모크 테스트 스크린샷
+tools/smoke-shots/

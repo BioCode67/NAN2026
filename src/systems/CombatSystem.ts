@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, GAME, IMPACT } from '../config/gameConfig';
 import type { AttackConfig } from '../types';
+import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 import type { EventBus } from './EventBus';
 import type { StockSystem } from './StockSystem';
@@ -143,6 +144,11 @@ export class CombatSystem {
     const hitX = Phaser.Math.Clamp(hitbox.centerX, target.x - 40, target.x + 40);
     const hitY = target.y - 8;
 
+    /* 0) 타격음 — 공격 종류에 따라 두께가 달라진다 */
+    sound.play(
+      atk.type === 'light' ? 'hitLight' : atk.type === 'heavy' ? 'hitHeavy' : 'hitSkill',
+    );
+
     /* 1) 히트스탑 */
     this.applyHitstop(atk.hitstop);
 
@@ -195,6 +201,7 @@ export class CombatSystem {
    */
   onSkillCast(caster: BaseCharacter): void {
     const skill = caster.cfg.skill;
+    sound.play('skill');
 
     // 패니 와이즈맨 — 리츠고! : 주가를 걸고 도박한다
     if (skill.effect === 'gamble') {
@@ -203,6 +210,7 @@ export class CombatSystem {
       const delta = win ? amount : -Math.round(amount * 0.6);
 
       this.stock.add(caster.fighterId, delta, null);
+      sound.play(win ? 'gambleWin' : 'gambleLose');
       this.floatText(
         caster.x,
         caster.y - 110,

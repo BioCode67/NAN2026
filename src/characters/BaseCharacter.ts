@@ -10,6 +10,9 @@ import {
   STOCK,
   TIERS,
 } from '../config/gameConfig';
+import { sound } from '../systems/SoundSystem';
+import { ARM_X, buildFighterArt } from './CharacterArt';
+import type { FighterArt } from './CharacterArt';
 import { StockTier } from '../types';
 import type {
   AttackConfig,
@@ -53,11 +56,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 스쿼시&스트레치 대상. 게이지가 같이 찌그러지지 않도록 분리했다. */
   private readonly visual: Phaser.GameObjects.Container;
   private readonly aura: Phaser.GameObjects.Arc;
-  private readonly torso: Phaser.GameObjects.Arc;
-  private readonly head: Phaser.GameObjects.Arc;
-  private readonly eyeL: Phaser.GameObjects.Arc;
-  private readonly eyeR: Phaser.GameObjects.Arc;
+  private readonly art: FighterArt;
+  /** 플래시 복원용 원래 색 (art.flashParts와 같은 순서) */
+  private readonly baseColors: number[];
   private readonly shadow: Phaser.GameObjects.Ellipse;
+  /** 팔·다리 기본 위치 — 걷기/공격 모션 복원 기준 */
+  private readonly armHomeY: number;
+  private readonly legHomeY: number;
 
   private readonly gauge: Phaser.GameObjects.Container;
   private readonly gaugeFill: Phaser.GameObjects.Rectangle;
@@ -124,35 +129,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.aura.setBlendMode(Phaser.BlendModes.ADD);
     this.aura.setVisible(false);
 
-    /* SD 대두 실루엣: 큰 머리 + 작은 몸통 */
-    this.torso = scene.add.circle(
-      0,
-      FIGHTER.BODY_H / 2 - FIGHTER.TORSO_R,
-      FIGHTER.TORSO_R,
-      cfg.colors.body,
-    );
-    this.torso.setStrokeStyle(3, 0x000000, 0.35);
+    /* SD 대두 아트 — 머리/몸통/팔다리 + 캐릭터별 소품(머리·안경·수염·입) */
+    this.art = buildFighterArt(scene, cfg);
+    this.baseColors = this.art.flashParts.map((p) => p.fillColor);
+    this.armHomeY = this.art.armFront.y;
+    this.legHomeY = this.art.legL.y;
 
-    this.head = scene.add.circle(
-      0,
-      -FIGHTER.BODY_H / 2 + FIGHTER.HEAD_R,
-      FIGHTER.HEAD_R,
-      cfg.colors.head,
-    );
-    this.head.setStrokeStyle(3, 0x000000, 0.35);
-
-    /* 눈 — 오른쪽으로 치우쳐 그려서 좌우 반전이 눈에 보이게 한다 */
-    const eyeY = this.head.y - 4;
-    this.eyeL = scene.add.circle(2, eyeY, 4.5, 0x101418);
-    this.eyeR = scene.add.circle(17, eyeY, 4.5, 0x101418);
-
-    this.visual = scene.add.container(0, 0, [
-      this.aura,
-      this.torso,
-      this.head,
-      this.eyeL,
-      this.eyeR,
-    ]);
+    this.visual = scene.add.container(0, 0, [this.aura, ...this.art.parts]);
 
     /* 머리 위 미니 게이지 [===🔥 220%===] */
     const gaugeY = -FIGHTER.BODY_H / 2 - 34;
@@ -243,6 +226,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 도약 시 위로 늘어나는 스트레치
     this.pulseSquash(0.82, 1.22, 110);
+    sound.play(first ? 'jump' : 'doubleJump');
 
     if (!first) this.spawnDoubleJumpRing();
   }
@@ -392,15 +376,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 히트 플래시 — 1프레임 흰색 점멸 */
   flash(): void {
-    const bodyColor = this.cfg.colors.body;
-    const headColor = this.cfg.colors.head;
-    this.torso.setFillStyle(0xffffff);
-    this.head.setFillStyle(0xffffff);
+    this.art.flashParts.forEach((p) => p.setFillStyle(0xffffff));
 
     this.scene.time.delayedCall(IMPACT.FLASH_MS, () => {
-      if (!this.scene) return;
-      this.torso.setFillStyle(bodyColor);
-      this.head.setFillStyle(headColor);
+      if (!this.scene || !this.alive) return;
+      this.art.flashParts.forEach((p, i) => p.setFillStyle(this.baseColors[i]));
     });
   }
 
@@ -433,10 +413,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.auraTween?.stop();
     this.gauge.setVisible(false);
     this.shadow.setVisible(false);
+    sound.play('ko');
 
     // 회색으로 식으며 위로 사라진다
-    this.torso.setFillStyle(0x4b5563);
-    this.head.setFillStyle(0x6b7280);
+    this.art.flashParts.forEach((p) => p.setFillStyle(0x5b6577));
 
     this.scene.tweens.add({
       targets: this,
@@ -612,6 +592,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       // 방금 착지한 프레임에만 스쿼시를 준다 (매 프레임 재생 방지)
       if (!this.wasOnGround && this.fallSpeed > FIGHTER.LAND_SQUASH_VY) {
         this.pulseSquash(1.22, 0.8, 120);
+        sound.play('land', Phaser.Math.Clamp(this.fallSpeed / 1200, 0, 1));
       }
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
@@ -619,6 +600,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.fallSpeed = Math.max(this.fallSpeed, this.body.velocity.y);
     }
     this.wasOnGround = onGround;
+
+    /* 걷기 모션 — 다리와 뒤팔을 번갈아 흔든다 */
+    this.animateStride(time, onGround);
 
     /* 시각 갱신 */
     this.visual.setScale(this.facing * this.squash.x, this.squash.y);
@@ -646,10 +630,49 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.facing = dir;
   }
 
+  /**
+   * 걷기/공중 자세.
+   * 지상에서 이동 중이면 다리를 번갈아 흔들고,
+   * 공중에서는 다리를 살짝 모아 점프 자세를 만든다.
+   */
+  private animateStride(time: number, onGround: boolean): void {
+    const { legL, legR, armBack } = this.art;
+    const moving = Math.abs(this.body.velocity.x) > 40;
+
+    if (onGround && moving) {
+      const swing = Math.sin(time * 0.022) * 4;
+      legL.y = this.legHomeY + swing;
+      legR.y = this.legHomeY - swing;
+      armBack.y = this.armHomeY - swing * 0.5;
+      return;
+    }
+
+    // 공중에서는 다리를 살짝 들어올린다
+    const lift = onGround ? 0 : 4;
+    legL.y = this.legHomeY - lift;
+    legR.y = this.legHomeY - lift * 0.5;
+    armBack.y = this.armHomeY;
+  }
+
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */
   private spawnSwing(atk: AttackConfig): void {
     const cx = this.x + this.facing * (FIGHTER.BODY_W / 2 + atk.range / 2);
     const cy = this.y - 6;
+
+    sound.play('whiff');
+
+    /* 앞팔을 쭉 뻗었다 되돌린다 */
+    const arm = this.art.armFront;
+    this.scene.tweens.killTweensOf(arm);
+    arm.setPosition(ARM_X, this.armHomeY);
+    this.scene.tweens.add({
+      targets: arm,
+      x: ARM_X + (atk.type === 'light' ? 20 : 30),
+      y: this.armHomeY - 6,
+      duration: Math.max(60, atk.active * 0.5),
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
 
     const swing = this.scene.add
       .ellipse(

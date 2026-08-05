@@ -19,6 +19,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     colors: { body: 0x2f6fd0, head: 0xf1c9a5, accent: 0x7dd3fc },
     stats: { speed: 245, jump: -690, doubleJump: -620, weight: 1.05 },
 
+    art: {
+      hair: 'side-part',
+      hairColor: 0x8b6b4a,
+      glasses: 'round',
+      glassesColor: 0xd4a843,
+      beard: false,
+      beardColor: 0x000000,
+      mouth: 'smile',
+      eyes: 'dot',
+    },
+
     passive: {
       type: 'absorb_flat',
       name: '독점 흡수',
@@ -66,6 +77,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     colors: { body: 0x1f2937, head: 0xf1c9a5, accent: 0xe5e7eb },
     stats: { speed: 265, jump: -720, doubleJump: -650, weight: 0.95 },
 
+    art: {
+      hair: 'short',
+      hairColor: 0x6b7280,
+      glasses: 'round',
+      glassesColor: 0x111827,
+      beard: true,
+      beardColor: 0x9ca3af,
+      mouth: 'smirk',
+      eyes: 'dot',
+    },
+
     passive: {
       type: 'absorb_chance',
       name: '현실 왜곡',
@@ -112,6 +134,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     tagline: '떡상하면 아무도 못 막는다',
     colors: { body: 0xdc2626, head: 0xf1c9a5, accent: 0xfbbf24 },
     stats: { speed: 285, jump: -760, doubleJump: -690, weight: 0.9 },
+
+    art: {
+      hair: 'swept',
+      hairColor: 0x3f2d20,
+      glasses: 'none',
+      glassesColor: 0x000000,
+      beard: false,
+      beardColor: 0x000000,
+      mouth: 'smirk',
+      eyes: 'dot',
+    },
 
     passive: {
       type: 'power_when_high',
@@ -162,6 +195,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     colors: { body: 0x334155, head: 0xf1c9a5, accent: 0x38bdf8 },
     stats: { speed: 250, jump: -700, doubleJump: -630, weight: 1.0 },
 
+    art: {
+      hair: 'messy',
+      hairColor: 0x7c6244,
+      glasses: 'rect',
+      glassesColor: 0x1f2937,
+      beard: true,
+      beardColor: 0x8a7050,
+      mouth: 'flat',
+      eyes: 'dot',
+    },
+
     passive: {
       type: 'power_when_low',
       name: '오픈소스',
@@ -211,6 +255,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     tagline: '전부 다 걸었다',
     colors: { body: 0x22c55e, head: 0x86efac, accent: 0xfde047 },
     stats: { speed: 300, jump: -780, doubleJump: -710, weight: 0.85 },
+
+    art: {
+      hair: 'none',
+      hairColor: 0x000000,
+      glasses: 'none',
+      glassesColor: 0x000000,
+      beard: false,
+      beardColor: 0x000000,
+      mouth: 'wide',
+      eyes: 'bulge',
+    },
 
     passive: {
       type: 'absorb_random',

@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
+import { buildFighterArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { DEPTH, GAME } from '../config/gameConfig';
+import { sound } from '../systems/SoundSystem';
 import type { BattleSceneData, CharacterConfig, CharacterId } from '../types';
 
 /** 캐릭터 카드 규격 */
@@ -56,24 +58,32 @@ export class SelectScene extends Phaser.Scene {
   /* 화면 구성                                                        */
   /* ================================================================ */
 
+  /** 정적 배경은 텍스처로 구워 매 프레임 재분할 비용을 없앤다 */
   private buildBackground(): void {
-    this.add
-      .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT, 0x0b1020)
-      .setOrigin(0)
-      .setDepth(DEPTH.BG);
+    const KEY = 'select-bg';
 
-    // 배경 장식 — 흐릿한 주가 차트
-    const g = this.add.graphics().setDepth(DEPTH.BG + 1).setAlpha(0.12);
-    g.lineStyle(3, 0x4ade80, 1);
-    let y = 520;
-    g.beginPath();
-    g.moveTo(0, y);
-    for (let x = 0; x <= GAME.WIDTH; x += 40) {
-      y += Phaser.Math.Between(-34, 26);
-      y = Phaser.Math.Clamp(y, 180, 640);
-      g.lineTo(x, y);
+    if (!this.textures.exists(KEY)) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(0x0b1020, 1);
+      g.fillRect(0, 0, GAME.WIDTH, GAME.HEIGHT);
+
+      // 배경 장식 — 흐릿한 주가 차트
+      g.setAlpha(0.12);
+      g.lineStyle(3, 0x4ade80, 1);
+      let y = 520;
+      g.beginPath();
+      g.moveTo(0, y);
+      for (let x = 0; x <= GAME.WIDTH; x += 40) {
+        y = Phaser.Math.Clamp(y + Phaser.Math.Between(-34, 26), 180, 640);
+        g.lineTo(x, y);
+      }
+      g.strokePath();
+
+      g.generateTexture(KEY, GAME.WIDTH, GAME.HEIGHT);
+      g.destroy();
     }
-    g.strokePath();
+
+    this.add.image(0, 0, KEY).setOrigin(0).setDepth(DEPTH.BG);
   }
 
   private buildHeader(): void {
@@ -121,13 +131,9 @@ export class SelectScene extends Phaser.Scene {
         .rectangle(0, 0, CARD_W, CARD_H, 0x141c33)
         .setStrokeStyle(3, 0x2f3f6b);
 
-      /* 미니 SD 아바타 */
-      const torso = this.add.circle(0, -18, 26, cfg.colors.body);
-      torso.setStrokeStyle(3, 0x000000, 0.35);
-      const head = this.add.circle(0, -62, 38, cfg.colors.head);
-      head.setStrokeStyle(3, 0x000000, 0.35);
-      const eyeL = this.add.circle(-13, -66, 5, 0x101418);
-      const eyeR = this.add.circle(9, -66, 5, 0x101418);
+      /* SD 아바타 — 전투 씬과 동일한 아트를 재사용한다 */
+      const art = buildFighterArt(this, cfg);
+      const avatar = this.add.container(0, -34, art.parts).setScale(1.3);
 
       const name = this.add
         .text(0, 42, cfg.name, {
@@ -158,17 +164,7 @@ export class SelectScene extends Phaser.Scene {
         .setOrigin(0.5);
 
       const root = this.add
-        .container(x, CARD_Y, [
-          glow,
-          frame,
-          torso,
-          head,
-          eyeL,
-          eyeR,
-          name,
-          real,
-          passiveTag,
-        ])
+        .container(x, CARD_Y, [glow, frame, avatar, name, real, passiveTag])
         .setDepth(DEPTH.HUD);
 
       /* 마우스 조작 */
@@ -276,6 +272,7 @@ export class SelectScene extends Phaser.Scene {
       0,
       CHARACTER_ORDER.length,
     );
+    if (next !== this.selectedIndex) sound.play('uiMove');
     this.select(next);
   }
 
@@ -329,6 +326,7 @@ export class SelectScene extends Phaser.Scene {
   private confirm(): void {
     if (this.confirmed) return;
     this.confirmed = true;
+    sound.play('uiConfirm');
 
     const playerId = CHARACTER_ORDER[this.selectedIndex]!;
 

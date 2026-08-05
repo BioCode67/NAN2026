@@ -13,6 +13,7 @@ import { BaseCharacter } from '../characters/BaseCharacter';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
+import { sound } from '../systems/SoundSystem';
 import { StockSystem } from '../systems/StockSystem';
 import { StockTier } from '../types';
 import type { BattleSceneData } from '../types';
@@ -52,6 +53,7 @@ export class BattleScene extends Phaser.Scene {
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
+  private muteLabel!: Phaser.GameObjects.Text;
 
   /** 전투 진행 중인가 (인트로/결과 화면에서는 false) */
   private battleActive = false;
@@ -79,6 +81,7 @@ export class BattleScene extends Phaser.Scene {
     this.bindEvents();
     this.playIntro();
 
+    sound.startBgm();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
     this.cameras.main.fadeIn(280, 0, 0, 0);
   }
@@ -87,38 +90,54 @@ export class BattleScene extends Phaser.Scene {
   /* 스테이지 구성                                                    */
   /* ================================================================ */
 
+  /**
+   * 배경은 한 번만 그려 텍스처로 굽는다.
+   *
+   * Graphics 객체는 매 프레임 명령 목록을 다시 삼각형으로 분할하므로,
+   * 캔들 수십 개 + 꺾은선을 그대로 두면 정적인 그림에 매 프레임 비용을 낸다.
+   * 구운 뒤에는 이미지 1장 = 드로우콜 1회로 끝난다.
+   */
   private buildBackground(): void {
-    // 하늘 — 위로 갈수록 어두운 4단 그라데이션
-    const bands = [0x070b18, 0x0b1020, 0x131c36, 0x1b2748];
-    bands.forEach((color, i) => {
-      this.add
-        .rectangle(0, i * (GAME.HEIGHT / 4), GAME.WIDTH, GAME.HEIGHT / 4, color)
-        .setOrigin(0)
-        .setDepth(DEPTH.BG);
-    });
+    const KEY = 'battle-bg';
 
-    // 배경 주가 차트 — 게임 테마를 드러내는 장식
-    const chart = this.add.graphics().setDepth(DEPTH.BG + 1).setAlpha(0.16);
-    chart.lineStyle(4, 0x4ade80, 1);
-    let y = 420;
-    chart.beginPath();
-    chart.moveTo(0, y);
-    for (let x = 0; x <= GAME.WIDTH; x += 48) {
-      y = Phaser.Math.Clamp(y + Phaser.Math.Between(-42, 30), 120, 520);
-      chart.lineTo(x, y);
-    }
-    chart.strokePath();
+    if (!this.textures.exists(KEY)) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
 
-    // 캔들스틱 실루엣
-    const candles = this.add.graphics().setDepth(DEPTH.BG + 1).setAlpha(0.1);
-    for (let x = 30; x < GAME.WIDTH; x += 46) {
-      const h = Phaser.Math.Between(30, 150);
-      const cy = Phaser.Math.Between(240, 470);
-      const up = Phaser.Math.Between(0, 1) === 1;
-      candles.fillStyle(up ? 0x4ade80 : 0xef4444, 1);
-      candles.fillRect(x, cy - h / 2, 16, h);
-      candles.fillRect(x + 6, cy - h / 2 - 14, 4, h + 28);
+      // 하늘 — 아래로 갈수록 밝아지는 4단 그라데이션
+      const bands = [0x070b18, 0x0b1020, 0x131c36, 0x1b2748];
+      bands.forEach((color, i) => {
+        g.fillStyle(color, 1);
+        g.fillRect(0, i * (GAME.HEIGHT / 4), GAME.WIDTH, GAME.HEIGHT / 4);
+      });
+
+      // 캔들스틱 실루엣
+      g.setAlpha(0.1);
+      for (let x = 30; x < GAME.WIDTH; x += 46) {
+        const h = Phaser.Math.Between(30, 150);
+        const cy = Phaser.Math.Between(240, 470);
+        const up = Phaser.Math.Between(0, 1) === 1;
+        g.fillStyle(up ? 0x4ade80 : 0xef4444, 1);
+        g.fillRect(x, cy - h / 2, 16, h);
+        g.fillRect(x + 6, cy - h / 2 - 14, 4, h + 28);
+      }
+
+      // 주가 꺾은선 — 게임 테마를 드러내는 장식
+      g.setAlpha(0.16);
+      g.lineStyle(4, 0x4ade80, 1);
+      let y = 420;
+      g.beginPath();
+      g.moveTo(0, y);
+      for (let x = 0; x <= GAME.WIDTH; x += 48) {
+        y = Phaser.Math.Clamp(y + Phaser.Math.Between(-42, 30), 120, 520);
+        g.lineTo(x, y);
+      }
+      g.strokePath();
+
+      g.generateTexture(KEY, GAME.WIDTH, GAME.HEIGHT);
+      g.destroy();
     }
+
+    this.add.image(0, 0, KEY).setOrigin(0).setDepth(DEPTH.BG);
   }
 
   private buildStage(): void {
@@ -258,6 +277,10 @@ export class BattleScene extends Phaser.Scene {
 
     kb.on('keydown-R', () => this.scene.start('Battle', this.battleData));
     kb.on('keydown-ESC', () => this.scene.start('Select'));
+    kb.on('keydown-M', () => {
+      const muted = sound.toggleMute();
+      this.muteLabel.setText(muted ? '🔇 M' : '🔊 M');
+    });
   }
 
   private handleInput(): void {
@@ -311,6 +334,7 @@ export class BattleScene extends Phaser.Scene {
         if (p.tier >= StockTier.SURGE_1 && p.tier > p.prevTier) {
           f.say(f.pickQuote('surge'), TIERS[p.tier].color);
           f.pulseSquash(0.8, 1.3, 220);
+          sound.play('surge');
         }
       }),
 
@@ -480,6 +504,15 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(DEPTH.HUD);
 
+    this.muteLabel = this.add
+      .text(GAME.WIDTH - 20, 14, sound.isMuted ? '🔇 M' : '🔊 M', {
+        fontFamily: GAME.FONT,
+        fontSize: '14px',
+        color: '#5d739f',
+      })
+      .setOrigin(1, 0)
+      .setDepth(DEPTH.HUD);
+
     this.fighters.forEach((fighter) => {
       const isPlayer = fighter.side === 'player';
       const x = isPlayer ? 34 : GAME.WIDTH - 34 - 420;
@@ -639,5 +672,6 @@ export class BattleScene extends Phaser.Scene {
     this.disposers = [];
     this.combat?.reset();
     this.stock?.reset();
+    sound.stopBgm();
   }
 }

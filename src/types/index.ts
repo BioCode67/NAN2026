@@ -179,6 +179,26 @@ export interface QuoteSet {
 export type QuoteMood = keyof QuoteSet;
 
 /* ------------------------------------------------------------------ */
+/* 캐릭터 외형 (코드로 그리는 SD 아트)                                 */
+/* ------------------------------------------------------------------ */
+
+export interface ArtConfig {
+  /** 머리 모양 */
+  hair: 'side-part' | 'short' | 'swept' | 'messy' | 'none';
+  hairColor: number;
+  /** 안경 */
+  glasses: 'round' | 'rect' | 'none';
+  glassesColor: number;
+  /** 수염 유무 */
+  beard: boolean;
+  beardColor: number;
+  /** 입 모양 */
+  mouth: 'smile' | 'smirk' | 'flat' | 'wide';
+  /** 눈 스타일 — bulge는 흰자가 보이는 개구리 눈 */
+  eyes: 'dot' | 'bulge';
+}
+
+/* ------------------------------------------------------------------ */
 /* 캐릭터 정의                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -211,6 +231,7 @@ export interface CharacterConfig {
     weight: number;
   };
 
+  art: ArtConfig;
   passive: PassiveConfig;
   skill: AttackConfig;
   quotes: QuoteSet;

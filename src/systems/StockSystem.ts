@@ -73,7 +73,8 @@ export class StockSystem {
       Math.round(baseDamage * attacker.getDamageMultiplier()),
     );
 
-    const ratio = this.rollAbsorbRatio(attacker.cfg);
+    // 아이템(레버리지 등)이 흡수량을 더 얹어준다
+    const ratio = this.rollAbsorbRatio(attacker.cfg) + attacker.getAbsorbBonus();
     const absorbed = Math.round(damage * ratio);
 
     this.setValue(target.fighterId, this.get(target.fighterId) - damage, attacker.fighterId);

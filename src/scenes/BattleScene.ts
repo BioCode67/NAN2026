@@ -13,6 +13,7 @@ import { BaseCharacter } from '../characters/BaseCharacter';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
+import { ItemSystem } from '../systems/ItemSystem';
 import { ProjectileSystem } from '../systems/ProjectileSystem';
 import { sound } from '../systems/SoundSystem';
 import { StockSystem } from '../systems/StockSystem';
@@ -52,6 +53,7 @@ export class BattleScene extends Phaser.Scene {
   private stock!: StockSystem;
   private combat!: CombatSystem;
   private projectiles!: ProjectileSystem;
+  private items!: ItemSystem;
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
@@ -229,6 +231,9 @@ export class BattleScene extends Phaser.Scene {
     this.combat.setFighters(this.fighters);
     this.combat.setProjectiles(this.projectiles);
 
+    this.items = new ItemSystem(this, this.stock);
+    this.items.setFighters(this.fighters);
+
     /* AI 부착 — 플레이어를 추적 대상으로 삼는다 */
     this.fighters
       .filter((f) => f.side === 'ai')
@@ -403,6 +408,7 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(1200, () => {
       this.announce('FIGHT!', '#ff5a5a');
       this.battleActive = true;
+      this.items.start();
       this.player.say(this.player.pickQuote('intro'), this.player.cfg.colors.accent);
     });
 
@@ -700,6 +706,7 @@ export class BattleScene extends Phaser.Scene {
 
     if (this.battleActive) {
       this.combat.update(time);
+      this.items.update(time, delta);
       this.checkBlastZones();
     }
 
@@ -714,6 +721,7 @@ export class BattleScene extends Phaser.Scene {
     this.combat?.reset();
     this.stock?.reset();
     this.projectiles?.reset();
+    this.items?.reset();
     sound.stopBgm();
   }
 }

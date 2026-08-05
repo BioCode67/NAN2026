@@ -21,6 +21,8 @@ interface DotState {
 
 /** DOT 틱 간격 (ms) */
 const DOT_INTERVAL = 1000;
+/** 이 시간 안에 다시 맞히면 콤보가 이어진다 (ms) */
+const COMBO_WINDOW = 1400;
 
 /**
  * 전투 판정 + 타격감 연출 시스템.
@@ -107,6 +109,69 @@ export class CombatSystem {
   update(time: number): void {
     this.resolveHits();
     this.tickDots(time);
+    this.tickCombos(time);
+  }
+
+  /* ================================================================ */
+  /* 콤보                                                             */
+  /* ================================================================ */
+
+  /**
+   * 연속 타격 카운터.
+   * 짧은 간격으로 계속 맞히면 배율이 붙어, 한 대씩 툭툭 치는 것보다
+   * 몰아치는 편이 이득이 되게 만든다.
+   */
+  private readonly combos = new Map<string, { count: number; until: number }>();
+
+  private bumpCombo(fighterId: string): number {
+    const now = this.scene.time.now;
+    const cur = this.combos.get(fighterId);
+    const count = cur && now < cur.until ? cur.count + 1 : 1;
+
+    this.combos.set(fighterId, { count, until: now + COMBO_WINDOW });
+    return count;
+  }
+
+  /** 3히트부터 10%씩, 최대 +60% */
+  private comboMultiplier(count: number): number {
+    if (count < 3) return 1;
+    return Math.min(1.6, 1 + (count - 2) * 0.1);
+  }
+
+  private tickCombos(time: number): void {
+    for (const [id, c] of this.combos) {
+      if (time >= c.until) this.combos.delete(id);
+    }
+  }
+
+  /** 현재 콤보 수 (HUD 표시용) */
+  getCombo(fighterId: string): number {
+    const c = this.combos.get(fighterId);
+    if (!c || this.scene.time.now >= c.until) return 0;
+    return c.count;
+  }
+
+  private showCombo(attacker: BaseCharacter, count: number): void {
+    const label = this.scene.add
+      .text(attacker.x, attacker.y - 130, `${count} COMBO!`, {
+        fontFamily: GAME.FONT,
+        fontSize: `${Math.min(34, 20 + count)}px`,
+        color: count >= 6 ? '#f472b6' : '#facc15',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH.FLOATING);
+    label.setStroke('#0b1020', 6);
+
+    this.scene.tweens.add({
+      targets: label,
+      scale: { from: 1.5, to: 1 },
+      alpha: { from: 1, to: 0 },
+      y: label.y - 30,
+      duration: 620,
+      ease: 'Quad.easeOut',
+      onComplete: () => label.destroy(),
+    });
   }
 
   /** 활성 히트박스와 피격자 바디의 교차를 검사한다 */
@@ -207,15 +272,24 @@ export class CombatSystem {
     /* 4) 히트 플래시 + 5) 스쿼시 & 스트레치 + 넉백/경직 */
     target.receiveHit(atk, fromX);
 
-    /* 6) 주가 변동 — 방어에 성공했으면 피해가 크게 줄어든다 */
-    const baseDamage = guarded
-      ? Math.max(1, atk.damage * FIGHTER.GUARD_DAMAGE_MUL)
-      : atk.damage;
-    const result = this.stock.applyHit(attacker, target, baseDamage);
+    /* 6) 주가 변동 — 방어·아이템·콤보가 모두 반영된다 */
+    const combo = this.bumpCombo(attacker.fighterId);
+    const baseDamage =
+      atk.damage *
+      (guarded ? FIGHTER.GUARD_DAMAGE_MUL : 1) *
+      target.getDamageTakenMultiplier() *
+      this.comboMultiplier(combo);
+
+    const result = this.stock.applyHit(
+      attacker,
+      target,
+      Math.max(1, baseDamage),
+    );
 
     /* 7) 데미지 플로팅 */
     if (guarded) this.floatText(target.x, hitY - 54, 'GUARD!', '#93c5fd');
     this.floatText(hitX, hitY - 30, `-${result.damage}%`, '#ff5a5a');
+    if (combo >= 3) this.showCombo(attacker, combo);
     this.floatText(
       attacker.x,
       attacker.y - 70,
@@ -433,6 +507,7 @@ export class CombatSystem {
   /** 씬 종료 시 정리 */
   reset(): void {
     this.dots.length = 0;
+    this.combos.clear();
     this.fighters = [];
     if (this.hitstopActive) {
       this.hitstopActive = false;

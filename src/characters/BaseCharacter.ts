@@ -9,6 +9,7 @@ import {
   TIERS,
 } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
+import type { ItemConfig, ItemMods } from '../config/items';
 import { createFighterView } from './FighterView';
 import type { FighterView } from './FighterView';
 import type { Pose } from '../config/spriteSheets';
@@ -90,6 +91,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private guarding = false;
   /** 승리 포즈 고정 */
   private victorious = false;
+
+  /** 장착 중인 아이템 (지속형만) */
+  private item: { cfg: ItemConfig; until: number } | null = null;
+  private itemAura?: Phaser.GameObjects.Arc;
+  private itemIcon?: Phaser.GameObjects.Text;
   /** 대시 포즈가 유지되는 시각 */
   private dashUntil = 0;
   /** 다음 대시가 가능한 시각 */
@@ -214,7 +220,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     }
 
     const onGround = this.body.blocked.down || this.body.touching.down;
-    const speed = this.cfg.stats.speed * this.speedMul;
+    const speed = this.cfg.stats.speed * this.speedMul * (this.mods.speedMul ?? 1);
     this.body.setVelocityX(speed * dir * (onGround ? 1 : FIGHTER.AIR_CONTROL));
     this.setFacing(dir);
   }
@@ -304,7 +310,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (!this.isSkillReady()) return false;
 
     const skill = this.cfg.skill;
-    const cooldown = (skill.cooldown ?? 10000) * this.cooldownMul;
+    const cooldown =
+      (skill.cooldown ?? 10000) * this.cooldownMul * (this.mods.cooldownMul ?? 1);
     this.skillReadyAt = this.scene.time.now + cooldown;
 
     this.beginAttack(skill);
@@ -326,7 +333,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 남은 스킬 쿨다운 비율 (0 = 사용 가능, 1 = 방금 씀) */
   getSkillCooldownRatio(): number {
-    const cooldown = (this.cfg.skill.cooldown ?? 10000) * this.cooldownMul;
+    const cooldown =
+      (this.cfg.skill.cooldown ?? 10000) *
+      this.cooldownMul *
+      (this.mods.cooldownMul ?? 1);
     const remain = this.skillReadyAt - this.scene.time.now;
     return Phaser.Math.Clamp(remain / cooldown, 0, 1);
   }
@@ -550,9 +560,87 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.passiveMul = mul;
   }
 
-  /** 최종 공격력 배율 = 떡상 등급 × 패시브 */
+  /** 최종 공격력 배율 = 떡상 등급 × 패시브 × 아이템 */
   getDamageMultiplier(): number {
-    return this.atkMul * this.passiveMul;
+    return this.atkMul * this.passiveMul * (this.mods.atkMul ?? 1);
+  }
+
+  /* ================================================================ */
+  /* 아이템                                                           */
+  /* ================================================================ */
+
+  /** 현재 적용 중인 아이템 효과 (없으면 빈 객체) */
+  private get mods(): ItemMods {
+    return this.item?.cfg.mods ?? {};
+  }
+
+  /** 지속형 아이템 장착. 같은 슬롯이라 기존 아이템은 교체된다 */
+  equipItem(cfg: ItemConfig, until: number): void {
+    if (!this.alive) return;
+    this.clearItemVisual();
+
+    this.item = { cfg, until };
+
+    /* 아이템 오라 — 떡상 오라와 색이 겹치지 않게 링 형태로 그린다 */
+    const aura = this.scene.add.circle(0, -4, 46);
+    aura.setStrokeStyle(4, cfg.color, 0.9);
+    aura.isFilled = false;
+    aura.setBlendMode(Phaser.BlendModes.ADD);
+    this.visual.addAt(aura, 0);
+    this.itemAura = aura;
+
+    this.scene.tweens.add({
+      targets: aura,
+      scale: 1.25,
+      alpha: { from: 1, to: 0.35 },
+      duration: 620,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    /* 머리 위 아이콘 */
+    const icon = this.scene.add
+      .text(0, -22, cfg.icon, { fontSize: '20px' })
+      .setOrigin(0.5);
+    this.gauge.add(icon);
+    this.itemIcon = icon;
+
+    this.pulseSquash(0.86, 1.18, 220);
+  }
+
+  /** 받는 피해 배율 (서킷브레이커 등) */
+  getDamageTakenMultiplier(): number {
+    return this.mods.damageTakenMul ?? 1;
+  }
+
+  /** 흡수 배율 가산 (레버리지 등) */
+  getAbsorbBonus(): number {
+    return this.mods.absorbBonus ?? 0;
+  }
+
+  /** 현재 아이템 (HUD 표시용) */
+  getItem(): { cfg: ItemConfig; until: number } | null {
+    return this.item;
+  }
+
+  private clearItemVisual(): void {
+    if (this.itemAura) {
+      this.scene.tweens.killTweensOf(this.itemAura);
+      this.itemAura.destroy();
+      this.itemAura = undefined;
+    }
+    this.itemIcon?.destroy();
+    this.itemIcon = undefined;
+  }
+
+  /** 만료된 아이템을 떼어낸다 */
+  private tickItem(time: number): void {
+    if (!this.item) return;
+    if (time < this.item.until) return;
+
+    this.item = null;
+    this.clearItemVisual();
   }
 
   getTier(): StockTier {
@@ -615,6 +703,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   override update(time: number, delta: number): void {
     if (!this.alive) return;
+
+    this.tickItem(time);
 
     /* 공격 상태 머신 진행 */
     if (this.attackPhase !== 'none' && this.currentAttack) {

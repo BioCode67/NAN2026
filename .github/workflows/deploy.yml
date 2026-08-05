@@ -1,0 +1,58 @@
+name: Deploy to GitHub Pages
+
+# master에 푸시할 때마다 자동 배포한다.
+# 대회 제출물 ①(플레이 가능한 웹 빌드) 링크가 항상 최신이도록.
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 배포는 한 번에 하나만. 진행 중인 것은 취소하지 않고 큐에 넣는다.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # playwright는 스모크 테스트 전용이라 배포에는 불필요.
+      # 브라우저 다운로드를 막아 CI 시간을 줄인다.
+      - name: 의존성 설치
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: 타입 검사
+        run: npm run typecheck
+
+      - name: 빌드
+        run: npx vite build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

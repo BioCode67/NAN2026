@@ -36,8 +36,8 @@ import { PNG } from 'pngjs';
 
 /** 배경으로 인정할 채널 간 최대 편차 (무채색 판정) */
 const GRAY_TOLERANCE = 16;
-/** 검출된 체크무늬 톤에서 허용할 밝기 오차 */
-const TONE_TOLERANCE = 22;
+/** 검출된 배경 색에서 허용할 RGB 거리 */
+const TONE_TOLERANCE = 38;
 /** 안티에일리어싱 잔여물을 흡수할 때의 최소 밝기 — 이보다 어두우면 캐릭터 외곽선으로 본다 */
 const AA_MIN_LUM = 56;
 /** 이 높이보다 낮고 아래쪽에 떨어져 있는 밴드는 라벨로 간주 */
@@ -63,36 +63,71 @@ const isGray = (i) => {
 };
 const lum = (i) => (data[i] + data[i + 1] + data[i + 2]) / 3;
 
-/* --- 0. 체크무늬 두 톤 자동 검출 ------------------------------------ */
+/* --- 0. 배경 색 자동 검출 -------------------------------------------- */
 
 /*
- * 테두리 픽셀은 전부 배경이므로, 거기서 가장 흔한 무채색 밝기 두 개를 고른다.
- * (시트마다 체크무늬 색이 달라도 그대로 동작하게 하기 위함)
+ * 세 종류의 입력을 모두 받는다.
+ *   A. 진짜 투명 PNG      → 알파 0을 배경으로 (가장 깨끗함)
+ *   B. 단색 배경 (마젠타 등) → 그 색 하나를 배경으로
+ *   C. 체크무늬가 칠해진 시안 → 두 톤을 배경으로
+ *
+ * 테두리 픽셀은 어떤 경우든 배경이므로 거기서 색을 뽑는다.
+ * 비교는 RGB 거리로 한다 — 밝기만 보면 채도 있는 단색 배경을 놓친다.
  */
-const borderHist = new Map();
-const noteBorder = (x, y) => {
-  const i = (y * W + x) * 4;
-  if (!isGray(i)) return;
-  const l = Math.round(lum(i));
-  borderHist.set(l, (borderHist.get(l) ?? 0) + 1);
-};
-for (let x = 0; x < W; x++) { noteBorder(x, 0); noteBorder(x, H - 1); }
-for (let y = 0; y < H; y++) { noteBorder(0, y); noteBorder(W - 1, y); }
 
-const sortedLums = [...borderHist.entries()].sort((a, b) => b[1] - a[1]);
-const tones = [];
-for (const [l] of sortedLums) {
-  // 이미 잡은 톤과 충분히 떨어진 밝기만 새 톤으로 인정
-  if (tones.every((t) => Math.abs(t - l) > TONE_TOLERANCE * 2)) tones.push(l);
-  if (tones.length === 2) break;
+/** 입력에 의미 있는 알파가 있는가 */
+let hasAlpha = false;
+for (let i = 3; i < data.length; i += 4) {
+  if (data[i] < 250) { hasAlpha = true; break; }
 }
-console.log(`체크무늬 톤 검출: ${tones.join(', ')} (±${TONE_TOLERANCE})`);
 
-/** 배경 색인가 — 무채색이면서 검출된 두 톤 중 하나에 가까워야 한다 */
+const tones = [];
+
+if (hasAlpha) {
+  console.log('배경: 알파 채널 사용 (투명 PNG)');
+} else {
+  const borderHist = new Map();
+  const noteBorder = (x, y) => {
+    const i = (y * W + x) * 4;
+    // 8단위로 양자화해 압축 노이즈를 뭉갠다
+    const k = `${data[i] >> 3},${data[i + 1] >> 3},${data[i + 2] >> 3}`;
+    borderHist.set(k, (borderHist.get(k) ?? 0) + 1);
+  };
+  for (let x = 0; x < W; x++) { noteBorder(x, 0); noteBorder(x, H - 1); }
+  for (let y = 0; y < H; y++) { noteBorder(0, y); noteBorder(W - 1, y); }
+
+  const dist = (a, b) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+  const sorted = [...borderHist.entries()].sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((s, [, n]) => s + n, 0);
+
+  for (const [k, n] of sorted) {
+    const rgb = k.split(',').map((v) => (Number(v) << 3) + 4);
+    // 이미 잡은 톤과 충분히 떨어진 색만 새 배경 톤으로 인정
+    if (tones.some((t) => dist(t, rgb) <= TONE_TOLERANCE * 2)) continue;
+    // 테두리의 5% 미만만 차지하는 색은 배경으로 보지 않는다
+    if (n / total < 0.05) break;
+    tones.push(rgb);
+    if (tones.length === 2) break;
+  }
+
+  if (!tones.length) {
+    console.error('배경 색을 찾지 못했습니다. 테두리가 배경인지 확인하세요.');
+    process.exit(1);
+  }
+  console.log(
+    `배경 색 검출: ${tones.map((t) => `rgb(${t.join(',')})`).join(' + ')} (±${TONE_TOLERANCE})`,
+  );
+}
+
+/** 배경 픽셀인가 */
 const isBgColor = (i) => {
-  if (!isGray(i)) return false;
-  const l = lum(i);
-  return tones.some((t) => Math.abs(l - t) <= TONE_TOLERANCE);
+  if (hasAlpha) return data[i + 3] < 24;
+  const r = data[i], g = data[i + 1], b = data[i + 2];
+  return tones.some(
+    (t) => Math.hypot(r - t[0], g - t[1], b - t[2]) <= TONE_TOLERANCE,
+  );
 };
 
 /* --- 1. 테두리 flood fill로 배경 마스크 만들기 --------------------- */
@@ -127,23 +162,35 @@ while (stack.length) {
 }
 
 /*
- * 체크무늬와 캐릭터 경계의 안티에일리어싱 픽셀 정리.
- * 배경에 인접한 밝은 무채색만 흡수한다 —
- * AA_MIN_LUM 아래는 외곽선이므로 건드리지 않는다.
+ * 배경과 캐릭터 경계의 안티에일리어싱 픽셀 정리.
+ * 투명 PNG 입력은 경계가 이미 깨끗하므로 건너뛴다.
+ *
+ * 배경에 인접하면서 배경 색에 "거의" 가까운 픽셀만 흡수한다.
+ * 회색 체크무늬의 경우 AA_MIN_LUM 아래는 캐릭터 외곽선이므로 남긴다.
  */
-for (let pass = 0; pass < 2; pass++) {
-  const add = [];
-  for (let y = 1; y < H - 1; y++) {
-    for (let x = 1; x < W - 1; x++) {
-      const p = y * W + x;
-      if (bg[p]) continue;
-      const i = p * 4;
-      if (!isGray(i) || lum(i) < AA_MIN_LUM) continue;
-      if (bg[p - 1] || bg[p + 1] || bg[p - W] || bg[p + W]) add.push(p);
+if (!hasAlpha) {
+  const nearBg = (i) => {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    return tones.some(
+      (t) => Math.hypot(r - t[0], g - t[1], b - t[2]) <= TONE_TOLERANCE * 1.8,
+    );
+  };
+
+  for (let pass = 0; pass < 2; pass++) {
+    const add = [];
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const p = y * W + x;
+        if (bg[p]) continue;
+        const i = p * 4;
+        if (!nearBg(i)) continue;
+        if (isGray(i) && lum(i) < AA_MIN_LUM) continue;
+        if (bg[p - 1] || bg[p + 1] || bg[p - W] || bg[p + W]) add.push(p);
+      }
     }
+    add.forEach((p) => (bg[p] = 1));
+    if (!add.length) break;
   }
-  add.forEach((p) => (bg[p] = 1));
-  if (!add.length) break;
 }
 
 /*
@@ -160,16 +207,17 @@ for (let pass = 0; pass < 2; pass++) {
     if (bg[s] || seen[s] || !isBgColor(s * 4)) continue;
 
     const region = [];
-    const toneHit = [false, false];
+    const toneHit = tones.map(() => false);
     const q = [s];
     seen[s] = 1;
 
     while (q.length) {
       const p = q.pop();
       region.push(p);
-      const l = lum(p * 4);
+      const i = p * 4;
       tones.forEach((t, ti) => {
-        if (Math.abs(l - t) <= TONE_TOLERANCE) toneHit[ti] = true;
+        const d = Math.hypot(data[i] - t[0], data[i + 1] - t[1], data[i + 2] - t[2]);
+        if (d <= TONE_TOLERANCE) toneHit[ti] = true;
       });
 
       const x = p % W;
@@ -186,8 +234,14 @@ for (let pass = 0; pass < 2; pass++) {
       }
     }
 
-    // 두 톤이 모두 있고 충분히 큰 덩어리만 체크무늬로 인정
-    if (region.length >= 200 && toneHit[0] && toneHit[1]) {
+    /*
+     * 체크무늬(두 톤)라면 한 덩어리 안에 두 톤이 모두 있어야 배경으로 본다.
+     * 단색 배경이나 투명 입력은 색이 정확히 일치하므로 그 조건이 필요 없다.
+     */
+    const looksLikeBg =
+      tones.length >= 2 ? toneHit.every(Boolean) : true;
+
+    if (region.length >= 200 && looksLikeBg) {
       region.forEach((p) => (bg[p] = 1));
       removed += region.length;
     }

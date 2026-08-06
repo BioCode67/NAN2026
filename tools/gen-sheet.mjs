@@ -39,36 +39,17 @@
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { generateImage, loadEnvFile, resolveModel } from './gemini.mjs';
 
 /**
- * .env.local 에서 키를 읽는다.
- *
- * 셸 환경변수는 터미널을 새로 열 때마다 다시 넣어야 하고,
- * 명령줄에 직접 적으면 키가 셸 기록에 남는다. 파일 쪽이 안전하다.
- * 의존성을 늘리지 않으려고 필요한 만큼만 직접 파싱한다.
+ * 받침 유무에 맞는 목적격 조사를 고른다.
+ * "일론 머스크을(를)" 같은 표기를 그대로 보내면 생성기가 괄호를 글자로
+ * 그려 넣는 일이 실제로 있다.
  */
-function loadEnvFile(file = '.env.local') {
-  if (!existsSync(file)) return;
-
-  for (const raw of readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-
-    const eq = line.indexOf('=');
-    if (eq < 0) continue;
-
-    const key = line.slice(0, eq).trim();
-    let val = line.slice(eq + 1).trim();
-    // 따옴표로 감싼 값 허용
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
-      val = val.slice(1, -1);
-    }
-    // 이미 셸에 있는 값이 우선
-    if (key && process.env[key] === undefined) process.env[key] = val;
-  }
+function objectParticle(word) {
+  const code = word.trim().slice(-1).charCodeAt(0);
+  if (code < 0xac00 || code > 0xd7a3) return '를';
+  return (code - 0xac00) % 28 === 0 ? '를' : '을';
 }
 
 loadEnvFile();
@@ -204,7 +185,7 @@ function buildPrompt(c) {
   const m = c.moves;
   return `2D 대전 격투 게임용 스프라이트 시트를 만들어줘.
 
-[캐릭터] ${c.name}을(를) 극단적으로 과장한 SD 도트 캐릭터.
+[캐릭터] ${c.name}${objectParticle(c.name)} 극단적으로 과장한 SD 도트 캐릭터.
 ${c.look}
 무기: ${c.weapon}
 ${c.wild}
@@ -269,56 +250,15 @@ ${c.wild}
 /* Gemini 이미지 API                                                   */
 /* ------------------------------------------------------------------ */
 
-const MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3.1-flash-image';
-const API = 'https://generativelanguage.googleapis.com/v1beta';
+const MODEL = resolveModel();
 
-/** 응답에서 base64 이미지를 꺼낸다 (엔드포인트별 형식 차이를 흡수) */
-function extractImage(json) {
-  // interactions 형식: steps[].content[].data
-  for (const step of json.steps ?? []) {
-    for (const part of step.content ?? []) {
-      if (part.type === 'image' && part.data) return part.data;
-    }
-  }
-  if (json.output_image?.data) return json.output_image.data;
-
-  // generateContent 형식: candidates[].content.parts[].inlineData.data
-  for (const cand of json.candidates ?? []) {
-    for (const part of cand.content?.parts ?? []) {
-      if (part.inlineData?.data) return part.inlineData.data;
-      if (part.inline_data?.data) return part.inline_data.data;
-    }
-  }
-  return null;
-}
-
-async function generate(prompt, apiKey) {
-  const res = await fetch(`${API}/interactions`, {
-    method: 'POST',
-    headers: {
-      'x-goog-api-key': apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      input: [{ type: 'text', text: prompt }],
-    }),
-  });
-
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`API ${res.status}\n${text.slice(0, 600)}`);
-  }
-
-  const json = JSON.parse(text);
-  const b64 = extractImage(json);
-  if (!b64) {
-    throw new Error(
-      `응답에서 이미지를 찾지 못했습니다.\n${JSON.stringify(json).slice(0, 600)}`,
-    );
-  }
-  return Buffer.from(b64, 'base64');
-}
+/*
+ * 이미지 생성은 tools/gemini.mjs 하나로 모았다.
+ * 예전에는 여기에 따로 호출부가 있었는데 엔드포인트가 실제 API와 달랐고,
+ * 같은 일을 하는 코드가 두 벌 있으면 한쪽만 고쳐지기 마련이다.
+ */
+const generate = (prompt, apiKey) =>
+  generateImage(prompt, { apiKey, model: MODEL, aspectRatio: '21:9' });
 
 /* ------------------------------------------------------------------ */
 

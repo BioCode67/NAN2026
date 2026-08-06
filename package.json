@@ -17,6 +17,7 @@
     "test:ai": "node --experimental-strip-types tools/test-ai.mjs",
     "test": "npm run typecheck && npm run test:prompt && npm run test:sheet && npm run test:ai",
     "prompts": "node tools/gen-prompts.mjs",
+    "art": "node tools/gen-art.mjs",
     "sheet:merge": "node tools/merge-sheets.mjs"
   },
   "keywords": [

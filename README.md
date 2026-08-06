@@ -282,6 +282,26 @@ docs/            아트 생성 규격
 배경으로 온 그림은 자동으로 누끼를 딴다. 프롬프트는 `npm run prompts` 가
 `art-source/prompts/scenes/` 에 만들어 둔다 (`src/config/artAssets.ts` 가 표다).
 
+#### 손으로 안 하고 한 번에
+
+프롬프트를 열어 복사 → 웹에 붙여넣기 → 기다리기 → 내려받기 → 이름 바꾸기 →
+폴더에 옮기기. 한 장에 여섯 단계고, 다 하면 46장이다.
+그중 사람이 판단할 것은 "이 그림이 마음에 드는가" 하나뿐이므로 나머지는 넘긴다.
+
+```bash
+cp .env.example .env.local     # GEMINI_API_KEY 를 채운다 (커밋되지 않는다)
+
+npm run art                    # 배경 5 + UI 6 — 아직 없는 것만
+npm run art -- gates           # 빌 게이츠맨 묶음 7장
+npm run art -- --all           # 46장 전부
+npm run art -- exchange --force  # 마음에 안 드는 한 장만 다시
+npm run art -- --dry           # 뭘 만들지만 보고 끝
+```
+
+같은 프롬프트 파일을 읽어 보내고, 받은 그림을 게임이 읽는 경로에 바로 쓴다.
+**이미 있는 그림은 건너뛴다** — 어제 마음에 들어 남겨둔 것을 덮어쓰지 않는다.
+키가 없으면 지금까지대로 프롬프트를 손으로 붙여넣으면 된다.
+
 스테이지 배경은 **맵 기믹과 짝지어져** 있다. "달로 보내줘"를 입력하면 중력만
 바뀌는 게 아니라 배경까지 달 표면으로 갈렸다가, 기믹이 끝나면 되돌아온다.
 
@@ -296,7 +316,8 @@ npm run test:prompt # 프롬프트 해석기 테스트 (브라우저 불필요)
 npm run test:sheet  # 스프라이트 시트 파이프라인 테스트 (묶음 합치기 → 규격 판별)
 npm run test:ai     # 봇 성격 테스트 (캐릭터별 스킬 판단)
 npm test            # 위 세 가지 + 타입 검사 한 번에
-npm run prompts    # 캐릭터별 스프라이트 프롬프트 생성 (나노바나나에 붙여넣기)
+npm run prompts    # 프롬프트 46개 생성 (캐릭터 35 + 스테이지·UI 11)
+npm run art        # 그 프롬프트로 이미지 생성 → 제자리에 저장 (API 키 필요)
 npm run sheet:merge -- <key>            # 받은 묶음 이미지를 시트 한 장으로 합침
 npm run sheet -- <입력.png> <출력.png>   # 스프라이트 시트 전처리(단일 파일)
 npm run sheet -- <입력.png> <출력.png> --grid 5x3 --label-band 0.13

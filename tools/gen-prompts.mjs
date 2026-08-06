@@ -227,6 +227,16 @@ ${uiRows}
 mkdir -p public/bg public/ui   # 처음 한 번만
 npm run dev                    # 그림을 넣고 새로고침
 \`\`\`
+
+## 손으로 안 하고 한 번에
+
+여는 것부터 옮기는 것까지가 한 장에 여섯 단계다. API 키가 있으면 넘길 수 있다.
+
+\`\`\`bash
+cp .env.example .env.local       # GEMINI_API_KEY 를 채운다
+npm run art                      # 이 폴더의 프롬프트로 11장을 만들어 제자리에 저장
+npm run art -- exchange --force  # 마음에 안 드는 한 장만 다시
+\`\`\`
 `;
 }
 

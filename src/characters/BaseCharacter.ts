@@ -98,6 +98,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 스쿼시 계수. facing 반전과 충돌하지 않도록 별도 보관한다. */
   private readonly squash = { x: 1, y: 1 };
+  /**
+   * 몸 크기 배율 (거대화 룰).
+   *
+   * 겉보기만 키우면 히트박스가 그대로라 "닿았는데 안 맞는다"가 된다.
+   * 그림·판정·물리 바디를 한 값으로 함께 키운다.
+   */
+  private sizeScale = 1;
 
   /* --- 전투 상태 ------------------------------------------------- */
   private attackPhase: AttackPhase = 'none';
@@ -328,6 +335,21 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     return this.guarding;
   }
 
+  /**
+   * 몸 크기를 바꾼다 (1 = 기본).
+   * 그림·히트박스·물리 바디가 함께 커진다.
+   */
+  setSizeScale(scale: number): void {
+    this.sizeScale = scale;
+
+    const w = FIGHTER.BODY_W * scale;
+    const h = FIGHTER.BODY_H * scale;
+    this.body.setSize(w, h);
+    this.body.setOffset(-w / 2, -h / 2);
+
+    this.pulseSquash(scale > 1 ? 0.8 : 1.2, scale > 1 ? 1.25 : 0.85, 260);
+  }
+
   /** 전투 승리 — 승리 포즈로 고정한다 */
   showVictory(): void {
     if (!this.alive) return;
@@ -529,8 +551,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 두 곳 모두 이 계산 하나만 쓴다.
    */
   private computeHitArea(atk: AttackConfig): HitArea {
-    const w = atk.range;
-    const h = atk.hitHeight;
+    const w = atk.range * this.sizeScale;
+    const h = atk.hitHeight * this.sizeScale;
+    // 몸 기준 좌표도 함께 커져야 판정이 그림 위에 얹힌다
+    const halfW = (FIGHTER.BODY_W / 2) * this.sizeScale;
+    const halfH = (FIGHTER.BODY_H / 2) * this.sizeScale;
 
     switch (atk.hitAnchor ?? 'front') {
       case 'up':
@@ -541,24 +566,24 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
          */
         return {
           cx: this.x + this.facing * (w * 0.28),
-          cy: this.y - FIGHTER.BODY_H / 2 - h / 2 + 34,
+          cy: this.y - halfH - h / 2 + 34 * this.sizeScale,
           w,
           h,
         };
       case 'down':
         return {
-          cx: this.x + this.facing * (FIGHTER.BODY_W / 2 + w / 2),
-          cy: this.y + FIGHTER.BODY_H / 2 - h / 2 + 4,
+          cx: this.x + this.facing * (halfW + w / 2),
+          cy: this.y + halfH - h / 2 + 4 * this.sizeScale,
           w,
           h,
         };
       case 'around':
         // range가 전방 사거리가 아니라 좌우를 합친 전체 폭이 된다
-        return { cx: this.x, cy: this.y + FIGHTER.BODY_H / 2 - h / 2, w, h };
+        return { cx: this.x, cy: this.y + halfH - h / 2, w, h };
       default:
         return {
-          cx: this.x + this.facing * (FIGHTER.BODY_W / 2 + w / 2),
-          cy: this.y - 6,
+          cx: this.x + this.facing * (halfW + w / 2),
+          cy: this.y - 6 * this.sizeScale,
           w,
           h,
         };
@@ -987,8 +1012,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.view.setPose(this.computePose(onGround));
     this.view.update(time, onGround);
 
-    /* 시각 갱신 */
-    this.visual.setScale(this.facing * this.squash.x, this.squash.y);
+    /* 시각 갱신 — 스쿼시와 몸 크기를 함께 곱한다 */
+    this.visual.setScale(
+      this.facing * this.squash.x * this.sizeScale,
+      this.squash.y * this.sizeScale,
+    );
 
     /* 그림자 — 지면에 고정되고, 높이 뜰수록 작고 옅어진다 */
     const groundY = STAGE.GROUND_Y + 4;

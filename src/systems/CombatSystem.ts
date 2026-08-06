@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { DEPTH, FIGHTER, GAME, IMPACT } from '../config/gameConfig';
+import { DEPTH, FIGHTER, GAME, IMPACT, MOVE_TEMPLATES } from '../config/gameConfig';
 import { SPRITE_SHEETS } from '../config/spriteSheets';
 import type { AttackConfig } from '../types';
 import { sound } from './SoundSystem';
@@ -72,6 +72,33 @@ export class CombatSystem {
   /** 투사체 시스템 연결 (없으면 근접 판정만 수행) */
   setProjectiles(projectiles: ProjectileSystem): void {
     this.projectiles = projectiles;
+  }
+
+  /**
+   * 룰이 바꾼 피해 배율을 얹는 훅.
+   *
+   * 서든데스(3배)나 리듬 판정(0.5~2배)처럼 "지금 이 판의 규칙"이 정하는 값이라,
+   * 캐릭터·아이템 배율과 성격이 다르다. 전투 계산이 규칙을 몰라도 되도록
+   * 바깥에서 함수 하나로 꽂는다.
+   */
+  private damageHook?: (ctx: {
+    attacker: BaseCharacter;
+    target: BaseCharacter;
+    atk: AttackConfig;
+    x: number;
+    y: number;
+  }) => number;
+
+  setDamageHook(
+    fn: (ctx: {
+      attacker: BaseCharacter;
+      target: BaseCharacter;
+      atk: AttackConfig;
+      x: number;
+      y: number;
+    }) => number,
+  ): void {
+    this.damageHook = fn;
   }
 
   /* ================================================================ */
@@ -367,11 +394,15 @@ export class CombatSystem {
     target.receiveHit(atk, fromX);
 
     /* 6) 주가 변동 — 방어·아이템·콤보가 모두 반영된다 */
+    const ruleMul =
+      this.damageHook?.({ attacker, target, atk, x: hitX, y: hitY }) ?? 1;
+
     const baseDamage =
       atk.damage *
       (guarded ? FIGHTER.GUARD_DAMAGE_MUL : 1) *
       target.getDamageTakenMultiplier() *
-      this.comboMultiplier(combo);
+      this.comboMultiplier(combo) *
+      ruleMul;
 
     const result = this.stock.applyHit(
       attacker,
@@ -509,6 +540,69 @@ export class CombatSystem {
       this.floatText(target.x, target.y - 40, `-${result.damage}%`, '#ff5a5a');
       this.floatText(owner.x, owner.y - 80, `+${result.absorbed}%`, '#5affa0');
     }
+  }
+
+  /**
+   * 지점 폭발 — 폭탄 아이템이 쓴다.
+   *
+   * 공격자가 없는 피해라 주가는 흡수 없이 그냥 빠진다.
+   * 넉백·히트스탑은 일반 타격과 같은 경로를 타야 "터졌다"가 손에 전달된다.
+   */
+  triggerBlast(x: number, y: number, range: number, damage: number): void {
+    sound.play('hitSkill');
+    this.applyHitstop(140);
+    this.scene.cameras.main.shake(300, 0.028);
+    this.spawnImpact(x, y, 0xef4444, {
+      ...this.blastAttack(damage),
+      type: 'heavy',
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const ring = this.scene.add.circle(x, y, range * 0.25).setDepth(DEPTH.IMPACT);
+      ring.isFilled = false;
+      ring.setStrokeStyle(6, 0xf97316, 0.9);
+      this.scene.tweens.add({
+        targets: ring,
+        scale: 3.2 + i * 0.6,
+        alpha: 0,
+        duration: 380 + i * 120,
+        ease: 'Cubic.easeOut',
+        onComplete: () => ring.destroy(),
+      });
+    }
+
+    for (const target of this.fighters) {
+      if (!target.alive) continue;
+
+      const dist = Phaser.Math.Distance.Between(x, y, target.x, target.y);
+      if (dist > range) continue;
+
+      // 중심에서 멀수록 약해진다 (최소 35%)
+      const falloff = Math.max(0.35, 1 - dist / range);
+      const atk = this.blastAttack(damage * falloff);
+
+      target.receiveHit(atk, x);
+      this.stock.add(
+        target.fighterId,
+        -Math.max(1, Math.round(atk.damage * target.getDamageTakenMultiplier())),
+        null,
+      );
+      this.floatText(target.x, target.y - 40, `-${Math.round(atk.damage)}%`, '#f97316');
+    }
+  }
+
+  /** 폭발용 임시 공격 데이터 */
+  private blastAttack(damage: number): AttackConfig {
+    return {
+      ...MOVE_TEMPLATES.heavyDown,
+      name: '폭발',
+      damage,
+      knockbackX: 620,
+      knockbackY: -560,
+      hitstun: 460,
+      hitstop: 140,
+      shake: 0.028,
+    };
   }
 
   /**

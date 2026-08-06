@@ -11,7 +11,8 @@ export type ItemId =
   | 'stockOption'
   | 'algoTrading'
   | 'circuitBreaker'
-  | 'leverage';
+  | 'leverage'
+  | 'bomb';
 
 export interface ItemMods {
   /** 공격력 배율 */
@@ -41,8 +42,16 @@ export interface ItemConfig {
   mods?: ItemMods;
   /** 즉시 주가 변동(%) */
   instantStock?: number;
-  /** 드랍 가중치 — 클수록 자주 나온다 */
+  /** 드랍 가중치 — 클수록 자주 나온다. 0이면 평소에는 나오지 않는다 */
   weight: number;
+  /**
+   * 주우면 그 자리에서 터진다.
+   * 범위 안의 **모두**가 맞는다 — 주운 사람도 예외가 아니다.
+   */
+  explode?: {
+    range: number;
+    damage: number;
+  };
 }
 
 export const ITEMS: Record<ItemId, ItemConfig> = {
@@ -94,6 +103,21 @@ export const ITEMS: Record<ItemId, ItemConfig> = {
     weight: 20,
   },
 
+  /*
+   * 폭탄 — 평소에는 안 나오고 프롬프트 기믹(폭탄 투하)으로만 떨어진다.
+   * 그래서 weight가 0이다. 주우면 터지므로 상대 쪽으로 유인하는 물건이다.
+   */
+  bomb: {
+    id: 'bomb',
+    name: '폭탄',
+    desc: '주변 전원에게 광역 피해',
+    icon: '💣',
+    color: 0xef4444,
+    duration: 0,
+    weight: 0,
+    explode: { range: 220, damage: 26 },
+  },
+
   /* 하이리스크 — 게임의 테마에 가장 맞는 아이템 */
   leverage: {
     id: 'leverage',
@@ -109,7 +133,7 @@ export const ITEMS: Record<ItemId, ItemConfig> = {
 
 export const ITEM_LIST: ItemConfig[] = Object.values(ITEMS);
 
-/** 가중치에 따라 아이템 하나를 고른다 */
+/** 가중치에 따라 아이템 하나를 고른다 (weight 0인 특수 아이템은 제외된다) */
 export function rollItem(rand: () => number): ItemConfig {
   const total = ITEM_LIST.reduce((s, i) => s + i.weight, 0);
   let r = rand() * total;

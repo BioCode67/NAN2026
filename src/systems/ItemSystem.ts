@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, GAME, STAGE } from '../config/gameConfig';
-import { rollItem } from '../config/items';
-import type { ItemConfig } from '../config/items';
+import { ITEMS, rollItem } from '../config/items';
+import type { ItemConfig, ItemId } from '../config/items';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 import type { StockSystem } from './StockSystem';
@@ -45,8 +45,24 @@ export class ItemSystem {
     private readonly stock: StockSystem,
   ) {}
 
+  /** 폭탄이 터질 때 호출 — BattleScene이 CombatSystem에 연결한다 */
+  onExplode?: (x: number, y: number, range: number, damage: number) => void;
+
   setFighters(fighters: BaseCharacter[]): void {
     this.fighters = fighters;
+  }
+
+  /**
+   * 아이템을 한꺼번에 쏟아붓는다 (프롬프트 기믹용).
+   *
+   * @param count 개수
+   * @param only  지정하면 그 아이템만 떨어진다 (폭탄 투하·긴급 수혈 등)
+   */
+  dropBurst(count: number, only?: ItemId): void {
+    for (let i = 0; i < count; i++) {
+      // 한 점에 겹쳐 떨어지면 하나만 줍고 끝나므로 가로로 흩는다
+      this.spawn(only ? ITEMS[only] : undefined, i * 90);
+    }
   }
 
   /** 전투 시작 시 호출 — 첫 드랍 타이머를 건다 */
@@ -68,12 +84,16 @@ export class ItemSystem {
   /* 드랍                                                             */
   /* ================================================================ */
 
-  private spawn(): void {
-    const cfg = rollItem(() => Phaser.Math.FloatBetween(0, 1));
+  /**
+   * @param forced 지정하면 그 아이템으로 떨어뜨린다 (기믹용)
+   * @param dropOffsetY 여러 개를 한꺼번에 뿌릴 때 높이를 벌리는 값
+   */
+  private spawn(forced?: ItemConfig, dropOffsetY = 0): void {
+    const cfg = forced ?? rollItem(() => Phaser.Math.FloatBetween(0, 1));
 
     // 스테이지 안쪽에만 떨어뜨린다 (장외로 굴러가면 못 줍는다)
     const x = Phaser.Math.Between(STAGE.LEFT + 120, STAGE.RIGHT - 120);
-    const y = -60;
+    const y = -60 - dropOffsetY;
 
     const box = this.scene.add
       .rectangle(0, 0, 44, 44, 0x0b1020, 0.9)
@@ -174,6 +194,16 @@ export class ItemSystem {
 
   private grant(fighter: BaseCharacter, cfg: ItemConfig, time: number): void {
     sound.play('gambleWin');
+
+    /*
+     * 폭탄 — 획득이 아니라 사고다.
+     * 판정을 CombatSystem에 넘겨 넉백·히트스탑까지 일반 타격과 같은 경로로 처리한다.
+     */
+    if (cfg.explode) {
+      this.onExplode?.(fighter.x, fighter.y, cfg.explode.range, cfg.explode.damage);
+      this.announce(fighter, cfg);
+      return;
+    }
 
     // 즉시형 (자사주 매입)
     if (cfg.instantStock) {

@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "gen": "node tools/gen-sheet.mjs",
     "sheet": "node tools/process-sheet.mjs",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "test:prompt": "node --experimental-strip-types tools/test-prompts.mjs"
   },
   "keywords": [
     "phaser",

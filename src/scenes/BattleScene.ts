@@ -10,13 +10,18 @@ import {
   TIERS,
 } from '../config/gameConfig';
 import { BaseCharacter, resetQuoteThrottle } from '../characters/BaseCharacter';
+import { AI_PROMPTS, interpretPrompt } from '../config/gimmicks';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
+import { GimmickSystem } from '../systems/GimmickSystem';
 import { ItemSystem } from '../systems/ItemSystem';
 import { ProjectileSystem } from '../systems/ProjectileSystem';
+import { PromptOrbSystem } from '../systems/PromptOrbSystem';
+import { RhythmSystem } from '../systems/RhythmSystem';
 import { sound } from '../systems/SoundSystem';
 import { StockSystem } from '../systems/StockSystem';
+import { closePromptOverlay, openPromptOverlay } from '../ui/PromptOverlay';
 import { StockTier } from '../types';
 import type { AttackDir, BattleSceneData } from '../types';
 
@@ -61,12 +66,20 @@ export class BattleScene extends Phaser.Scene {
   private combat!: CombatSystem;
   private projectiles!: ProjectileSystem;
   private items!: ItemSystem;
+  private orbs!: PromptOrbSystem;
+  private gimmicks!: GimmickSystem;
+  private rhythm!: RhythmSystem;
+
+  /** 프롬프트 입력 중 — 전투를 멈추고 조작을 막는다 */
+  private prompting = false;
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
   /** 연속기 안내 — 지금 이어 칠 수 있는 다음 타를 알려준다 */
   private chainHint!: Phaser.GameObjects.Text;
+  /** 진행 중인 프롬프트 기믹 표시 */
+  private gimmickHud!: Phaser.GameObjects.Text;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
   private hudLayer!: Phaser.GameObjects.Container;
   /** 더블탭 대시 판정용 */
@@ -297,6 +310,36 @@ export class BattleScene extends Phaser.Scene {
 
     this.items = new ItemSystem(this, this.stock);
     this.items.setFighters(this.fighters);
+    // 폭탄은 일반 타격과 같은 경로로 처리해야 넉백·히트스탑이 붙는다
+    this.items.onExplode = (x, y, range, damage) =>
+      this.combat.triggerBlast(x, y, range, damage);
+
+    /* 프롬프트 기믹 — 이 게임의 스매시볼 */
+    this.rhythm = new RhythmSystem(this);
+    this.gimmicks = new GimmickSystem(this, {
+      fighters: () => this.fighters,
+      items: this.items,
+      stock: this.stock,
+      rhythm: this.rhythm,
+      platforms: () => this.platforms,
+    });
+
+    this.orbs = new PromptOrbSystem(this);
+    this.orbs.setFighters(this.fighters);
+    this.orbs.setProjectiles(this.projectiles);
+    this.orbs.onBreak = (breaker) => void this.runPrompt(breaker);
+
+    // 룰이 바꾼 피해 배율 + 리듬 판정을 전투 계산에 얹는다
+    this.combat.setDamageHook((ctx) => {
+      let mul = this.gimmicks.getDamageMultiplier();
+
+      const judge = this.rhythm.judge(this.time.now);
+      if (judge) {
+        mul *= judge.mul;
+        this.rhythm.showJudge(ctx.x, ctx.y, judge);
+      }
+      return mul;
+    });
 
     /* AI 부착 — 플레이어를 추적 대상으로 삼는다 */
     this.fighters
@@ -390,7 +433,10 @@ export class BattleScene extends Phaser.Scene {
     if (JustDown(this.keys.left!) && this.checkDoubleTap(-1)) p.dash(-1);
     if (JustDown(this.keys.right!) && this.checkDoubleTap(1)) p.dash(1);
 
-    p.moveHorizontal(left && !right ? -1 : right && !left ? 1 : 0);
+    /* 조작 반전 룰이 걸려 있으면 좌우가 뒤집힌다 */
+    let move: -1 | 0 | 1 = left && !right ? -1 : right && !left ? 1 : 0;
+    if (this.gimmicks.isReversed()) move = -move as -1 | 0 | 1;
+    p.moveHorizontal(move);
 
     if (JustDown(this.keys.jump!) || JustDown(this.keys.jumpAlt!)) p.jump();
     if (JustDown(this.keys.light!)) p.attack('light', dir);
@@ -572,6 +618,7 @@ export class BattleScene extends Phaser.Scene {
       this.announce('FIGHT!', '#ff5a5a');
       this.battleActive = true;
       this.items.start();
+      this.orbs.start();
       this.player.say(this.player.pickQuote('intro'), this.player.cfg.colors.accent);
     });
 
@@ -583,6 +630,50 @@ export class BattleScene extends Phaser.Scene {
           if (f.alive) f.say(f.pickQuote('intro'), f.cfg.colors.accent);
         });
       });
+  }
+
+  /* ================================================================ */
+  /* 프롬프트 기믹                                                     */
+  /* ================================================================ */
+
+  /**
+   * 오브를 깬 파이터가 프롬프트를 입력하고, 그 문장이 판을 바꾼다.
+   *
+   * 사람이 깼으면 실제로 입력을 받고, 봇이 깼으면 미리 준비한 문장 중
+   * 하나를 대신 외친다. 봇이 깼을 때 아무 일도 안 일어나면
+   * 네 명 중 세 명이 깬 경우 이 기능이 보이지 않는다.
+   */
+  private async runPrompt(breaker: BaseCharacter): Promise<void> {
+    if (this.prompting || !this.battleActive) return;
+    this.prompting = true;
+
+    const accent = `#${breaker.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+    let text: string;
+
+    if (breaker.side === 'player') {
+      /* 입력하는 동안 전투를 멈춘다 — 타이핑 중에 맞으면 억울하다 */
+      this.physics.world.pause();
+      if (this.input.keyboard) this.input.keyboard.enabled = false;
+
+      const result = await openPromptOverlay(breaker.cfg.name, accent);
+      text = result.text;
+
+      if (this.input.keyboard) this.input.keyboard.enabled = true;
+      // 씬이 그 사이 내려갔으면(재시작 등) 더 진행하지 않는다
+      if (!this.scene.isActive()) {
+        this.prompting = false;
+        return;
+      }
+      this.physics.world.resume();
+    } else {
+      text = Phaser.Utils.Array.GetRandom(AI_PROMPTS);
+      breaker.say(text, breaker.cfg.colors.accent);
+    }
+
+    const spec = interpretPrompt(text);
+    this.gimmicks.activate(spec, text, this.time.now);
+
+    this.prompting = false;
   }
 
   private checkBattleEnd(): void {
@@ -782,6 +873,24 @@ export class BattleScene extends Phaser.Scene {
     );
     this.chainHint.setStroke('#0b1020', 5);
 
+    /*
+     * 진행 중인 기믹 배너.
+     * 중력이나 룰이 바뀐 채로 안내가 없으면 플레이어는 조작이 고장난 줄 안다.
+     * 남은 시간까지 같이 보여준다.
+     */
+    this.gimmickHud = ui(
+      this.add
+        .text(GAME.WIDTH / 2, 58, '', {
+          fontFamily: GAME.FONT,
+          fontSize: '16px',
+          color: '#facc15',
+          align: 'center',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5),
+    );
+    this.gimmickHud.setStroke('#0b1020', 5);
+
     /* 인원수만큼 패널을 가로로 고르게 배치한다 (1P는 항상 맨 왼쪽) */
     const n = this.fighters.length;
     const totalW = n * HUD_PANEL_W + (n - 1) * HUD_GAP;
@@ -890,6 +999,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updateHud(): void {
     this.updateChainHint();
+    this.updateGimmickHud();
 
     for (const hud of this.huds) {
       const id = hud.fighter.fighterId;
@@ -949,6 +1059,26 @@ export class BattleScene extends Phaser.Scene {
     this.chainHint.setAlpha(1);
   }
 
+  /** 진행 중인 기믹과 남은 시간을 상단에 띄운다 */
+  private updateGimmickHud(): void {
+    const active = this.gimmicks.getActive();
+
+    if (active.length === 0) {
+      if (this.gimmickHud.text) this.gimmickHud.setText('');
+      return;
+    }
+
+    const now = this.time.now;
+    this.gimmickHud.setText(
+      active
+        .map((a) => {
+          const left = Math.max(0, Math.ceil((a.endAt - now) / 1000));
+          return `${a.spec.icon} ${a.spec.name} ${left}s`;
+        })
+        .join('   '),
+    );
+  }
+
   /* ================================================================ */
   /* 장외 판정                                                        */
   /* ================================================================ */
@@ -975,26 +1105,42 @@ export class BattleScene extends Phaser.Scene {
   override update(time: number, delta: number): void {
     if (this.paused) return;
 
+    // 프롬프트 입력 중에는 판이 멈춘다 (물리는 이미 pause 상태)
+    if (this.prompting) {
+      this.updateHud();
+      return;
+    }
+
     // 히트스탑 중이면 모든 갱신을 멈춘다 (타격감의 핵심)
     if (this.combat.tickHitstop(time)) {
       this.updateHud();
       return;
     }
 
-    this.updateCamera(delta);
+    /*
+     * 슬로우 모션 룰은 델타를 나눠 구현한다.
+     * 물리 월드의 timeScale만 건드리면 이동만 느려지고 공격 모션·AI 판단은
+     * 그대로라, 화면이 느려진 게 아니라 조작만 굼떠진 것처럼 느껴진다.
+     */
+    const scaled = delta / this.gimmicks.getTimeScale();
+
+    this.updateCamera(scaled);
 
     if (this.battleActive) {
       this.handleInput();
-      for (const ai of this.ais) ai.update(time, delta);
+      for (const ai of this.ais) ai.update(time, scaled);
     }
 
-    for (const f of this.fighters) f.update(time, delta);
+    for (const f of this.fighters) f.update(time, scaled);
 
-    this.projectiles.update(time, delta);
+    this.projectiles.update(time, scaled);
 
     if (this.battleActive) {
-      this.combat.update(time, delta);
-      this.items.update(time, delta);
+      this.combat.update(time, scaled);
+      this.items.update(time, scaled);
+      this.orbs.update(time, scaled);
+      this.gimmicks.update(time, scaled);
+      this.rhythm.update(time);
       this.checkBlastZones();
     }
 
@@ -1010,6 +1156,13 @@ export class BattleScene extends Phaser.Scene {
     this.stock?.reset();
     this.projectiles?.reset();
     this.items?.reset();
+    // 기믹이 건 중력·발판·크기 변경을 반드시 되돌린 뒤 씬을 내린다
+    this.gimmicks?.reset();
+    this.orbs?.reset();
+    this.rhythm?.reset();
+    closePromptOverlay();
+    this.prompting = false;
+    if (this.input.keyboard) this.input.keyboard.enabled = true;
     sound.stopBgm();
   }
 }

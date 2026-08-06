@@ -145,6 +145,21 @@ const installRecorder = () =>
 const readMoves = () => page.evaluate(() => window.__moves ?? []);
 const clearMoves = () => page.evaluate(() => void (window.__moves = []));
 
+/**
+ * 프롬프트 오버레이가 떠 있으면 넘긴다.
+ *
+ * 오브를 깨면 판이 멈추고 입력창이 뜬다. 기믹을 검증하는 단계가 아니라면
+ * 이게 떠 있는 채로 다음 커맨드를 넣게 되어 "조작이 안 먹는다"로 오판한다.
+ */
+const dismissPrompt = async () => {
+  if ((await page.locator('[data-testid="prompt-overlay"]').count()) === 0) {
+    return false;
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(220);
+  return true;
+};
+
 /** 플레이어의 현재 상태를 읽는다 */
 const playerState = () =>
   page.evaluate(() => {
@@ -171,6 +186,9 @@ const playerState = () =>
 const waitUntil = async (check, label, timeout = 25000, quiet = false) => {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
+    // 입력창이 떠 있으면 게임이 멈춰 있어 조건이 영영 안 바뀐다
+    if (await dismissPrompt()) continue;
+
     const s = await playerState();
     if (s && check(s)) return true;
     await page.waitForTimeout(90);
@@ -442,6 +460,93 @@ if (JSON.stringify(chained) !== JSON.stringify(expected.chain)) {
   console.log(`  ✓ 연속기 ${expected.chain.join(' → ')}`);
 }
 await clearMoves();
+
+/*
+ * 프롬프트 기믹 — 오브를 깨고 문장을 입력하면 판이 실제로 바뀌어야 한다.
+ *
+ * 오브 등장을 기다리면 스모크가 한없이 길어지므로 타이머만 당겨서 띄운다.
+ * 확인하려는 것은 "떠서 → 깨지고 → 입력창이 뜨고 → 그 문장대로 룰이 바뀐다"는
+ * 연결이지, 오브가 몇 초 뒤에 나오느냐가 아니다.
+ */
+console.log('프롬프트 기믹');
+await restartRound();
+await waitGrounded();
+
+/*
+ * 등장 타이머를 반복해서 당긴다.
+ *
+ * 한 번만 당기면 안 된다 — 판이 시작될 때 인트로가 orbs.start()를 다시 불러
+ * 타이머를 원래대로 되돌린다. 오브 갱신은 전투가 실제로 시작된 뒤에만 도므로,
+ * "떴는가"를 보면서 될 때까지 당기는 편이 확실하다.
+ */
+let orbUp = false;
+for (let i = 0; i < 25 && !orbUp; i++) {
+  orbUp = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    s.orbs.nextSpawnAt = 0;
+    return s.orbs.isActive();
+  });
+  if (!orbUp) await page.waitForTimeout(300);
+}
+if (!orbUp) errors.push('[기믹] 프롬프트 오브가 등장하지 않았습니다');
+await shot('orb-spawn');
+
+// 플레이어가 깬 것으로 처리 → 입력창이 떠야 한다
+await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  s.orbs.onBreak(s.player);
+});
+await page.waitForSelector('[data-testid="prompt-overlay"]', { timeout: 8000 })
+  .catch(() => errors.push('[기믹] 프롬프트 입력창이 뜨지 않았습니다'));
+await shot('orb-prompt');
+
+/* 문장 → 룰 변경. 리듬 배틀은 승부 방식 자체가 바뀌는 대표 기믹이다 */
+await page.locator('[data-testid="prompt-input"]').fill('리듬으로 승부하자');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(1600);
+await shot('orb-gimmick');
+
+const gimmickState = await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  return {
+    active: s.gimmicks.getActive().map((a) => a.spec.id),
+    rhythm: s.rhythm.isActive(),
+    overlayGone: !document.querySelector('[data-testid="prompt-overlay"]'),
+  };
+});
+
+if (!gimmickState.active.includes('rule_rhythm') || !gimmickState.rhythm) {
+  errors.push(
+    `[기믹] "리듬으로 승부하자" 가 리듬 배틀로 이어지지 않았습니다: ${JSON.stringify(gimmickState)}`,
+  );
+} else if (!gimmickState.overlayGone) {
+  errors.push('[기믹] 확정 후에도 입력창이 남아 있습니다');
+} else {
+  console.log('  ✓ 오브 → 프롬프트 → 리듬 배틀');
+}
+
+/* 맵 기믹은 물리가 실제로 바뀌는지로 확인한다 */
+const gravityBefore = await page.evaluate(
+  () => window.game.scene.getScene('Battle').physics.world.gravity.y,
+);
+await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  s.orbs.onBreak(s.player);
+});
+await page.waitForSelector('[data-testid="prompt-overlay"]', { timeout: 8000 }).catch(() => {});
+await page.locator('[data-testid="prompt-input"]').fill('달로 보내줘');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(1400);
+
+const gravityAfter = await page.evaluate(
+  () => window.game.scene.getScene('Battle').physics.world.gravity.y,
+);
+if (!(gravityAfter < gravityBefore)) {
+  errors.push(`[기믹] 저중력이 걸리지 않았습니다 (${gravityBefore} → ${gravityAfter})`);
+} else {
+  console.log(`  ✓ 오브 → 프롬프트 → 저중력 (중력 ${gravityBefore} → ${gravityAfter})`);
+}
+await shot('orb-moon');
 
 console.log('스킬');
 await page.keyboard.press('l');

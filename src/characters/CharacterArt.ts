@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { FIGHTER } from '../config/gameConfig';
+import { SPRITE_SHEETS } from '../config/spriteSheets';
 import type { ArtConfig, CharacterConfig } from '../types';
 
 /** 머리 중심 Y (컨테이너 로컬 좌표) */
@@ -263,6 +264,45 @@ function buildMouth(
     default:
       return scene.add.rectangle(FACE_DX, y, 13, 3, 0x7a4630);
   }
+}
+
+/* ================================================================== */
+
+/**
+ * 초상 — HUD 패널·결과 화면에 쓰는 얼굴.
+ *
+ * V3 시트에는 마지막 칸(41)에 얼굴만 그린 그림이 들어 있다. 그게 있으면 쓰고,
+ * 없으면 지금까지처럼 캐릭터 색 원을 둔다. 어느 쪽이든 자리와 크기는 같다.
+ *
+ * 원 위에 얼굴을 얹는 순서로 그리므로, 얼굴 그림에 배경이 남아 있어도
+ * 원이 테두리 역할을 해 패널 안에서 형태가 유지된다.
+ *
+ * @returns 뒤에서 앞 순서로 정렬된 표시 객체들
+ */
+export function buildPortrait(
+  scene: Phaser.Scene,
+  cfg: CharacterConfig,
+  radius: number,
+): Phaser.GameObjects.GameObject[] {
+  const bg = scene.add
+    .circle(0, 0, radius, cfg.colors.body)
+    .setStrokeStyle(3, cfg.colors.accent);
+
+  const sheet = SPRITE_SHEETS[cfg.id];
+  if (
+    !sheet ||
+    sheet.portraitFrame === undefined ||
+    !scene.textures.exists(sheet.key)
+  ) {
+    return [bg];
+  }
+
+  const face = scene.add.image(0, 0, sheet.key, sheet.portraitFrame);
+  // 원 안에 들어가도록 비율을 지켜 줄인다
+  const fit = (radius * 2) / Math.max(face.width || 1, face.height || 1);
+  face.setScale(fit);
+
+  return [bg, face];
 }
 
 /* ================================================================== */

@@ -13,6 +13,7 @@
     "sheet": "node tools/process-sheet.mjs",
     "smoke": "node tools/smoke.mjs",
     "test:prompt": "node --experimental-strip-types tools/test-prompts.mjs",
+    "test:sheet": "node --experimental-strip-types tools/test-sheet.mjs",
     "prompts": "node tools/gen-prompts.mjs",
     "sheet:merge": "node tools/merge-sheets.mjs"
   },

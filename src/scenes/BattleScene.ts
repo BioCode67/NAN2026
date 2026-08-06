@@ -11,6 +11,7 @@ import {
   TIERS,
 } from '../config/gameConfig';
 import { BaseCharacter, resetQuoteThrottle } from '../characters/BaseCharacter';
+import { buildPortrait } from '../characters/CharacterArt';
 import { AI_PROMPTS, interpretPrompt } from '../config/gimmicks';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
@@ -1004,11 +1005,15 @@ export class BattleScene extends Phaser.Scene {
           .setStrokeStyle(isPlayer ? 3 : 2, accent, isPlayer ? 0.95 : 0.45),
       );
 
-      ui(
-        this.add
-          .circle(x + 30, y + 39, 21, fighter.cfg.colors.body)
-          .setStrokeStyle(3, accent),
-      );
+      /*
+       * 초상.
+       * 시트에 얼굴 칸이 있으면 그 그림이, 없으면 캐릭터 색 원이 들어간다.
+       * 네 명이 붙는 판에서 누가 누구인지는 이름보다 얼굴로 먼저 읽힌다.
+       */
+      for (const part of buildPortrait(this, fighter.cfg, 21)) {
+        ui(part);
+        (part as Phaser.GameObjects.Image).setPosition(x + 30, y + 39);
+      }
 
       ui(
         this.add.text(x + 58, y + 8, fighter.cfg.name, {

@@ -198,17 +198,20 @@ console.log(
 );
 
 if (totalFrames === 42) {
+  /*
+   * 규격은 게임이 프레임 수를 보고 스스로 정한다(spriteSheets.ts applyLayout).
+   * 이미 등록된 키라면 새로고침만으로 V3 배치로 갈아 끼워진다.
+   */
   console.log(
-    `다음 단계: src/config/spriteSheets.ts 에 등록하세요.\n\n` +
-      `  <id>: { key: '${key}', displayHeight: 116, frameRate: 10,\n` +
-      `          explosionFrame: LAYOUT_V3_FX.skill,\n` +
-      `          promptFrame: LAYOUT_V3_FX.prompt,\n` +
-      `          portraitFrame: LAYOUT_V3_FX.portrait,\n` +
-      `          poses: LAYOUT_V3 },\n`,
+    `V3(42프레임) 규격입니다. 새로고침하면 바로 적용됩니다.\n` +
+      `처음 넣는 캐릭터라면 src/config/spriteSheets.ts 의 SPRITE_SHEETS 에\n` +
+      `한 줄만 추가하세요 (규격은 자동 판별되므로 poses를 적을 필요가 없습니다):\n\n` +
+      `  <id>: { key: '${key}', displayHeight: 116, frameRate: 10, poses: LAYOUT_V1 },\n`,
   );
 } else {
   console.log(
     `주의: 42개가 아니라 ${totalFrames}개입니다.\n` +
-      `묶음별 칸 수가 6개씩 맞는지 확인하세요 — 개수가 어긋나면 포즈 매핑이 밀립니다.`,
+      `묶음별 칸 수가 6개씩 맞는지 확인하세요 — 개수가 어긋나면 포즈 매핑이 밀립니다.\n` +
+      `(30개 이상이면 V2, 그 아래면 V1 규격으로 읽힙니다)`,
   );
 }

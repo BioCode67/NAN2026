@@ -159,6 +159,17 @@ export interface SpriteSheetDef {
   promptFrame?: number;
   /** 얼굴만 그린 초상 프레임 — HUD·선택 화면에 쓴다 */
   portraitFrame?: number;
+  /**
+   * 초기 15프레임(V1) 시트에만 적용할 개별 보정.
+   *
+   * 규격이 정해지기 전에 뽑은 시트들이라 캐릭터마다 어긋난 데가 있다.
+   * 그 보정을 poses에 직접 써 두면 새 시트로 갈아 끼울 때 함께 따라와
+   * 엉뚱한 칸을 가리키므로, V1일 때만 얹히도록 따로 둔다.
+   */
+  v1?: {
+    poses?: Partial<Record<Pose, PoseFrames>>;
+    explosionFrame?: number;
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,14 +342,61 @@ export const LAYOUT_V3_FX = {
   portrait: 41,
 } as const;
 
+/* ------------------------------------------------------------------ */
+/* 규격 자동 판별                                                       */
+/* ------------------------------------------------------------------ */
+
+/** 프레임 수로 고르는 규격표 — 위에서부터 처음 맞는 것을 쓴다 */
+const LAYOUTS = [
+  {
+    name: 'V3',
+    minFrames: 42,
+    poses: LAYOUT_V3,
+    explosionFrame: LAYOUT_V3_FX.skill,
+    promptFrame: LAYOUT_V3_FX.prompt,
+    portraitFrame: LAYOUT_V3_FX.portrait,
+  },
+  { name: 'V2', minFrames: 30, poses: LAYOUT_V2, explosionFrame: LAYOUT_V2_FX_FRAME },
+  { name: 'V1', minFrames: 0, poses: LAYOUT_V1 },
+] as const;
+
+/**
+ * 시트의 프레임 수를 보고 규격을 정해 def에 채운다.
+ *
+ * 규격을 캐릭터마다 손으로 적어 두면, 새로 뽑은 42프레임 시트를 폴더에
+ * 넣는 순간 게임은 여전히 15프레임 배치로 읽어 전혀 다른 칸이 나온다.
+ * 그림만 갈아 끼웠는데 캐릭터가 망가지고, 원인은 코드에 있다 —
+ * 그래서 그림 쪽에서 규격을 읽어내도록 뒤집었다.
+ *
+ * @returns 적용한 규격 이름 (로그용)
+ */
+export function applyLayout(def: SpriteSheetDef, frameCount: number): string {
+  const spec = LAYOUTS.find((l) => frameCount >= l.minFrames) ?? LAYOUTS[LAYOUTS.length - 1]!;
+
+  def.poses = spec.poses;
+  def.explosionFrame = 'explosionFrame' in spec ? spec.explosionFrame : undefined;
+  def.promptFrame = 'promptFrame' in spec ? spec.promptFrame : undefined;
+  def.portraitFrame = 'portraitFrame' in spec ? spec.portraitFrame : undefined;
+
+  /* 옛 시트의 개별 보정은 V1일 때만 얹는다 */
+  if (spec.name === 'V1' && def.v1) {
+    if (def.v1.poses) def.poses = { ...def.poses, ...def.v1.poses };
+    if (def.v1.explosionFrame !== undefined) def.explosionFrame = def.v1.explosionFrame;
+  }
+
+  return spec.name;
+}
+
 /**
  * 스프라이트 시트가 준비된 캐릭터만 등록한다.
  *
- * 새 캐릭터 추가 방법:
- *   1. tools/gen-sheet.mjs 의 CHARACTERS 에 항목을 하나 추가한다
- *   2. npm run gen -- <id>          (생성 → 배경 제거 → 격자 재배치까지 자동)
- *   3. 아래에 `poses: LAYOUT_V2` 로 한 줄 등록한다
+ * 새 시트를 넣는 방법:
+ *   1. `npm run prompts` 로 뽑은 프롬프트로 6칸짜리 묶음 7장을 생성한다
+ *   2. art-source/<key>_b1.png … _b7.png 로 저장한다
+ *   3. `npm run sheet:merge -- <key>`
  *
+ * 규격(V1/V2/V3)은 **프레임 수를 보고 자동으로 정해진다.** 여기 적을 것은
+ * 그림 자체로는 알 수 없는 것 — 표시 높이, 재생 속도, 바라보는 방향뿐이다.
  * 등록하지 않은 캐릭터는 코드로 그린 도형 아트(CharacterArt)로 자동 대체된다.
  */
 export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
@@ -346,7 +404,6 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
     key: 'billgates',
     displayHeight: 116,
     frameRate: 9,
-    // 8 = 캐릭터 없이 에너지볼만 있는 프레임 → skill.projectile.frame 으로 쓴다
     poses: LAYOUT_V1,
   },
 
@@ -354,26 +411,27 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
     key: 'pennywise',
     displayHeight: 116,
     frameRate: 10,
-    // 8 = 캐릭터 없이 도끼 에너지만 있는 프레임
-    explosionFrame: 8,
     poses: LAYOUT_V1,
+    // 옛 시트의 8번은 캐릭터 없이 도끼 에너지만 있는 프레임이다
+    v1: { explosionFrame: 8 },
   },
 
   musk: {
     key: 'elonmusk',
     displayHeight: 116,
     frameRate: 10,
-    // 8 = 캐릭터 없이 폭발만 있는 프레임 → 로켓 드롭 착지 충격파로 쓴다
-    explosionFrame: 8,
     poses: LAYOUT_V1,
+    // 옛 시트의 8번은 폭발 단독 → 로켓 드롭 착지 충격파로 쓴다
+    v1: { explosionFrame: 8 },
   },
 
   jobs: {
     key: 'stevejobs',
     displayHeight: 116,
     frameRate: 9,
-    // 원본에 SKILL_L2 가 캐릭터 포함이라 2프레임 애니메이션으로 이어 재생한다
-    poses: { ...LAYOUT_V1, skill: [7, 8] },
+    poses: LAYOUT_V1,
+    // 옛 시트는 SKILL_L2 에도 캐릭터가 있어 2프레임으로 이어 재생한다
+    v1: { poses: { skill: [7, 8] } },
   },
 };
 

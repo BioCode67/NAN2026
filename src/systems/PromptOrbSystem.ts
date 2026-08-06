@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ORB_FRAME, hasArt } from '../config/artAssets';
 import { DEPTH, GAME, STAGE } from '../config/gameConfig';
+import { SPRITE_SHEETS } from '../config/spriteSheets';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 import type { ProjectileSystem } from './ProjectileSystem';
@@ -288,6 +289,7 @@ export class PromptOrbSystem {
 
     // 마지막 칸은 "터지는 순간" 그림이다 — 사라지는 연출 동안 그것으로 바꾼다
     o.sprite?.setFrame(ORB_FRAME.BURST);
+    this.showPromptFx(by, o.root.x, o.root.y);
 
     this.scene.tweens.killTweensOf(o.root);
     if (o.ring) this.scene.tweens.killTweensOf(o.ring);
@@ -351,6 +353,38 @@ export class PromptOrbSystem {
         onComplete: () => ring.destroy(),
       });
     }
+  }
+
+  /**
+   * 깬 사람의 "명령창" 이펙트를 오브 자리에 띄운다.
+   *
+   * V3 시트에는 캐릭터 없이 이펙트만 그린 칸(29)이 있다. 누가 깼는지가
+   * 곧 누가 판을 바꿀 권한을 얻었는지라, 그 사람의 그림으로 알린다.
+   * 시트에 그 칸이 없으면 아무것도 하지 않는다 — 링 연출만으로도 충분하다.
+   */
+  private showPromptFx(by: BaseCharacter, x: number, y: number): void {
+    const sheet = SPRITE_SHEETS[by.cfg.id];
+    if (
+      !sheet ||
+      sheet.promptFrame === undefined ||
+      !this.scene.textures.exists(sheet.key)
+    ) {
+      return;
+    }
+
+    const fx = this.scene.add
+      .image(x, y, sheet.key, sheet.promptFrame)
+      .setDepth(DEPTH.IMPACT)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    this.scene.tweens.add({
+      targets: fx,
+      scale: { from: 0.6, to: 1.8 },
+      alpha: { from: 1, to: 0 },
+      duration: 620,
+      ease: 'Cubic.easeOut',
+      onComplete: () => fx.destroy(),
+    });
   }
 
   private announce(text: string, color: string): void {

@@ -65,19 +65,24 @@ npm run sheet:merge -- <key>   # 받은 묶음 이미지들을 시트 한 장으
 | WIN / LOSE | 승리 / 패배 | — |
 | PORTRAIT | **얼굴만** — HUD·선택 화면 | — |
 
-시트를 합친 뒤 등록은 한 줄이면 끝난다.
+**규격은 적지 않는다.** 게임이 시트의 프레임 수를 보고 V1/V2/V3 중 무엇인지
+스스로 판별한다(`applyLayout`). 그래서 이미 등록된 캐릭터의 시트를 새로 뽑아
+넣으면 새로고침만으로 갈아 끼워진다 — 코드를 고칠 일이 없다.
+
+처음 넣는 캐릭터만 한 줄 등록한다. 여기 적는 것은 그림만 봐서는 알 수 없는 것뿐이다.
 
 ```ts
 musk: {
   key: 'elonmusk',
-  displayHeight: 116,
-  frameRate: 10,
-  explosionFrame: LAYOUT_V3_FX.skill,
-  promptFrame: LAYOUT_V3_FX.prompt,
-  portraitFrame: LAYOUT_V3_FX.portrait,
-  poses: LAYOUT_V3,
+  displayHeight: 116,   // 게임 내 표시 높이
+  frameRate: 10,        // 달리기 등 애니메이션 속도
+  poses: LAYOUT_V1,     // 로드 시 실제 규격으로 덮어써진다
 },
 ```
+
+파이프라인이 살아 있는지는 `npm run test:sheet` 로 확인한다.
+가짜 묶음 7장을 실제로 합쳐 42칸의 **순서**까지 대조하므로,
+그림을 받아 온 밤에 도구가 고장나 있는 일을 미리 막는다.
 
 ### 옛 규격을 쓰는 캐릭터는?
 
@@ -256,7 +261,7 @@ npm run sheet -- art-source/<이름>_sheet.png public/sprites/<key>.png
 - 체크무늬 시안 → 두 톤 제거
 
 출력 로그 마지막 줄에 검출된 프레임 수가 찍힌다.
-**30개가 나왔으면** `src/config/spriteSheets.ts` 에 `poses: LAYOUT_V2` 로 등록하면 끝이다.
+그 수가 곧 규격이다 — 42면 V3, 30 이상이면 V2, 그 아래면 V1로 읽힌다.
 개수가 어긋나면 프레임이 붙거나 잘렸다는 뜻이므로, 손으로 매핑을 맞추기보다
 시트를 다시 뽑는 편이 빠르다.
 

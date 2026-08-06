@@ -7,7 +7,7 @@ import {
   queueOptionalArt,
 } from '../config/artAssets';
 import { GAME } from '../config/gameConfig';
-import { SHEET_DEFS, animKey, metaKey } from '../config/spriteSheets';
+import { SHEET_DEFS, animKey, applyLayout, metaKey } from '../config/spriteSheets';
 import type { Pose, SheetMeta } from '../config/spriteSheets';
 
 /**
@@ -75,6 +75,14 @@ export class BootScene extends Phaser.Scene {
         console.warn(`[Boot] ${def.key} 메타데이터를 찾지 못해 도형 아트로 대체합니다.`);
         continue;
       }
+
+      /*
+       * 어느 규격인지는 시트 자신이 알려준다.
+       * 프레임 수만 보면 되므로, 새 시트를 폴더에 넣는 것만으로 갈아 끼워진다.
+       */
+      const count = meta.count ?? meta.columns * meta.rows;
+      const version = applyLayout(def, count);
+      console.info(`[Boot] ${def.key}: ${count}프레임 → ${version} 규격`);
 
       this.load.spritesheet(def.key, `sprites/${def.key}.png`, {
         frameWidth: meta.frameWidth,

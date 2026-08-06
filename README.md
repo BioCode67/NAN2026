@@ -278,6 +278,7 @@ npm run typecheck  # 타입 검사
 npm run build      # 프로덕션 빌드
 npm run smoke      # 스모크 테스트 (dev 서버 실행 중이어야 함)
 npm run test:prompt # 프롬프트 해석기 테스트 (브라우저 불필요)
+npm run test:sheet  # 스프라이트 시트 파이프라인 테스트 (묶음 합치기 → 규격 판별)
 npm run prompts    # 캐릭터별 스프라이트 프롬프트 생성 (나노바나나에 붙여넣기)
 npm run sheet:merge -- <key>            # 받은 묶음 이미지를 시트 한 장으로 합침
 npm run sheet -- <입력.png> <출력.png>   # 스프라이트 시트 전처리(단일 파일)
@@ -299,4 +300,6 @@ npm run sheet -- <입력.png> <출력.png>   # 스프라이트 시트 전처리(
 **6칸씩 7묶음**으로 끊어 뽑는다 — `npm run prompts` 가 묶음별 프롬프트를 만들고,
 `npm run sheet:merge -- <key>` 가 받은 이미지들을 시트 한 장으로 합친다.
 
+규격(V1 15 / V2 30 / V3 42)은 **시트의 프레임 수를 보고 자동으로 정해진다.**
+이미 등록된 캐릭터라면 새 시트를 `public/sprites/` 에 덮어쓰는 것만으로 갈아 끼워지고,
 기존 15프레임 시트도 그대로 동작한다 (없는 포즈는 가장 가까운 그림으로 대체된다).

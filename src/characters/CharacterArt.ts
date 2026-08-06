@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { FIGHTER } from '../config/gameConfig';
-import { SPRITE_SHEETS } from '../config/spriteSheets';
+import { SPRITE_SHEETS, resolvePose } from '../config/spriteSheets';
 import type { ArtConfig, CharacterConfig } from '../types';
 
 /** 머리 중심 Y (컨테이너 로컬 좌표) */
@@ -303,6 +303,44 @@ export function buildPortrait(
   face.setScale(fit);
 
   return [bg, face];
+}
+
+/**
+ * 캐릭터 선택 카드에 놓을 그림.
+ *
+ * 시트가 있으면 **전투에서 실제로 보게 될 그림**을 그대로 쓴다.
+ * 선택 화면은 이 게임을 켠 사람이 처음 보는 얼굴인데, 여기만 도형 아트면
+ * 골라 놓고 전투에 들어갔을 때 다른 캐릭터가 나온 것처럼 느껴진다.
+ * 그림이 있는데도 가장 약한 쪽을 첫인상으로 내보내는 셈이다.
+ *
+ * 시트가 없는 캐릭터는 지금까지처럼 도형 아트로 돌아간다 —
+ * 새 캐릭터를 그림 없이 먼저 붙여 볼 수 있어야 한다는 원칙은 그대로다.
+ *
+ * @param height 카드 안에서 이 그림이 차지할 세로 크기
+ */
+export function buildCardArt(
+  scene: Phaser.Scene,
+  cfg: CharacterConfig,
+  height: number,
+): Phaser.GameObjects.Container {
+  const sheet = SPRITE_SHEETS[cfg.id];
+  const pose =
+    sheet && scene.textures.exists(sheet.key)
+      ? resolvePose(sheet.poses, 'idle')
+      : null;
+
+  if (!sheet || !pose) {
+    const art = buildFighterArt(scene, cfg);
+    // 도형 아트는 전투 기준 크기라, 카드 높이에 맞춰 키운다
+    const scale = height / FIGHTER.BODY_H;
+    return scene.add.container(0, 0, art.parts).setScale(scale);
+  }
+
+  const frame = Array.isArray(pose.frames) ? pose.frames[0]! : pose.frames;
+  const img = scene.add.image(0, 0, sheet.key, frame);
+  img.setScale(height / (img.height || 1));
+
+  return scene.add.container(0, 0, [img]);
 }
 
 /* ================================================================== */

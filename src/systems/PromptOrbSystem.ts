@@ -4,6 +4,7 @@ import { DEPTH, GAME, STAGE } from '../config/gameConfig';
 import { SPRITE_SHEETS } from '../config/spriteSheets';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
+import type { BannerLanes } from '../ui/BannerLanes';
 import type { ProjectileSystem } from './ProjectileSystem';
 
 /** 오브가 버티는 체력 — 몇 대는 때려야 깨진다 */
@@ -62,7 +63,10 @@ export class PromptOrbSystem {
   private readonly hitRect = new Phaser.Geom.Rectangle();
   private readonly orbCircle = new Phaser.Geom.Circle(0, 0, ORB_RADIUS);
 
-  constructor(private readonly scene: Phaser.Scene) {}
+  constructor(
+    private readonly scene: Phaser.Scene,
+    private readonly lanes: BannerLanes,
+  ) {}
 
   setFighters(fighters: BaseCharacter[]): void {
     this.fighters = fighters;
@@ -387,9 +391,17 @@ export class PromptOrbSystem {
     });
   }
 
+  /**
+   * 상단 알림 한 줄.
+   *
+   * 자리는 직접 정하지 않고 배분받는다. 리듬 배틀 게이지가 떠 있는 동안
+   * 오브가 달아나면 예전에는 게이지 위에 글자가 얹혀 둘 다 안 읽혔다.
+   */
   private announce(text: string, color: string): void {
+    const lane = this.lanes.claim(40);
+
     const label = this.scene.add
-      .text(GAME.WIDTH / 2, 150, text, {
+      .text(GAME.WIDTH / 2, lane.center, text, {
         fontFamily: GAME.FONT,
         fontSize: '30px',
         color,
@@ -412,7 +424,10 @@ export class PromptOrbSystem {
           y: label.y - 24,
           delay: 900,
           duration: 300,
-          onComplete: () => label.destroy(),
+          onComplete: () => {
+            lane.release();
+            label.destroy();
+          },
         });
       },
     });

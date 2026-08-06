@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DEPTH, GAME } from '../config/gameConfig';
 import { sound } from './SoundSystem';
+import type { BannerLane, BannerLanes } from '../ui/BannerLanes';
 import type { RhythmJudge } from '../types';
 
 /** BGM과 같은 BPM — 화면의 박자와 귀의 박자가 어긋나면 안 된다 */
@@ -21,10 +22,13 @@ const MISS: RhythmJudge = { label: 'OFF BEAT…', mul: 0.5, color: '#5d739f' };
 const BAR_W = 420;
 const BAR_H = 16;
 /*
- * 상단 조작 안내(16·34)와 기믹 배너(58) 아래로 내려 잡는다.
- * 겹치면 둘 다 안 읽힌다.
+ * 배너 한 줄로 차지하는 세로 크기.
+ * 게이지(16)에 위쪽 라벨(-22 자리, 14px)과 마커가 위아래로 5px씩
+ * 삐져나오는 것까지 합쳐서 잡는다. 이걸 적게 부르면 위 배너와 붙는다.
  */
-const BAR_Y = 128;
+const LANE_H = 52;
+/** 잡은 자리 안에서 게이지 중심이 놓이는 깊이 (위 라벨 자리를 비워 둔다) */
+const BAR_OFFSET = 32;
 
 /**
  * 리듬 배틀 룰.
@@ -47,8 +51,13 @@ export class RhythmSystem {
   private marker?: Phaser.GameObjects.Rectangle;
   private zone?: Phaser.GameObjects.Rectangle;
   private label?: Phaser.GameObjects.Text;
+  /** 상단에서 받아 쓰고 있는 자리 — 끌 때 반드시 비운다 */
+  private lane?: BannerLane;
 
-  constructor(private readonly scene: Phaser.Scene) {}
+  constructor(
+    private readonly scene: Phaser.Scene,
+    private readonly lanes: BannerLanes,
+  ) {}
 
   isActive(): boolean {
     return this.active;
@@ -71,6 +80,8 @@ export class RhythmSystem {
 
   stop(): void {
     this.active = false;
+    this.lane?.release();
+    this.lane = undefined;
     this.hud?.destroy();
     this.hud = undefined;
     this.marker = undefined;
@@ -182,8 +193,10 @@ export class RhythmSystem {
       .setOrigin(0.5);
     this.label.setStroke('#0b1020', 4);
 
+    this.lane = this.lanes.claim(LANE_H);
+
     this.hud = this.scene.add
-      .container(GAME.WIDTH / 2, BAR_Y, [
+      .container(GAME.WIDTH / 2, this.lane.top + BAR_OFFSET, [
         bg,
         zoneLeft,
         zoneRight,

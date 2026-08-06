@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { addBackdrop } from '../config/artAssets';
-import { buildFighterArt } from '../characters/CharacterArt';
+import { buildCardArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
@@ -12,6 +12,17 @@ const AI_COUNT = 3;
 /** 캐릭터 카드 규격 */
 const CARD_W = 196;
 const CARD_H = 268;
+/**
+ * 카드 안 아바타가 차지하는 세로 크기.
+ *
+ * 시트마다 캐릭터를 칸 안 어디에 그려 뒀는지가 다르다 —
+ * 리누스는 현수막을, 패니는 도끼를 들고 있어 칸 아래쪽까지 찬다.
+ * 칸 높이를 그대로 키우면 그 소품이 이름표를 덮으므로,
+ * 가장 아래까지 찬 시트를 기준으로 잡는다.
+ */
+const AVATAR_H = 126;
+/** 아바타 중심 — 카드 위쪽에 붙여 이름표와 거리를 둔다 */
+const AVATAR_Y = -48;
 const CARD_GAP = 24;
 const CARD_Y = 300;
 
@@ -149,9 +160,8 @@ export class SelectScene extends Phaser.Scene {
         .rectangle(0, 0, CARD_W, CARD_H, 0x141c33)
         .setStrokeStyle(3, 0x2f3f6b);
 
-      /* SD 아바타 — 전투 씬과 동일한 아트를 재사용한다 */
-      const art = buildFighterArt(this, cfg);
-      const avatar = this.add.container(0, -34, art.parts).setScale(1.3);
+      /* 아바타 — 시트가 있으면 전투에서 실제로 보게 될 그림을 그대로 쓴다 */
+      const avatar = buildCardArt(this, cfg, AVATAR_H).setPosition(0, AVATAR_Y);
 
       const name = this.add
         .text(0, 42, cfg.name, {

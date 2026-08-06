@@ -23,6 +23,7 @@ import { PromptOrbSystem } from '../systems/PromptOrbSystem';
 import { RhythmSystem } from '../systems/RhythmSystem';
 import { sound } from '../systems/SoundSystem';
 import { StockSystem } from '../systems/StockSystem';
+import { BannerLanes } from '../ui/BannerLanes';
 import { closePromptOverlay, openPromptOverlay } from '../ui/PromptOverlay';
 import { StockTier } from '../types';
 import type { AttackDir, BattleSceneData } from '../types';
@@ -88,6 +89,11 @@ export class BattleScene extends Phaser.Scene {
   private chainHint!: Phaser.GameObjects.Text;
   /** 진행 중인 프롬프트 기믹 표시 */
   private gimmickHud!: Phaser.GameObjects.Text;
+  /**
+   * 상단 중앙 배너 자리 배분.
+   * 기믹 배너 · 리듬 게이지 · 오브 알림이 서로 겹치지 않게 나눠 쓴다.
+   */
+  private banners!: BannerLanes;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
   private hudLayer!: Phaser.GameObjects.Container;
   /** 더블탭 대시 판정용 */
@@ -398,7 +404,8 @@ export class BattleScene extends Phaser.Scene {
       this.combat.triggerBlast(x, y, range, damage);
 
     /* 프롬프트 기믹 — 이 게임의 스매시볼 */
-    this.rhythm = new RhythmSystem(this);
+    this.banners = new BannerLanes();
+    this.rhythm = new RhythmSystem(this, this.banners);
     this.gimmicks = new GimmickSystem(this, {
       fighters: () => this.fighters,
       items: this.items,
@@ -408,7 +415,7 @@ export class BattleScene extends Phaser.Scene {
       stageArt: (key) => this.pushStageArt(key),
     });
 
-    this.orbs = new PromptOrbSystem(this);
+    this.orbs = new PromptOrbSystem(this, this.banners);
     this.orbs.setFighters(this.fighters);
     this.orbs.setProjectiles(this.projectiles);
     this.orbs.onBreak = (breaker) => void this.runPrompt(breaker);
@@ -975,7 +982,7 @@ export class BattleScene extends Phaser.Scene {
      */
     this.gimmickHud = ui(
       this.add
-        .text(GAME.WIDTH / 2, 58, '', {
+        .text(GAME.WIDTH / 2, this.banners.claim(26).center, '', {
           fontFamily: GAME.FONT,
           fontSize: '16px',
           color: '#facc15',

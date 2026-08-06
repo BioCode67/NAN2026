@@ -83,6 +83,29 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
     },
   },
 
+  pepe: {
+    key: 'pennywise',
+    displayHeight: 116,
+    frameRate: 10,
+    // 8 = 캐릭터 없이 도끼 에너지만 있는 프레임
+    explosionFrame: 8,
+    poses: {
+      idle: 0,
+      walk: 1,
+      run: [2, 3],
+      jump: 4,
+      attackJ: 5,
+      attackK: 6,
+      skill: 7,
+      hit: 9,
+      knockback: 10,
+      guard: 11,
+      dash: 12,
+      win: 13,
+      lose: 14,
+    },
+  },
+
   musk: {
     key: 'elonmusk',
     displayHeight: 116,

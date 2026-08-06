@@ -82,19 +82,37 @@ for (let i = 3; i < data.length; i += 4) {
 }
 
 const tones = [];
+/** 배경이 유채색인가 — 캐릭터 색과 겹칠 위험이 없다는 뜻 */
+let chromaticBg = false;
 
 if (hasAlpha) {
   console.log('배경: 알파 채널 사용 (투명 PNG)');
 } else {
   const borderHist = new Map();
   const noteBorder = (x, y) => {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
     const i = (y * W + x) * 4;
     // 8단위로 양자화해 압축 노이즈를 뭉갠다
     const k = `${data[i] >> 3},${data[i + 1] >> 3},${data[i + 2] >> 3}`;
     borderHist.set(k, (borderHist.get(k) ?? 0) + 1);
   };
-  for (let x = 0; x < W; x++) { noteBorder(x, 0); noteBorder(x, H - 1); }
-  for (let y = 0; y < H; y++) { noteBorder(0, y); noteBorder(W - 1, y); }
+
+  /*
+   * 테두리를 여러 깊이에서 훑는다.
+   * 맨 바깥 한 줄만 보면, 시트에 격자선이나 액자 테두리가 그려져 있을 때
+   * 그 선 색을 배경으로 착각한다 (실제로 그런 시트가 있었다).
+   * 안쪽 깊이까지 함께 세면 진짜 배경색이 최다 색으로 올라온다.
+   */
+  for (const inset of [0, 3, 8, 16]) {
+    for (let x = inset; x < W - inset; x++) {
+      noteBorder(x, inset);
+      noteBorder(x, H - 1 - inset);
+    }
+    for (let y = inset; y < H - inset; y++) {
+      noteBorder(inset, y);
+      noteBorder(W - 1 - inset, y);
+    }
+  }
 
   const dist = (a, b) =>
     Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -102,14 +120,56 @@ if (hasAlpha) {
   const sorted = [...borderHist.entries()].sort((a, b) => b[1] - a[1]);
   const total = sorted.reduce((s, [, n]) => s + n, 0);
 
+  /*
+   * 톤을 몇 개까지 받을지는 배경이 유채색인지에 달렸다.
+   *
+   * 마젠타처럼 채도 높은 배경은 캐릭터 색과 절대 겹치지 않으므로,
+   * 색조가 여러 단계로 깔려 있어도 전부 배경으로 받아도 안전하다.
+   * (셀 경계마다 살짝 다른 마젠타가 깔린 시트가 실제로 있었고,
+   *  2톤으로 자르면 그 색조가 벽이 되어 flood fill이 막혔다)
+   *
+   * 반대로 회색 체크무늬 배경은 캐릭터의 검은 옷·회색 안경과 가깝다.
+   * 톤을 늘리면 캐릭터가 배경으로 먹혀 산산조각 난다 — 반드시 2개로 묶는다.
+   */
+  const dominant = sorted[0]
+    ? sorted[0][0].split(',').map((v) => (Number(v) << 3) + 4)
+    : [0, 0, 0];
+  const chromatic = Math.max(...dominant) - Math.min(...dominant) > 40;
+  chromaticBg = chromatic;
+  const maxTones = chromatic ? 4 : 2;
+  const minGap = TONE_TOLERANCE * (chromatic ? 1.2 : 2);
+
+  /** 밝기를 무시한 색조 벡터 — 같은 색의 진하기 차이를 같게 본다 */
+  const hueVec = (c) => {
+    const m = Math.max(...c, 1);
+    return c.map((v) => v / m);
+  };
+  const domHue = hueVec(dominant);
+
   for (const [k, n] of sorted) {
     const rgb = k.split(',').map((v) => (Number(v) << 3) + 4);
     // 이미 잡은 톤과 충분히 떨어진 색만 새 배경 톤으로 인정
-    if (tones.some((t) => dist(t, rgb) <= TONE_TOLERANCE * 2)) continue;
-    // 테두리의 5% 미만만 차지하는 색은 배경으로 보지 않는다
-    if (n / total < 0.05) break;
+    if (tones.some((t) => dist(t, rgb) <= minGap)) continue;
+    // 테두리에서 비중이 너무 작은 색은 배경으로 보지 않는다
+    if (n / total < (chromatic ? 0.015 : 0.05)) break;
+
+    /*
+     * 유채색 배경에서 두 번째 톤부터는 "같은 색의 다른 진하기"만 받는다.
+     * 이 조건이 없으면 테두리 안쪽을 훑다가 만난 라벨의 흰 글자·검은 외곽선이
+     * 배경 톤으로 등록되어, 캐릭터의 검은 선과 흰 부분이 통째로 지워진다.
+     */
+    if (chromatic && tones.length > 0) {
+      const h = hueVec(rgb);
+      const hueDist = Math.hypot(
+        h[0] - domHue[0],
+        h[1] - domHue[1],
+        h[2] - domHue[2],
+      );
+      if (hueDist > 0.35) continue;
+    }
+
     tones.push(rgb);
-    if (tones.length === 2) break;
+    if (tones.length === maxTones) break;
   }
 
   if (!tones.length) {
@@ -235,11 +295,14 @@ if (!hasAlpha) {
     }
 
     /*
-     * 체크무늬(두 톤)라면 한 덩어리 안에 두 톤이 모두 있어야 배경으로 본다.
-     * 단색 배경이나 투명 입력은 색이 정확히 일치하므로 그 조건이 필요 없다.
+     * 회색 체크무늬라면 한 덩어리 안에 서로 다른 톤이 최소 둘은 섞여 있다.
+     * 캐릭터의 단색 회색 영역은 한 톤만 맞으므로 이 조건에서 걸러진다.
+     *
+     * 유채색 배경(마젠타 등)은 캐릭터 색과 겹칠 일이 없으므로 조건이 필요 없다.
+     * 오히려 조건을 걸면 이펙트에 둘러싸인 단색 마젠타가 그대로 남는다.
      */
-    const looksLikeBg =
-      tones.length >= 2 ? toneHit.every(Boolean) : true;
+    const hits = toneHit.filter(Boolean).length;
+    const looksLikeBg = chromaticBg || tones.length < 2 || hits >= 2;
 
     if (region.length >= 200 && looksLikeBg) {
       region.forEach((p) => (bg[p] = 1));
@@ -373,6 +436,85 @@ function mergeBoxes(list, padX, padY, canMerge = () => true) {
 }
 
 /*
+ * 배경만 있는 세로/가로 띠 = 격자 경계.
+ *
+ * 시트에 칸 구분선이 그려져 있거나 프레임 사이가 벌어져 있으면,
+ * 그 자리는 거의 전부 배경이다. 이 띠를 넘는 병합을 막으면
+ * 이펙트가 옆 칸으로 삐져나와도 프레임이 섞이지 않는다.
+ */
+function findSeparators(sizeA, sizeB, isBgAt) {
+  const bands = [];
+  let run = -1;
+
+  for (let a = 0; a < sizeA; a++) {
+    let bgCount = 0;
+    for (let b = 0; b < sizeB; b++) if (isBgAt(a, b)) bgCount++;
+    const clear = bgCount / sizeB >= 0.985;
+
+    if (clear && run < 0) run = a;
+    else if (!clear && run >= 0) {
+      if (a - run >= 3) bands.push([run, a - 1]);
+      run = -1;
+    }
+  }
+  if (run >= 0 && sizeA - run >= 3) bands.push([run, sizeA - 1]);
+  return bands;
+}
+
+const rowSeps = findSeparators(H, W, (y, x) => bg[y * W + x] === 1);
+
+/*
+ * 세로 경계는 행 밴드 안에서 따로 찾는다.
+ *
+ * 시트 전체 높이로 한 번에 찾으면, 어느 한 행에서 이펙트가 칸을 넘는 순간
+ * 그 세로선이 통째로 무효가 되어 나머지 행까지 못 가른다.
+ * 행마다 따로 보면 그 행에서 실제로 비어 있는 자리를 쓸 수 있다.
+ */
+const rowBands = [];
+{
+  let start = 0;
+  for (const [s, e] of rowSeps) {
+    if (s - start > 40) rowBands.push([start, s - 1]);
+    start = e + 1;
+  }
+  if (H - start > 40) rowBands.push([start, H - 1]);
+}
+
+const bandCols = rowBands.map(([y0, y1]) =>
+  findSeparators(W, y1 - y0 + 1, (x, k) => bg[(y0 + k) * W + x] === 1),
+);
+console.log(
+  `격자 경계: 행 ${rowBands.length}개, 행별 세로 경계 ${bandCols.map((c) => c.length).join('/')}`,
+);
+
+/** 상자가 속한 행 밴드 (겹치는 면적이 가장 큰 것) */
+const bandOf = (c) => {
+  let best = -1;
+  let bestOv = 0;
+  rowBands.forEach(([y0, y1], i) => {
+    const ov = Math.min(c.y1, y1) - Math.max(c.y0, y0);
+    if (ov > bestOv) {
+      bestOv = ov;
+      best = i;
+    }
+  });
+  return best;
+};
+
+/** 두 상자 사이에 격자 경계가 끼어 있으면 다른 프레임이다 */
+function separated(a, b) {
+  const ba = bandOf(a);
+  const bb = bandOf(b);
+  if (ba !== bb) return true;
+
+  const gapX = a.x1 < b.x0 ? [a.x1, b.x0] : b.x1 < a.x0 ? [b.x1, a.x0] : null;
+  if (!gapX) return false;
+
+  const seps = bandCols[ba] ?? [];
+  return seps.some((s) => s[0] > gapX[0] && s[1] < gapX[1]);
+}
+
+/*
  * 라벨을 격자 앵커로 쓴다.
  *
  * 근접 병합만으로는 이펙트가 큰 시트에서 무너진다 — 로켓 화염이나 폭발이
@@ -430,11 +572,16 @@ if (words.length >= 4) {
   };
 
   alive.forEach((c) => (c.anchor = anchorOf(c)));
-  // 같은 칸에 배정된 것끼리만 병합한다
-  clusters = mergeBoxes(alive, 26, 26, (a, b) => a.anchor === b.anchor);
+  // 같은 칸에 배정됐고 격자 경계를 넘지 않는 것끼리만 병합한다
+  clusters = mergeBoxes(
+    alive,
+    26,
+    26,
+    (a, b) => a.anchor === b.anchor && !separated(a, b),
+  );
 } else {
-  // 라벨이 없는 시트(권장 형식) — 순수 근접 병합
-  clusters = mergeBoxes(alive, 26, 26);
+  // 라벨이 없는 시트 — 격자 경계만으로 가른다
+  clusters = mergeBoxes(alive, 26, 26, (a, b) => !separated(a, b));
 }
 
 /* 라벨 텍스트 제거 — 캐릭터에 비해 낮고 납작하다 */

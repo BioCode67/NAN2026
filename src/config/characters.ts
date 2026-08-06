@@ -337,14 +337,15 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
   pepe: {
     id: 'pepe',
     name: '패니 와이즈맨',
-    realName: 'Pepe the Frog',
-    tagline: '전부 다 걸었다',
-    colors: { body: 0x22c55e, head: 0x86efac, accent: 0xfde047 },
+    realName: 'Pennywise',
+    tagline: '전부 다 걸었다. 너도 걸어라',
+    colors: { body: 0xd8d2e8, head: 0xf5f0f5, accent: 0xef4444 },
     stats: { speed: 300, jump: -780, doubleJump: -710, weight: 0.85 },
 
     art: {
-      hair: 'none',
-      hairColor: 0x000000,
+      // 붉게 솟구친 광대 머리 + 귀까지 찢어진 입 + 부릅뜬 눈
+      hair: 'messy',
+      hairColor: 0xdc2626,
       glasses: 'none',
       glassesColor: 0x000000,
       beard: false,
@@ -405,12 +406,12 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     },
 
     quotes: {
-      intro: ['Feels good man.'],
-      skill: ['LET’S GO!'],
-      ko: ['Rekt.'],
-      surge: ['To the moon!'],
-      comeback: ['Diamond hands.'],
-      hurt: ['Feels bad man.'],
+      intro: ['우리 같이 떠내려가자.'],
+      skill: ['리츠고!'],
+      ko: ['너도 상장폐지될 거야.'],
+      surge: ['풍선 하나 줄까?'],
+      comeback: ['여기선 다들 떠내려가.'],
+      hurt: ['아직 안 끝났어…'],
     },
   },
 };

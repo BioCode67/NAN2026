@@ -299,6 +299,8 @@ npm test            # 위 세 가지 + 타입 검사 한 번에
 npm run prompts    # 캐릭터별 스프라이트 프롬프트 생성 (나노바나나에 붙여넣기)
 npm run sheet:merge -- <key>            # 받은 묶음 이미지를 시트 한 장으로 합침
 npm run sheet -- <입력.png> <출력.png>   # 스프라이트 시트 전처리(단일 파일)
+npm run sheet -- <입력.png> <출력.png> --grid 5x3 --label-band 0.13
+                                        #   칸을 못 가르거나 라벨이 남을 때
 ```
 
 `npm run smoke` 는 타이틀 → 선택 → 전투 → 이동/점프/공격/커맨드 무브/연속기/프롬프트 기믹/

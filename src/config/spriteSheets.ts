@@ -433,6 +433,15 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
     // 옛 시트는 SKILL_L2 에도 캐릭터가 있어 2프레임으로 이어 재생한다
     v1: { poses: { skill: [7, 8] } },
   },
+
+  linus: {
+    key: 'linustorvalds',
+    displayHeight: 116,
+    frameRate: 9,
+    poses: LAYOUT_V1,
+    // 8 = 캐릭터 없이 커널 패닉 에너지만 있는 프레임 → 투사체로 쓴다
+    v1: { explosionFrame: 8 },
+  },
 };
 
 /** 로드해야 할 시트 목록 */

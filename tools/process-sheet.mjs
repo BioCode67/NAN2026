@@ -44,12 +44,63 @@ const AA_MIN_LUM = 56;
 const LABEL_MAX_HEIGHT = 110;
 /** 프레임 주위 여백 */
 const PADDING = 6;
+/** 격자 모드에서 "빈 칸"으로 볼 내용량 (px). 진짜 캐릭터는 수만 px이다 */
+const EMPTY_CELL_AREA = 1500;
 
 /* ------------------------------------------------------------------ */
 
-const [, , inPath, outPath] = process.argv;
+const argv = process.argv.slice(2);
+const positional = argv.filter((a) => !a.startsWith('--'));
+const [inPath, outPath] = positional;
+
+/**
+ * 격자를 직접 알려주는 선택지 (--grid 5x3).
+ *
+ * 자동 검출은 "덩어리를 찾아 칸으로 묶는" 방식이라, 이펙트가 칸을 넘어가면
+ * 옆 칸·아랫 칸과 한 덩어리가 되어 프레임이 뭉개진다. 초록 오라가 셀을
+ * 가득 채운 스킬 칸에서 실제로 그렇게 된다.
+ *
+ * 그런데 우리가 뽑는 시안은 칸 수를 **이미 알고 있다** — 프롬프트에 6칸이라고
+ * 적어서 시켰기 때문이다. 아는 것을 굳이 추측하지 않는 길을 열어 둔다.
+ * 다시 뽑는 것보다 이 옵션 하나가 훨씬 싸다.
+ */
+const gridArg = argv[argv.indexOf('--grid') + 1];
+const GRID = argv.includes('--grid') ? parseGrid(gridArg) : null;
+
+/**
+ * 칸 가장자리에서 라벨 자리로 보고 무시할 비율 (--label-band 0.12 또는 0.12,0.09).
+ *
+ * 앞 숫자는 칸 아래, 뒷 숫자는 칸 위다. 위쪽이 따로 필요한 이유:
+ * 생성기가 라벨을 칸 **경계 바로 아래**에 찍는 일이 잦다. 그러면 그 글자는
+ * 자기 칸이 아니라 아랫 칸의 맨 위에 놓이고, 아랫 칸 그림과 닿아 한 덩어리가
+ * 되면 글자 걸러내기로도 못 떼어낸다(실제로 "Only)" 가 그렇게 남았다).
+ */
+const bandArg = argv[argv.indexOf('--label-band') + 1];
+const [BAND_BOTTOM, BAND_TOP] = parseBand(bandArg);
+
+function parseBand(text) {
+  if (!argv.includes('--label-band')) return [0, 0];
+  const parts = String(text ?? '').split(',').map(Number);
+  if (parts.some((v) => !Number.isFinite(v) || v < 0 || v > 0.4)) {
+    console.error('--label-band 는 0~0.4 사이의 숫자입니다. 예: 0.13 또는 0.13,0.09');
+    process.exit(1);
+  }
+  return [parts[0], parts[1] ?? 0];
+}
+
+function parseGrid(text) {
+  const m = /^(\d+)x(\d+)$/.exec(text ?? '');
+  if (!m) {
+    console.error('--grid 는 열x행 형식입니다. 예: --grid 6x1');
+    process.exit(1);
+  }
+  return { cols: Number(m[1]), rows: Number(m[2]) };
+}
+
 if (!inPath || !outPath) {
-  console.error('사용법: node tools/process-sheet.mjs <입력.png> <출력.png>');
+  console.error(
+    '사용법: node tools/process-sheet.mjs <입력.png> <출력.png> [--grid 5x3] [--label-band 0.12]',
+  );
   process.exit(1);
 }
 
@@ -84,6 +135,8 @@ for (let i = 3; i < data.length; i += 4) {
 const tones = [];
 /** 배경이 유채색인가 — 캐릭터 색과 겹칠 위험이 없다는 뜻 */
 let chromaticBg = false;
+/** 배경의 색조 벡터 (밝기를 뺀 색깔). 경계 잔여물을 지울 때 쓴다 */
+let bgHue = null;
 
 if (hasAlpha) {
   console.log('배경: 알파 채널 사용 (투명 PNG)');
@@ -145,6 +198,7 @@ if (hasAlpha) {
     return c.map((v) => v / m);
   };
   const domHue = hueVec(dominant);
+  bgHue = domHue;
 
   for (const [k, n] of sorted) {
     const rgb = k.split(',').map((v) => (Number(v) << 3) + 4);
@@ -236,21 +290,47 @@ if (!hasAlpha) {
     );
   };
 
-  for (let pass = 0; pass < 2; pass++) {
+  /*
+   * 유채색 배경에서는 **밝기를 뺀 색조**로도 본다.
+   *
+   * 마젠타 배경과 캐릭터의 검은 외곽선이 섞인 경계 픽셀은 어두운 마젠타
+   * (예: rgb(128,2,128))가 된다. RGB 거리로는 순마젠타에서 175나 떨어져 있어
+   * 절대 안 지워지고, 결과물에 분홍 테두리로 남는다.
+   * 색조만 보면 어두워도 마젠타는 마젠타다.
+   *
+   * 배경에 **닿아 있는** 픽셀만 흡수하므로, 그림 안쪽의 분홍색은 안전하다.
+   */
+  const hueNearBg = (i) => {
+    if (!chromaticBg || !bgHue) return false;
+    const c = [data[i], data[i + 1], data[i + 2]];
+    const m = Math.max(c[0], c[1], c[2]);
+    // 거의 검정인 픽셀은 색조를 논할 수 없다 — 캐릭터 외곽선으로 남긴다
+    if (m < 40) return false;
+    const h = c.map((v) => v / m);
+    return Math.hypot(h[0] - bgHue[0], h[1] - bgHue[1], h[2] - bgHue[2]) < 0.22;
+  };
+
+  // 색조로 지울 때는 여러 겹이 쌓여 있어 패스를 넉넉히 돈다
+  const passes = chromaticBg ? 6 : 2;
+  let absorbed = 0;
+
+  for (let pass = 0; pass < passes; pass++) {
     const add = [];
     for (let y = 1; y < H - 1; y++) {
       for (let x = 1; x < W - 1; x++) {
         const p = y * W + x;
         if (bg[p]) continue;
         const i = p * 4;
-        if (!nearBg(i)) continue;
+        if (!nearBg(i) && !hueNearBg(i)) continue;
         if (isGray(i) && lum(i) < AA_MIN_LUM) continue;
         if (bg[p - 1] || bg[p + 1] || bg[p - W] || bg[p + W]) add.push(p);
       }
     }
     add.forEach((p) => (bg[p] = 1));
+    absorbed += add.length;
     if (!add.length) break;
   }
+  if (absorbed) console.log(`경계 잔여물 흡수: ${absorbed}px`);
 }
 
 /*
@@ -362,9 +442,26 @@ if (!hasAlpha) {
      * 오히려 조건을 걸면 이펙트에 둘러싸인 단색 마젠타가 그대로 남는다.
      */
     const hits = toneHit.filter(Boolean).length;
-    const looksLikeBg = chromaticBg || tones.length < 2 || hits >= 2;
+    let looksLikeBg = chromaticBg || tones.length < 2 || hits >= 2;
+    let minArea = 200;
 
-    if (region.length >= 200 && looksLikeBg) {
+    /*
+     * 격자를 지정했다면 더 과감하게 지운다.
+     *
+     * 체크무늬 시안에서는 한 칸짜리 회색 조각이 캐릭터에 갇혀 살아남는다.
+     * 톤이 하나뿐이라 "배경"으로 인정받지 못하기 때문인데, 그 조각들이
+     * 그대로 게임 화면에 회색 네모로 떠다닌다(실제로 그랬다).
+     *
+     * 자동 검출에서는 이 판정을 느슨하게 하면 캐릭터의 단색 회색 부분까지
+     * 먹혀 프레임이 조각나므로 위험하다. 그런데 격자를 지정했다는 것은
+     * 프레임이 어디인지 이미 안다는 뜻이라, 조각나도 잘라낼 자리는 변하지 않는다.
+     */
+    if (GRID) {
+      looksLikeBg = true;
+      minArea = 40;
+    }
+
+    if (region.length >= minArea && looksLikeBg) {
       region.forEach((p) => (bg[p] = 1));
       removed += region.length;
     }
@@ -403,11 +500,18 @@ for (let sy = 0; sy < H; sy++) {
       box.area++;
       // 채도 있는 픽셀 비율 — 라벨 텍스트(흑백)와 손·로고(유채색)를 가른다
       if (!isGray(p * 4)) box.colored++;
-      // 순백/순흑 비율 — 라벨은 흰 글자 + 검은 외곽선이라 이 비율이 매우 높다
-      else {
-        const l = lum(p * 4);
-        if (l > 200 || l < 60) box.bw++;
-      }
+
+      /*
+       * 아주 밝거나 아주 어두운 픽셀 비율. 라벨은 흰 글자 + 검은 외곽선이라
+       * 이 비율이 매우 높다.
+       *
+       * 무채색일 때만 세면 안 된다 — 마젠타 배경 위의 흰 글자는 경계가
+       * 분홍으로 번져 글자 면적의 상당 부분이 "유채색"이 되고, 그만큼
+       * 비율이 떨어져 라벨 판정이 뒤집힌다. 실제로 그래서 라벨 한 조각이
+       * 프레임에 남았다. 밝기만 보면 번져도 밝은 건 밝다.
+       */
+      const l = lum(p * 4);
+      if (l > 200 || l < 60) box.bw++;
       if (x < box.x0) box.x0 = x;
       if (x > box.x1) box.x1 = x;
       if (y < box.y0) box.y0 = y;
@@ -431,6 +535,30 @@ for (let sy = 0; sy < H; sy++) {
 }
 
 console.log(`연결 요소 ${comps.length}개`);
+
+/*
+ * 격자 모드에서는 부스러기를 먼저 턴다.
+ *
+ * 체크무늬 시안에는 칸 경계의 얇은 선 조각이 여기저기 남는다. 크기가 작아
+ * 라벨로도 스프라이트로도 분류되지 않는데, 경계상자를 잡을 때는 셈에 들어가
+ * 빈 칸을 "내용이 있는 칸"으로 만들고 프레임 순서를 통째로 밀어버린다.
+ * (실제로 잡스 시트에서 빈 칸 하나가 프레임 하나로 세어져 이후가 다 밀렸다)
+ *
+ * 자동 검출에서는 손대지 않는다 — 거기서는 작은 조각도 캐릭터의 일부일 수 있고,
+ * 덩어리 묶기가 알아서 흡수한다.
+ */
+if (GRID) {
+  const TINY_AREA = 100;
+  let swept = 0;
+  for (let p = 0; p < W * H; p++) {
+    const c = comp[p];
+    if (c >= 0 && comps[c].area < TINY_AREA && !bg[p]) {
+      bg[p] = 1;
+      swept++;
+    }
+  }
+  if (swept) console.log(`부스러기 제거: ${swept}px`);
+}
 
 /*
  * 라벨 글자를 묶기 전에 걸러낸다.
@@ -457,9 +585,21 @@ const big = comps.filter((c) => c.area >= 150);
 const letters = big.filter(isLetter);
 const alive = big.filter((c) => !isLetter(c));
 
-/** 라벨로 판정된 연결 요소의 id — 복사 단계에서 걸러낸다 */
+/*
+ * 지울 글자는 더 작은 것까지 본다.
+ *
+ * 라벨은 글자마다 따로 떨어진 덩어리다. 스프라이트를 찾을 때 쓰는 문턱(150px)을
+ * 그대로 적용하면 'l' 이나 ')' 같은 가는 글자가 그물을 빠져나가, 라벨 대부분이
+ * 지워졌는데 몇 글자만 프레임에 남는다("Only)" 가 실제로 그렇게 남았다).
+ *
+ * 문턱을 낮춰도 그림이 지워지지는 않는다 — 순백/순흑 비율(bw)이 절반을 넘어야
+ * 글자로 보는데, 캐릭터의 작은 조각은 대개 살색·옷색이라 이 조건에서 걸린다.
+ */
+const LETTER_MIN_AREA = 40;
 const letterPixels = new Set(
-  comps.map((c, i) => (c.area >= 150 && isLetter(c) ? i : -1)).filter((i) => i >= 0),
+  comps
+    .map((c, i) => (c.area >= LETTER_MIN_AREA && isLetter(c) ? i : -1))
+    .filter((i) => i >= 0),
 );
 console.log(`요소 ${comps.length}개 → 라벨 글자 제외 후 ${alive.length}개`);
 
@@ -659,9 +799,73 @@ sprites.sort((a, b) => {
   return a.x0 - b.x0;
 });
 
-const frames = sprites;
+const frames = GRID ? sliceByGrid() : sprites;
 
-console.log(`검출된 프레임: ${frames.length}개`);
+/**
+ * 격자를 알고 있을 때 — 칸마다 내용의 경계상자만 잡는다.
+ *
+ * 덩어리를 묶지 않으므로 이펙트가 옆 칸으로 번져도 프레임이 섞이지 않는다.
+ * (번진 부분은 그 칸에서 잘려 나간다. 프레임이 통째로 뭉개지는 것보다 낫다)
+ */
+function sliceByGrid() {
+  const cw = Math.floor(W / GRID.cols);
+  const ch = Math.floor(H / GRID.rows);
+  /*
+   * 칸 경계에서 조금 안쪽부터 본다.
+   *
+   * 시안에 칸을 나누는 흰 선이 그려져 있으면 그 선이 배경이 아니라 내용으로
+   * 잡혀, 모든 칸의 경계상자가 칸 전체가 되어버린다(= 아무것도 안 자른 것).
+   * 격자를 지정했다는 것은 칸 경계를 안다는 뜻이니, 그 선폭만큼 물러선다.
+   */
+  const inset = Math.max(2, Math.round(Math.min(cw, ch) * 0.02));
+  const out = [];
+
+  for (let r = 0; r < GRID.rows; r++) {
+    for (let c = 0; c < GRID.cols; c++) {
+      const x0 = c * cw + inset;
+      // 라벨 자리로 지정된 가장자리 띠는 아예 보지 않는다
+      const y0 = r * ch + inset + Math.floor(ch * BAND_TOP);
+      const xEnd = (c + 1) * cw - inset;
+      const yEnd = (r + 1) * ch - inset - Math.floor(ch * BAND_BOTTOM);
+
+      let bx0 = Infinity, bx1 = -1, by0 = Infinity, by1 = -1, area = 0;
+
+      for (let y = y0; y < yEnd; y++) {
+        for (let x = x0; x < xEnd; x++) {
+          const p = y * W + x;
+          if (bg[p]) continue;
+          // 라벨로 판정된 덩어리는 프레임 내용이 아니다
+          if (letterPixels.has(comp[p])) continue;
+
+          area++;
+          if (x < bx0) bx0 = x;
+          if (x > bx1) bx1 = x;
+          if (y < by0) by0 = y;
+          if (y > by1) by1 = y;
+        }
+      }
+
+      /*
+       * 빈 칸은 건너뛴다.
+       *
+       * 기준을 낮게 잡으면 잔여물 몇 점이 프레임 하나로 세어져 이후 순서가
+       * 전부 밀린다. 진짜 캐릭터는 수만 px이므로 문턱을 넉넉히 올려도 안전하다.
+       */
+      if (area < EMPTY_CELL_AREA) {
+        console.log(`  [${r},${c}] 빈 칸 — 건너뜀 (내용 ${area}px)`);
+        continue;
+      }
+      out.push({ x0: bx0, x1: bx1, y0: by0, y1: by1, area });
+    }
+  }
+  return out;
+}
+
+console.log(
+  GRID
+    ? `격자 지정 ${GRID.cols}x${GRID.rows} → 프레임 ${frames.length}개`
+    : `검출된 프레임: ${frames.length}개`,
+);
 frames.forEach((f, i) =>
   console.log(`  [${i}] ${f.x1-f.x0+1}x${f.y1-f.y0+1} @(${f.x0},${f.y0})`),
 );
@@ -675,7 +879,7 @@ if (!frames.length) {
 
 const cellW = Math.max(...frames.map((f) => f.x1 - f.x0 + 1)) + PADDING * 2;
 const cellH = Math.max(...frames.map((f) => f.y1 - f.y0 + 1)) + PADDING * 2;
-const cols = Math.min(frames.length, 6);
+const cols = GRID ? GRID.cols : Math.min(frames.length, 6);
 const rows = Math.ceil(frames.length / cols);
 
 const out = new PNG({ width: cellW * cols, height: cellH * rows });

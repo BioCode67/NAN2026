@@ -1,4 +1,11 @@
 import Phaser from 'phaser';
+import {
+  ART_IMAGES,
+  ART_STRIPS,
+  prepareOptionalArt,
+  probeArt,
+  queueOptionalArt,
+} from '../config/artAssets';
 import { GAME } from '../config/gameConfig';
 import { SHEET_DEFS, animKey, metaKey } from '../config/spriteSheets';
 import type { Pose, SheetMeta } from '../config/spriteSheets';
@@ -6,8 +13,9 @@ import type { Pose, SheetMeta } from '../config/spriteSheets';
 /**
  * 리소스 로딩 씬.
  *
- * 아직 외부 에셋이 없으므로 파티클용 텍스처를 코드로 생성한다.
- * (이미지/사운드가 추가되면 preload()에 넣기만 하면 진행바가 자동으로 동작한다)
+ * 여기서 로드하는 것은 전부 **없어도 되는** 것들이다.
+ * 캐릭터 시트도 배경도 UI 그림도, 없으면 코드로 그린 도형 아트로 돌아간다.
+ * 그래서 로딩 실패를 오류로 다루지 않고 조용히 넘긴다.
  */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -29,11 +37,36 @@ export class BootScene extends Phaser.Scene {
 
   create(): void {
     this.generateTextures();
-    this.loadSpriteSheets();
+    void this.loadArt();
   }
 
-  /** 2단계: 메타를 읽어 실제 시트를 로드하고 애니메이션을 등록한다 */
-  private loadSpriteSheets(): void {
+  /**
+   * 2단계: 실제 그림을 불러온다.
+   *
+   * 먼저 무엇이 있는지 확인하고(probeArt) 있는 것만 로더에 건다.
+   * 없는 것을 걸어도 게임은 돌아가지만 Phaser가 파일마다 console.error를
+   * 찍어 콘솔이 빨개진다 — 아직 안 그린 그림은 오류가 아니다.
+   */
+  private async loadArt(): Promise<void> {
+    const available = await probeArt([...ART_IMAGES, ...ART_STRIPS]);
+
+    // 확인하는 사이 씬이 내려갔다면(새로고침 등) 더 진행하지 않는다
+    if (!this.scene.isActive()) return;
+
+    queueOptionalArt(this.load, available);
+    const queued = available.length + this.queueSpriteSheets();
+
+    if (queued === 0) {
+      this.finish();
+      return;
+    }
+
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => this.finish());
+    this.load.start();
+  }
+
+  /** 메타가 있는 캐릭터 시트만 로더에 건다. 건 개수를 돌려준다 */
+  private queueSpriteSheets(): number {
     let queued = 0;
 
     for (const def of SHEET_DEFS) {
@@ -49,17 +82,15 @@ export class BootScene extends Phaser.Scene {
       });
       queued++;
     }
+    return queued;
+  }
 
-    if (queued === 0) {
-      this.scene.start('Select');
-      return;
-    }
-
-    this.load.once(Phaser.Loader.Events.COMPLETE, () => {
-      this.registerAnimations();
-      this.scene.start('Select');
-    });
-    this.load.start();
+  /** 로딩 완료 — 후처리를 끝내고 타이틀로 넘긴다 */
+  private finish(): void {
+    // 마젠타 제거·띠 자르기는 그림이 다 들어온 지금 한 번만 한다
+    prepareOptionalArt(this);
+    this.registerAnimations();
+    this.scene.start('Title');
   }
 
   /** 여러 프레임짜리 포즈만 Phaser 애니메이션으로 등록한다 (단일 프레임은 setFrame으로 충분) */

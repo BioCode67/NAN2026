@@ -70,7 +70,15 @@ const page = await (
   await browser.newContext({ viewport: { width: 1400, height: 900 } })
 ).newPage();
 
-page.on('pageerror', (e) => errors.push(`[pageerror] ${e.message}`));
+/*
+ * 스택까지 남긴다.
+ * 메시지만 있으면 "Cannot read properties of undefined" 같은 오류가 어디서
+ * 났는지 찾느라 처음부터 다시 재현해야 한다.
+ */
+page.on('pageerror', (e) => {
+  const where = (e.stack ?? '').split('\n').slice(1, 4).join('\n');
+  errors.push(`[pageerror] ${e.message}${where ? `\n${where}` : ''}`);
+});
 page.on('console', (m) => {
   if (m.type() !== 'error') return;
 
@@ -79,9 +87,13 @@ page.on('console', (m) => {
    *
    * 리소스 로드 실패 메시지에는 URL이 본문이 아니라 location에 담긴다.
    * 본문만 보면 파비콘 404가 걸러지지 않아 스모크가 항상 실패한다.
+   *
+   * 아직 안 그린 배경·UI 그림(public/bg, public/ui)의 404도 같이 넘긴다.
+   * 이 그림들은 없는 것이 정상 상태다 — 없으면 코드로 그린 화면이 대신한다.
    */
   const where = m.location()?.url ?? '';
   if (/favicon|sourcemap/i.test(`${m.text()} ${where}`)) return;
+  if (/\/(bg|ui)\/[\w-]+\.png/.test(where)) return;
 
   errors.push(`[console] ${m.text()}${where ? ` (${where})` : ''}`);
 });
@@ -144,6 +156,9 @@ const installRecorder = () =>
 
 const readMoves = () => page.evaluate(() => window.__moves ?? []);
 const clearMoves = () => page.evaluate(() => void (window.__moves = []));
+/** 기록을 n개까지만 남긴다 (빗나간 시도를 지우고 다시 해보기 위함) */
+const trimMoves = (n) =>
+  page.evaluate((len) => void (window.__moves.length = len), n);
 
 /**
  * 프롬프트 오버레이가 떠 있으면 넘긴다.
@@ -249,7 +264,7 @@ const restartRound = async () => {
  * 키 입력이 처리되는 다음 프레임에는 이미 지면이라 공중기가 아니라 지상기가 나간다.
  * 프레임이 드문 환경일수록 이 틈이 커지므로, 2단 점프까지 써서 여유 높이를 만든다.
  */
-const DIVE_MIN_HEIGHT = 90;
+const DIVE_MIN_HEIGHT = 130;
 
 const goAirborne = async () => {
   for (let i = 0; i < 10; i++) {
@@ -277,9 +292,10 @@ const goAirborne = async () => {
  * 한 번도 돌지 않아 입력이 통째로 사라진다.
  * 버튼을 충분히 눌러 두고, 기술이 실제로 기록될 때까지 다시 시도한다.
  *
- * @param prep 매 시도 직전에 만족시킬 조건 (예: 공중에 떠 있기)
+ * @param prep   매 시도 직전에 만족시킬 조건 (예: 공중에 떠 있기)
+ * @param expect 나와야 하는 기술 이름. 다른 게 나오면 기록을 지우고 다시 시도한다
  */
-const command = async (dirKey, btn, prep) => {
+const command = async (dirKey, btn, prep, expect) => {
   const before = (await readMoves()).length;
   const until = Date.now() + 12000;
   let fired = false;
@@ -315,7 +331,22 @@ const command = async (dirKey, btn, prep) => {
     await page.keyboard.up(dirKey);
 
     await page.waitForTimeout(120);
-    fired = (await readMoves()).length > before;
+    const list = await readMoves();
+    if (list.length <= before) continue;
+
+    /*
+     * 나온 기술이 기대와 다르면 없던 일로 하고 다시 건다.
+     *
+     * 공중 급강하가 대표적이다. "떠 있다"를 확인한 뒤 키를 누르기까지
+     * 브라우저를 몇 번 오가는데, 그 사이에 프레임이 돌아 착지해 버리면
+     * 같은 S+K가 지상기로 해석된다. 그건 조작 해석이 깨진 게 아니라
+     * 테스트가 준비에 실패한 것이므로, 실패로 세지 않고 다시 시도한다.
+     */
+    if (expect && list[before] !== expect) {
+      await trimMoves(before);
+      continue;
+    }
+    fired = true;
   }
 
   if (!fired) errors.push(`[커맨드] ${dirKey}+${btn} 가 기술로 이어지지 않았습니다`);
@@ -330,7 +361,31 @@ console.log(`스모크 테스트 → ${URL} (캐릭터 #${PICK})`);
 try {
 await page.goto(URL, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('canvas', { timeout: 30000 });
-await page.waitForTimeout(3000);
+
+/*
+ * 타이틀 → 캐릭터 선택.
+ *
+ * 시간을 재서 넘기지 않는다 — 저사양 헤드리스에서는 부팅이 몇 초씩 밀린다.
+ * 선택 씬이 실제로 살아날 때까지 Enter를 두드린다.
+ */
+const sceneAlive = (key) =>
+  page.evaluate((k) => !!window.game?.scene?.isActive(k), key).catch(() => false);
+
+let atSelect = false;
+for (let i = 0; i < 60; i++) {
+  if (await sceneAlive('Select')) {
+    atSelect = true;
+    break;
+  }
+  if (await sceneAlive('Title')) {
+    if (i === 0) await shot('title');
+    await page.keyboard.press('Enter');
+  }
+  await page.waitForTimeout(250);
+}
+if (!atSelect) errors.push('[부팅] 캐릭터 선택 화면까지 넘어가지 못했습니다');
+
+await page.waitForTimeout(600);
 await shot('select');
 
 for (let i = 0; i < PICK; i++) {
@@ -387,18 +442,18 @@ console.log(`커맨드 무브 검증 대상: ${expected.name}`);
  */
 console.log('커맨드 무브 (상단기 · 하단기 · 급강하)');
 const cases = [
-  ['w', 'j', 'cmd-up-light', undefined],
-  ['w', 'k', 'cmd-up-heavy', undefined],
-  ['s', 'j', 'cmd-down-light', undefined],
-  ['s', 'k', 'cmd-down-heavy', undefined],
+  ['w', 'j', 'cmd-up-light', undefined, expected.lightUp],
+  ['w', 'k', 'cmd-up-heavy', undefined, expected.heavyUp],
+  ['s', 'j', 'cmd-down-light', undefined, expected.lightDown],
+  ['s', 'k', 'cmd-down-heavy', undefined, expected.heavyDown],
   // 공중 급강하 — 시도 직전마다 공중에 떠 있는지 확인한다
-  ['s', 'k', 'cmd-air-dive', goAirborne],
+  ['s', 'k', 'cmd-air-dive', goAirborne, expected.airDive],
 ];
 
-for (const [dir, btn, name, prep] of cases) {
+for (const [dir, btn, name, prep, want] of cases) {
   await restartRound();
   await waitGrounded();
-  await command(dir, btn, prep);
+  await command(dir, btn, prep, want);
   await shot(name);
 }
 

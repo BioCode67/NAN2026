@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { ORB_FRAME, hasArt } from '../config/artAssets';
 import { DEPTH, GAME, STAGE } from '../config/gameConfig';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
@@ -20,9 +21,10 @@ const HIT_COOLDOWN = 220;
 /** 떠다니는 프롬프트 오브 하나 */
 interface Orb {
   root: Phaser.GameObjects.Container;
-  core: Phaser.GameObjects.Arc;
-  ring: Phaser.GameObjects.Arc;
-  label: Phaser.GameObjects.Text;
+  /** 생성한 오브 그림 (없으면 아래 도형들로 그린다) */
+  sprite: Phaser.GameObjects.Image | null;
+  core: Phaser.GameObjects.Arc | null;
+  ring: Phaser.GameObjects.Arc | null;
   hp: number;
   /** 사라지는 시각 */
   dieAt: number;
@@ -98,25 +100,52 @@ export class PromptOrbSystem {
     const cx = Phaser.Math.Between(STAGE.LEFT + 320, STAGE.RIGHT - 320);
     const cy = Phaser.Math.Between(240, 390);
 
-    /* 안쪽 코어 — 가산 합성으로 어두운 배경 위에서 발광한다 */
-    const core = this.scene.add.circle(0, 0, ORB_RADIUS, 0xf472b6, 0.95);
-    core.setBlendMode(Phaser.BlendModes.ADD);
+    /*
+     * 생성한 오브 그림이 있으면 그걸 쓴다.
+     * 없으면 지금까지처럼 발광하는 원 + 링 + 글자로 그린다 —
+     * 어느 쪽이든 "때릴 수 있는 것"으로 보여야 한다는 목표는 같다.
+     */
+    const art = hasArt(this.scene, 'ui_prompt_orb');
 
-    const ring = this.scene.add.circle(0, 0, ORB_RADIUS + 12);
-    ring.isFilled = false;
-    ring.setStrokeStyle(4, 0xffffff, 0.9);
+    let sprite: Phaser.GameObjects.Image | null = null;
+    let core: Phaser.GameObjects.Arc | null = null;
+    let ring: Phaser.GameObjects.Arc | null = null;
+    const parts: Phaser.GameObjects.GameObject[] = [];
 
-    const label = this.scene.add
-      .text(0, 0, 'AI', {
-        fontFamily: GAME.FONT,
-        fontSize: '20px',
-        color: '#0b1020',
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5);
+    if (art) {
+      sprite = this.scene.add
+        .image(0, 0, 'ui_prompt_orb', ORB_FRAME.INTACT)
+        .setOrigin(0.5)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      // 판정 원(ORB_RADIUS)보다 조금 크게 — 보이는 크기가 판정보다 작으면 억울하다
+      sprite.setScale(((ORB_RADIUS + 12) * 2) / (sprite.width || 1));
+
+      // 링 대신 그림 자체를 맥동시킨다
+      ring = null;
+      parts.push(sprite);
+    } else {
+      /* 안쪽 코어 — 가산 합성으로 어두운 배경 위에서 발광한다 */
+      core = this.scene.add.circle(0, 0, ORB_RADIUS, 0xf472b6, 0.95);
+      core.setBlendMode(Phaser.BlendModes.ADD);
+
+      ring = this.scene.add.circle(0, 0, ORB_RADIUS + 12);
+      ring.isFilled = false;
+      ring.setStrokeStyle(4, 0xffffff, 0.9);
+
+      const label = this.scene.add
+        .text(0, 0, 'AI', {
+          fontFamily: GAME.FONT,
+          fontSize: '20px',
+          color: '#0b1020',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
+
+      parts.push(core, ring, label);
+    }
 
     const root = this.scene.add
-      .container(cx, cy, [core, ring, label])
+      .container(cx, cy, parts)
       .setDepth(DEPTH.FIGHTER + 1);
 
     /* 등장 연출 — 작게 나타나 크게 부풀었다 제자리로 */
@@ -128,22 +157,25 @@ export class PromptOrbSystem {
       ease: 'Back.easeOut',
     });
 
-    /* 링이 계속 맥동해 "때릴 수 있는 것"으로 읽히게 한다 */
-    this.scene.tweens.add({
-      targets: ring,
-      scale: 1.35,
-      alpha: { from: 0.9, to: 0.25 },
-      duration: 720,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
+    /* 계속 맥동해 "때릴 수 있는 것"으로 읽히게 한다 */
+    const pulse = ring ?? sprite;
+    if (pulse) {
+      this.scene.tweens.add({
+        targets: pulse,
+        scale: pulse.scale * 1.15,
+        alpha: { from: 0.95, to: 0.45 },
+        duration: 720,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
 
     this.orb = {
       root,
+      sprite,
       core,
       ring,
-      label,
       hp: ORB_HP,
       dieAt: time + ORB_LIFESPAN,
       hittableAt: 0,
@@ -217,9 +249,14 @@ export class PromptOrbSystem {
     sound.play('hitLight', 0.9);
     this.scene.cameras.main.shake(90, 0.006);
 
-    /* 맞을수록 붉어지고 격하게 떨린다 — 남은 체력이 눈으로 보인다 */
+    /* 맞을수록 갈라지고 붉어진다 — 남은 체력이 눈으로 보인다 */
     const left = Phaser.Math.Clamp(o.hp / ORB_HP, 0, 1);
-    o.core.setFillStyle(
+    if (o.sprite) {
+      o.sprite.setFrame(
+        left > 0.66 ? ORB_FRAME.INTACT : left > 0.33 ? ORB_FRAME.CRACKED : ORB_FRAME.CRITICAL,
+      );
+    }
+    o.core?.setFillStyle(
       Phaser.Display.Color.GetColor(255, Math.round(70 + 130 * left), Math.round(150 * left)),
       0.95,
     );
@@ -249,8 +286,12 @@ export class PromptOrbSystem {
     this.scene.cameras.main.shake(320, 0.02);
     this.burst(o.root.x, o.root.y);
 
+    // 마지막 칸은 "터지는 순간" 그림이다 — 사라지는 연출 동안 그것으로 바꾼다
+    o.sprite?.setFrame(ORB_FRAME.BURST);
+
     this.scene.tweens.killTweensOf(o.root);
-    this.scene.tweens.killTweensOf(o.ring);
+    if (o.ring) this.scene.tweens.killTweensOf(o.ring);
+    if (o.sprite) this.scene.tweens.killTweensOf(o.sprite);
     this.scene.tweens.add({
       targets: o.root,
       scale: 2.4,
@@ -273,7 +314,8 @@ export class PromptOrbSystem {
     o.dead = true;
 
     this.scene.tweens.killTweensOf(o.root);
-    this.scene.tweens.killTweensOf(o.ring);
+    if (o.ring) this.scene.tweens.killTweensOf(o.ring);
+    if (o.sprite) this.scene.tweens.killTweensOf(o.sprite);
     this.scene.tweens.add({
       targets: o.root,
       y: o.root.y - 220,
@@ -345,7 +387,8 @@ export class PromptOrbSystem {
   reset(): void {
     if (this.orb) {
       this.scene.tweens.killTweensOf(this.orb.root);
-      this.scene.tweens.killTweensOf(this.orb.ring);
+      if (this.orb.ring) this.scene.tweens.killTweensOf(this.orb.ring);
+      if (this.orb.sprite) this.scene.tweens.killTweensOf(this.orb.sprite);
       this.orb.root.destroy();
       this.orb = null;
     }

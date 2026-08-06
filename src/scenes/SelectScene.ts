@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { addBackdrop } from '../config/artAssets';
 import { buildFighterArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
@@ -65,6 +66,18 @@ export class SelectScene extends Phaser.Scene {
 
   /** 정적 배경은 텍스처로 구워 매 프레임 재분할 비용을 없앤다 */
   private buildBackground(): void {
+    /* 생성한 배경 그림이 있으면 그걸 쓴다 */
+    const art = addBackdrop(this, 'ui_select_bg', GAME.WIDTH, GAME.HEIGHT);
+    if (art) {
+      art.setDepth(DEPTH.BG);
+      // 카드와 설명 패널이 위에 올라가므로 배경을 한 겹 눌러 둔다
+      this.add
+        .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT, 0x040814, 0.4)
+        .setOrigin(0)
+        .setDepth(DEPTH.BG + 1);
+      return;
+    }
+
     const KEY = 'select-bg';
 
     if (!this.textures.exists(KEY)) {
@@ -237,8 +250,12 @@ export class SelectScene extends Phaser.Scene {
       })
       .setDepth(DEPTH.HUD);
 
+    /*
+     * 고유 메커니즘은 두 줄이라 다음 줄과 26px 간격으로는 겹친다.
+     * 아래 두 줄을 그만큼 내렸다.
+     */
     this.skillText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 112, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 126, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#cbd5e1',
@@ -252,7 +269,7 @@ export class SelectScene extends Phaser.Scene {
      * 플레이어가 W+K / S+K 같은 입력이 있다는 사실 자체를 모른 채 끝난다.
      */
     this.movesText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 138, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 152, '', {
         fontFamily: GAME.FONT,
         fontSize: '13px',
         color: '#8fa6d8',

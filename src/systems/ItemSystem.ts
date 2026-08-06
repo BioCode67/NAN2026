@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { ITEM_ICON_FRAME, hasArt } from '../config/artAssets';
 import { DEPTH, GAME, STAGE } from '../config/gameConfig';
 import { ITEMS, rollItem } from '../config/items';
 import type { ItemConfig, ItemId } from '../config/items';
@@ -10,7 +11,7 @@ import type { StockSystem } from './StockSystem';
 interface Drop {
   cfg: ItemConfig;
   root: Phaser.GameObjects.Container;
-  icon: Phaser.GameObjects.Text;
+  icon: Phaser.GameObjects.GameObject;
   /** 낙하 속도 */
   vy: number;
   landed: boolean;
@@ -100,9 +101,7 @@ export class ItemSystem {
       .setStrokeStyle(3, cfg.color);
     const glow = this.scene.add.circle(0, 0, 32, cfg.color, 0.25);
     glow.setBlendMode(Phaser.BlendModes.ADD);
-    const icon = this.scene.add
-      .text(0, 0, cfg.icon, { fontSize: '26px' })
-      .setOrigin(0.5);
+    const icon = this.makeIcon(cfg);
 
     const root = this.scene.add
       .container(x, y, [glow, box, icon])
@@ -125,6 +124,27 @@ export class ItemSystem {
       expireAt: 0,
       taken: false,
     });
+  }
+
+  /**
+   * 아이템 그림.
+   *
+   * 생성한 아이콘 시트가 있으면 그 칸을, 없으면 지금까지처럼 이모지를 쓴다.
+   * 이모지는 어느 기기에서 보느냐에 따라 모양이 제각각이라 그림이 있으면
+   * 그쪽이 늘 낫지만, 없다고 아이템을 못 알아볼 정도는 아니다.
+   */
+  private makeIcon(cfg: ItemConfig): Phaser.GameObjects.GameObject {
+    if (hasArt(this.scene, 'ui_item_icons')) {
+      const sprite = this.scene.add
+        .image(0, 0, 'ui_item_icons', ITEM_ICON_FRAME[cfg.id])
+        .setOrigin(0.5);
+      // 상자(44px) 안에 들어가도록 맞춘다 — 시트 해상도가 얼마든 상관없다
+      const w = sprite.width || 1;
+      sprite.setScale(Math.min(1, 34 / w));
+      return sprite;
+    }
+
+    return this.scene.add.text(0, 0, cfg.icon, { fontSize: '26px' }).setOrigin(0.5);
   }
 
   private updateDrops(time: number, delta: number): void {

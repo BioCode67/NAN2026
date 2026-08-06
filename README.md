@@ -230,7 +230,7 @@ Phaser 3 · TypeScript · Vite
 ```
 src/
 ├── config/      게임 상수, 캐릭터·아이템·스프라이트 데이터
-├── scenes/      Boot → Select → Battle
+├── scenes/      Boot → Title → Select → Battle
 ├── characters/  BaseCharacter + 뷰(스프라이트 / 도형 아트)
 ├── systems/     Stock · Combat · Projectile · Item · AI · Sound · EventBus
 │                PromptOrb · Gimmick · Rhythm (프롬프트 기믹)
@@ -245,11 +245,30 @@ docs/            아트 생성 규격
 
 ### 에셋
 
-외부 에셋 의존을 최소화했다.
+외부 에셋 의존을 최소화했다. **그림이 한 장도 없어도 게임은 끝까지 돌아간다.**
+있는 그림은 그 위에 덮이고, 없는 자리는 코드로 그린 화면이 그대로 대신한다.
 
 - **사운드**: 파일 없음. Web Audio API로 실시간 합성 (`src/systems/SoundSystem.ts`)
 - **캐릭터**: 스프라이트 시트가 있으면 사용, 없으면 Phaser 도형으로 코드 드로잉
-- **배경/이펙트**: 전부 코드 생성
+- **이펙트**: 전부 코드 생성
+- **배경 · 타이틀 · UI**: 아래 경로에 넣으면 새로고침만으로 적용된다
+
+| 넣는 곳 | 무엇 | 없으면 |
+|---|---|---|
+| `public/bg/stage_*.png` | 스테이지 배경 5종 | 코드로 그린 캔들차트 배경 |
+| `public/ui/ui_title_bg·logo.png` | 타이틀 화면 | 글자로 그린 타이틀 |
+| `public/ui/ui_select_bg.png` | 캐릭터 선택 배경 | 코드로 그린 배경 |
+| `public/ui/ui_result_bg.png` | 결과 화면 배경 | 검은 반투명 막 |
+| `public/ui/ui_item_icons.png` | 아이템 아이콘 6칸 띠 | 이모지 |
+| `public/ui/ui_prompt_orb.png` | 프롬프트 오브 4칸 띠 | 발광 원 + 링 |
+
+전처리가 필요 없다. 크기는 아무래도 좋고(비율을 지켜 화면을 덮도록 맞춘다),
+띠 그림은 게임이 가로로 똑같이 나눠 쓰며, 투명이 안 돼서 마젠타(#FF00FF)
+배경으로 온 그림은 자동으로 누끼를 딴다. 프롬프트는 `npm run prompts` 가
+`art-source/prompts/scenes/` 에 만들어 둔다 (`src/config/artAssets.ts` 가 표다).
+
+스테이지 배경은 **맵 기믹과 짝지어져** 있다. "달로 보내줘"를 입력하면 중력만
+바뀌는 게 아니라 배경까지 달 표면으로 갈렸다가, 기믹이 끝나면 되돌아온다.
 
 ## 개발
 
@@ -264,7 +283,7 @@ npm run sheet:merge -- <key>            # 받은 묶음 이미지를 시트 한 
 npm run sheet -- <입력.png> <출력.png>   # 스프라이트 시트 전처리(단일 파일)
 ```
 
-`npm run smoke` 는 선택 → 전투 → 이동/점프/공격/커맨드 무브/연속기/프롬프트 기믹/
+`npm run smoke` 는 타이틀 → 선택 → 전투 → 이동/점프/공격/커맨드 무브/연속기/프롬프트 기믹/
 스킬/방어/대시 → 결과 경로를 자동으로 밟으며 단계별 스크린샷을 남기고
 콘솔 오류를 검사한다.
 

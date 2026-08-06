@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { DEFAULT_STAGE_ART, addBackdrop, hasArt } from '../config/artAssets';
 import { CHARACTERS } from '../config/characters';
 import {
   AI_MEDIUM,
@@ -60,6 +61,10 @@ export class BattleScene extends Phaser.Scene {
 
   private ground!: Phaser.GameObjects.Rectangle;
   private platforms: Phaser.GameObjects.Rectangle[] = [];
+  /** 생성한 스테이지 그림 레이어 (없으면 보이지 않는다) */
+  private bgArt?: Phaser.GameObjects.Image;
+  /** 맵 기믹이 요청한 배경들 — 맨 위가 지금 보이는 것 */
+  private stageArtStack: string[] = [];
   private fighters: BaseCharacter[] = [];
   private player!: BaseCharacter;
   private ais: AISystem[] = [];
@@ -108,6 +113,7 @@ export class BattleScene extends Phaser.Scene {
     this.ais = [];
     this.huds = [];
     this.platforms = [];
+    this.stageArtStack = [];
     this.disposers = [];
     this.koOrder = [];
     this.battleActive = false;
@@ -141,6 +147,10 @@ export class BattleScene extends Phaser.Scene {
    * Graphics 객체는 매 프레임 명령 목록을 다시 삼각형으로 분할하므로,
    * 캔들 수십 개 + 꺾은선을 그대로 두면 정적인 그림에 매 프레임 비용을 낸다.
    * 구운 뒤에는 이미지 1장 = 드로우콜 1회로 끝난다.
+   *
+   * 생성한 스테이지 그림(public/bg/stage_*.png)이 있으면 이 위에 덮어 깐다.
+   * 도형 배경은 지우지 않고 남겨 둔다 — 맵 기믹으로 갈아 끼울 그림이
+   * 아직 없을 때 그 아래에서 받쳐 주는 바닥이 된다.
    */
   private buildBackground(): void {
     const KEY = 'battle-bg';
@@ -184,6 +194,76 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.add.image(0, 0, KEY).setOrigin(0).setDepth(DEPTH.BG);
+
+    /*
+     * 스테이지 그림 레이어.
+     *
+     * 항상 만들어 두고 텍스처만 갈아 끼운다. 기믹이 걸릴 때마다 이미지를
+     * 새로 만들면 페이드가 겹칠 때 이전 장이 남아 두 장이 포개진다.
+     */
+    this.bgArt = this.add
+      .image(0, 0, 'pixel')
+      .setOrigin(0)
+      .setDepth(DEPTH.BG + 1)
+      .setVisible(false);
+    this.applyStageArt(true);
+  }
+
+  /**
+   * 맵 기믹이 도는 동안 배경을 갈아 끼운다.
+   * 되돌리는 함수를 돌려주며, 여러 기믹이 겹치면 마지막에 걸린 쪽이 보인다.
+   */
+  pushStageArt(key: string): () => void {
+    this.stageArtStack.push(key);
+    this.applyStageArt();
+
+    let popped = false;
+    return () => {
+      if (popped) return;
+      popped = true;
+      const i = this.stageArtStack.lastIndexOf(key);
+      if (i >= 0) this.stageArtStack.splice(i, 1);
+      this.applyStageArt();
+    };
+  }
+
+  /** 지금 보여야 할 배경 그림을 정해 반영한다 */
+  private applyStageArt(immediate = false): void {
+    /*
+     * 씬이 내려간 뒤에도 불릴 수 있다.
+     *
+     * 재시작(R)은 맵 기믹이 도는 중에도 눌린다. 그때 GimmickSystem.reset()이
+     * 되돌리기를 실행하는데, 그 시점이면 표시 객체는 이미 파괴된 뒤다.
+     * (파괴된 GameObject는 scene 참조를 잃는다)
+     */
+    if (!this.bgArt?.scene) return;
+
+    const wanted = this.stageArtStack[this.stageArtStack.length - 1];
+    const key =
+      wanted && hasArt(this, wanted)
+        ? wanted
+        : hasArt(this, DEFAULT_STAGE_ART)
+          ? DEFAULT_STAGE_ART
+          : null;
+
+    if (!key) {
+      this.bgArt.setVisible(false);
+      return;
+    }
+    if (this.bgArt.visible && this.bgArt.texture.key === key) return;
+
+    this.bgArt.setTexture(key);
+    this.bgArt.setDisplaySize(GAME.WORLD_WIDTH, GAME.HEIGHT);
+    this.bgArt.setVisible(true);
+
+    // 장소가 바뀐 것이 눈에 들어오도록 짧게 밝혔다 가라앉힌다
+    this.tweens.killTweensOf(this.bgArt);
+    if (immediate) {
+      this.bgArt.setAlpha(1);
+      return;
+    }
+    this.bgArt.setAlpha(0);
+    this.tweens.add({ targets: this.bgArt, alpha: 1, duration: 260 });
   }
 
   private buildStage(): void {
@@ -324,6 +404,7 @@ export class BattleScene extends Phaser.Scene {
       stock: this.stock,
       rhythm: this.rhythm,
       platforms: () => this.platforms,
+      stageArt: (key) => this.pushStageArt(key),
     });
 
     this.orbs = new PromptOrbSystem(this);
@@ -705,8 +786,16 @@ export class BattleScene extends Phaser.Scene {
   private showResult(winner: BaseCharacter | null): void {
     const playerWon = winner?.side === 'player';
 
+    /*
+     * 결과 화면 배경.
+     * 그림이 있으면 전투 장면을 덮고, 없으면 지금까지처럼 검게 깐다.
+     * 어느 쪽이든 그 위에 반투명 막을 한 겹 더 둬 글자를 읽히게 한다.
+     */
+    const art = addBackdrop(this, 'ui_result_bg', GAME.WIDTH, GAME.HEIGHT);
+    art?.setDepth(DEPTH.OVERLAY).setScrollFactor(0);
+
     this.add
-      .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT, 0x000000, 0.62)
+      .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT, 0x000000, art ? 0.42 : 0.62)
       .setOrigin(0)
       .setDepth(DEPTH.OVERLAY)
       .setScrollFactor(0);

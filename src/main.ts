@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { PHASER_CONFIG } from './config/gameConfig';
 import { sound } from './systems/SoundSystem';
 import { BootScene } from './scenes/BootScene';
+import { TitleScene } from './scenes/TitleScene';
 import { SelectScene } from './scenes/SelectScene';
 import { BattleScene } from './scenes/BattleScene';
 
@@ -13,7 +14,7 @@ import { BattleScene } from './scenes/BattleScene';
  */
 const game = new Phaser.Game({
   ...PHASER_CONFIG,
-  scene: [BootScene, SelectScene, BattleScene],
+  scene: [BootScene, TitleScene, SelectScene, BattleScene],
 });
 
 /**

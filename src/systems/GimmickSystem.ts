@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GIMMICK_STAGE_ART } from '../config/artAssets';
 import { DEPTH, GAME, STAGE } from '../config/gameConfig';
 import { sound } from './SoundSystem';
 import type { GimmickSpec } from '../types';
@@ -26,6 +27,11 @@ export interface GimmickContext {
   rhythm: RhythmSystem;
   /** 공중 발판 표시 객체 (발판 붕괴가 쓴다) */
   platforms: () => Phaser.GameObjects.Rectangle[];
+  /**
+   * 배경 그림을 갈아 끼우고 되돌리는 함수를 받는다.
+   * 그림이 아직 없으면 아무 일도 일어나지 않는다 — 기믹 자체는 그대로 돈다.
+   */
+  stageArt: (key: string) => () => void;
 }
 
 /** 용암 피해 간격 */
@@ -102,14 +108,28 @@ export class GimmickSystem {
     sound.play('skill');
 
     const handle = this.run(spec, time);
-    if (spec.duration > 0) {
-      this.active.push({
-        spec,
-        endAt: time + spec.duration,
-        tick: handle?.tick,
-        cleanup: handle?.cleanup ?? (() => {}),
-      });
-    }
+    if (spec.duration <= 0) return;
+
+    /*
+     * 장소가 바뀌는 기믹은 배경도 함께 바꾼다.
+     *
+     * 효과 구현(run) 안에 넣지 않고 여기서 처리하는 이유:
+     * 배경 교체는 어느 기믹이든 똑같은 동작이라, 표(GIMMICK_STAGE_ART)에
+     * 한 줄 넣는 것만으로 새 배경이 붙게 하려는 것이다.
+     */
+    const artKey = GIMMICK_STAGE_ART[spec.id];
+    const restoreArt = artKey ? this.ctx.stageArt(artKey) : null;
+    const cleanup = handle?.cleanup;
+
+    this.active.push({
+      spec,
+      endAt: time + spec.duration,
+      tick: handle?.tick,
+      cleanup: () => {
+        cleanup?.();
+        restoreArt?.();
+      },
+    });
   }
 
   /** id로 분기해 실제 효과를 건다 */

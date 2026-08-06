@@ -33,3 +33,6 @@ node_modules/.vite/
 
 # 스모크 테스트 스크린샷
 tools/smoke-shots/
+
+# 받은 그림을 잠깐 두는 곳 (art:in 이 여기서 집어 간다)
+art-source/inbox/

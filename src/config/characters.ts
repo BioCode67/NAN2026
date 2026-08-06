@@ -48,6 +48,10 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
     moves: moveSet({
       light: { name: '잽', damage: 9, startup: 78, range: 64 },
 
+      // 연속기 — 클릭하듯 두 번 치고 창을 강제로 닫아버린다
+      light2: { name: '더블 클릭', damage: 10, startup: 108, range: 68 },
+      light3: { name: '강제 종료', damage: 16, startup: 134, cry: '응답 없음.' },
+
       lightUp: {
         name: '강제 업데이트',
         // 팝업창이 위로 튀어 올라 상대를 걷어 올린다
@@ -72,8 +76,14 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         damage: 19,
         startup: 195,
         range: 94,
-        knockbackX: 600,
-        knockbackY: -400,
+      },
+      heavy2: {
+        name: '인수 합병',
+        damage: 24,
+        startup: 172,
+        range: 100,
+        knockbackX: 860,
+        cry: '이 회사, 내가 사겠소.',
       },
 
       heavyUp: {
@@ -192,6 +202,10 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         range: 60,
       },
 
+      // 연속기 — 발표하듯 몰아치다 마지막에 한 장 더 꺼낸다
+      light2: { name: '스트레이트', damage: 11, startup: 96, recovery: 140, range: 64 },
+      light3: { name: '슬라이드 넘기기', damage: 17, startup: 122, cry: '다음 슬라이드.' },
+
       lightUp: {
         name: '원 모어 씽',
         // 검지를 치켜드는 그 동작. 짧지만 확실하게 띄운다
@@ -218,8 +232,14 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         startup: 200,
         recovery: 300,
         range: 78,
-        knockbackX: 640,
-        knockbackY: -430,
+      },
+      heavy2: {
+        name: '단종 선언',
+        damage: 26,
+        startup: 150,
+        range: 86,
+        knockbackX: 880,
+        cry: '이 제품은 오늘부로 단종입니다.',
       },
 
       heavyUp: {
@@ -327,13 +347,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         name: '트윗 연사',
         damage: 7,
         startup: 48,
-        active: 70,
+        active: 90,
         recovery: 95,
         range: 56,
-        knockbackX: 200,
-        hitstun: 150,
+        knockbackX: 120,
+        hitstun: 140,
         hitstop: 55,
       },
+
+      // 연속기 — 이 캐릭터가 가장 빠르게 몰아친다
+      light2: { name: '리트윗', damage: 8, startup: 88, active: 100, recovery: 110, range: 60 },
+      light3: { name: '커뮤니티 노트', damage: 14, startup: 118, cry: '이 트윗에는 맥락이 필요합니다.' },
 
       lightUp: {
         name: '스타링크 발사',
@@ -363,6 +387,15 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         range: 86,
         // 부스터를 점화해 앞으로 치고 나간다
         lunge: 520,
+      },
+      heavy2: {
+        name: '단수 분리',
+        damage: 25,
+        startup: 145,
+        range: 94,
+        knockbackX: 900,
+        knockbackY: -520,
+        cry: '1단 분리!',
       },
 
       heavyUp: {
@@ -479,10 +512,14 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         name: '코드 리뷰',
         damage: 9,
         startup: 90,
-        active: 100,
+        active: 120,
         recovery: 170,
         range: 84,
       },
+
+      // 연속기 — 지적하고, 되돌리고, 결국 갈아엎는다
+      light2: { name: '변경 요청', damage: 10, startup: 112, range: 86 },
+      light3: { name: '전면 재작성', damage: 17, startup: 140, range: 92, cry: '이건 처음부터 다시 짜.' },
 
       lightUp: {
         name: '머지 리퀘스트',
@@ -510,9 +547,15 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         startup: 215,
         recovery: 350,
         range: 102,
-        knockbackX: 600,
-        knockbackY: -410,
         hitstop: 135,
+      },
+      heavy2: {
+        name: '메인라인 병합',
+        damage: 26,
+        startup: 178,
+        range: 108,
+        knockbackX: 880,
+        cry: '메인라인에 들어간다.',
       },
 
       heavyUp: {
@@ -624,13 +667,17 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         name: '광대 펀치',
         damage: 6,
         startup: 45,
-        active: 65,
+        active: 90,
         recovery: 90,
         range: 54,
-        knockbackX: 190,
+        knockbackX: 110,
         hitstun: 140,
         hitstop: 50,
       },
+
+      // 연속기 — 저글링하듯 가지고 놀다 풍선을 터뜨린다
+      light2: { name: '저글링', damage: 8, startup: 86, active: 100, recovery: 105, range: 58 },
+      light3: { name: '풍선 터뜨리기', damage: 15, startup: 116, cry: '펑!' },
 
       lightUp: {
         name: '붉은 풍선',
@@ -661,9 +708,15 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         startup: 210,
         recovery: 360,
         range: 80,
-        knockbackX: 700,
-        knockbackY: -470,
         hitstop: 140,
+      },
+      heavy2: {
+        name: '광대의 초대',
+        damage: 30,
+        startup: 168,
+        range: 88,
+        knockbackX: 940,
+        cry: '너도 떠내려갈 거야!',
       },
 
       heavyUp: {

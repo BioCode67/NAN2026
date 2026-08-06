@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { buildFighterArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
-import { DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
+import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import type { BattleSceneData, CharacterConfig, CharacterId } from '../types';
 
@@ -185,11 +185,11 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private buildInfoPanel(): void {
-    const panelY = 500;
+    // 연속기 + 커맨드 목록이 들어가면서 패널을 위로 올리고 키웠다
+    const panelY = 470;
 
-    // 커맨드 목록까지 들어가므로 패널을 아래로 늘렸다
     this.add
-      .rectangle(GAME.WIDTH / 2, panelY + 66, 980, 172, 0x141c33, 0.85)
+      .rectangle(GAME.WIDTH / 2, panelY + 78, 980, 200, 0x141c33, 0.85)
       .setStrokeStyle(2, 0x2f3f6b)
       .setDepth(DEPTH.HUD - 1);
 
@@ -211,7 +211,7 @@ export class SelectScene extends Phaser.Scene {
       .setDepth(DEPTH.HUD);
 
     this.passiveText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 62, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 60, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#cbd5e1',
@@ -220,7 +220,7 @@ export class SelectScene extends Phaser.Scene {
       .setDepth(DEPTH.HUD);
 
     this.skillText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 88, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 86, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#cbd5e1',
@@ -234,7 +234,7 @@ export class SelectScene extends Phaser.Scene {
      * 플레이어가 W+K / S+K 같은 입력이 있다는 사실 자체를 모른 채 끝난다.
      */
     this.movesText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 114, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 112, '', {
         fontFamily: GAME.FONT,
         fontSize: '13px',
         color: '#8fa6d8',
@@ -342,9 +342,18 @@ export class SelectScene extends Phaser.Scene {
       ).toFixed(0)}초`,
     );
 
+    /*
+     * 연속기는 "같은 버튼을 이어 누르는" 것이라 커맨드 목록과 성격이 달라
+     * 화살표로 이어 붙여 한 줄로 따로 보여준다.
+     */
+    const chains = CHAIN_STRINGS.map(
+      (c) =>
+        `${c.keys} ${c.slots.map((slot) => cfg.moves[slot].name).join(' → ')}`,
+    ).join('      ');
+
     // 스킬은 위 줄에서 이미 설명했으므로 커맨드 목록에서는 뺀다
     this.movesText.setText(
-      '[커맨드] ' +
+      `[연속기] ${chains}\n[커맨드] ` +
         MOVE_COMMANDS.filter((c) => c.slot !== 'skill')
           .map((c) => `${c.keys} ${cfg.moves[c.slot].name}`)
           .join('  ·  '),

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import {
+  CHAIN,
   DEPTH,
   FIGHTER,
   GAME,
@@ -21,6 +22,7 @@ import type {
   AttackDir,
   AttackPhase,
   CharacterConfig,
+  MoveSlot,
   Side,
 } from '../types';
 
@@ -104,6 +106,27 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 한 번의 공격 모션이 같은 대상을 여러 번 때리지 않도록 */
   private readonly hitTargets = new Set<string>();
 
+  /* --- 연속기 --------------------------------------------------- */
+  /**
+   * 다음에 이어 칠 수 있는 타.
+   * 한 타가 끝난 뒤 chainUntil 까지만 유효하다.
+   */
+  private chainNext: MoveSlot | null = null;
+  private chainUntil = 0;
+  /**
+   * 선입력 버퍼에 쌓인 이어치기 입력 수.
+   *
+   * 판정이 도는 도중에 누른 다음 타를 기억했다가, 판정이 끝나는 순간 바로 잇는다.
+   * 후딜이 풀리기를 기다렸다 눌러야 한다면 연타가 아니라 박자 맞추기가 된다.
+   *
+   * 한 칸이 아니라 여러 칸을 쌓는 이유: 손이 빠르면 3타분 입력이 1타 모션이
+   * 끝나기도 전에 다 들어온다. 한 칸만 기억하면 나머지가 버려져
+   * "빠르게 누를수록 연속기가 덜 나가는" 이상한 게임이 된다.
+   */
+  private chainBuffered = 0;
+  /** 쌓아둘 수 있는 최대 선입력 (가장 긴 연속기가 3타라 2면 충분하다) */
+  private static readonly CHAIN_BUFFER_MAX = 2;
+
   /** 이 시각까지 경직 (scene.time.now 기준) */
   private stunUntil = 0;
   /** 이 시각까지 무적 */
@@ -133,6 +156,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   private jumpsLeft: number = FIGHTER.MAX_JUMPS;
   private wasOnGround = true;
+  /** 착지 포즈가 유지되는 시각 */
+  private landUntil = 0;
   /** 착지 스쿼시 판정을 위한 최대 낙하속도 기록 */
   private fallSpeed = 0;
   private lastSayAt = 0;
@@ -333,6 +358,18 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 지금 이 입력이 어떤 기술로 나가는가 (AI가 딜레이를 계산할 때도 쓴다) */
   resolveMove(intent: 'light' | 'heavy', dir: AttackDir): AttackConfig {
     const onGround = this.body.blocked.down || this.body.touching.down;
+
+    // 직전 타의 여운이 남아 있으면 1타가 아니라 다음 타로 이어진다
+    if (
+      this.chainNext &&
+      this.scene.time.now < this.chainUntil &&
+      dir === 'neutral' &&
+      onGround &&
+      this.cfg.moves[this.chainNext].type === intent
+    ) {
+      return this.cfg.moves[this.chainNext];
+    }
+
     return this.cfg.moves[resolveMoveSlot(intent, dir, onGround)];
   }
 
@@ -345,14 +382,56 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    */
   attack(intent: 'light' | 'heavy', dir: AttackDir = 'neutral'): boolean {
     if (!this.alive) return false;
-    if (this.attackPhase !== 'none') return false;
     if (this.scene.time.now < this.stunUntil) return false;
+
+    /*
+     * 공격 도중 같은 버튼을 다시 눌렀다면 연속기 선입력이다.
+     * 실제 발동은 판정이 끝나는 순간(후딜 진입)에 일어난다 —
+     * 여기서 바로 잇게 하면 지금 나가던 타의 판정이 잘려나간다.
+     */
+    if (this.attackPhase !== 'none') {
+      if (!this.canChainFrom(this.currentAttack, intent, dir)) return false;
+      this.chainBuffered = Math.min(
+        BaseCharacter.CHAIN_BUFFER_MAX,
+        this.chainBuffered + 1,
+      );
+      return true;
+    }
 
     // 방어는 공격으로 캔슬할 수 있다 (S를 누른 채 하단기를 내기 위해)
     this.guarding = false;
 
     this.beginAttack(this.resolveMove(intent, dir));
     return true;
+  }
+
+  /**
+   * 지금 이 입력이 연속기로 이어질 수 있는가.
+   *
+   * 방향키를 섞으면(W+J 등) 연속기가 아니라 별개의 커맨드 기술이므로 끊는다.
+   * 공중에서도 끊는다 — 지상 연속기를 공중에서 이어가면 계속 떠 있게 된다.
+   */
+  private canChainFrom(
+    from: AttackConfig | null,
+    intent: 'light' | 'heavy',
+    dir: AttackDir,
+  ): boolean {
+    if (!from?.chain || dir !== 'neutral') return false;
+    if (from.type !== intent) return false;
+    return this.body.blocked.down || this.body.touching.down;
+  }
+
+  /**
+   * 지금 이어 칠 수 있는 다음 타의 이름 (없으면 null).
+   *
+   * 연속기는 화면에 알려주지 않으면 존재 자체를 모른 채 끝난다.
+   * HUD가 이 값을 띄워 "지금 한 번 더" 를 눈으로 보여준다.
+   */
+  getChainNextName(): string | null {
+    const slot =
+      this.currentAttack?.chain ??
+      (this.scene.time.now < this.chainUntil ? this.chainNext : null);
+    return slot ? this.cfg.moves[slot].name : null;
   }
 
   /** 시그니처 스킬(L) */
@@ -395,6 +474,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.attackTimer = atk.startup;
     this.hitTargets.clear();
     this.body.setAccelerationX(0);
+
+    // 새 모션이 시작되면 이전 타의 여운은 무효가 된다
+    // (선입력은 호출부가 남은 개수를 되돌려 놓는다)
+    this.chainBuffered = 0;
+    this.chainNext = null;
 
     /* 선딜 예비동작 — 어느 방향으로 내는 기술인지 몸이 먼저 알려준다 */
     switch (atk.hitAnchor ?? 'front') {
@@ -555,6 +639,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.currentAttack = null;
     this.diving = null;
     this.jumpsLeft = 0;
+    // 맞으면 연속기는 끊긴다. 이어치기가 공짜가 되지 않게 하는 안전장치다
+    this.chainNext = null;
+    this.chainBuffered = 0;
 
     this.flash();
     this.pulseSquash(IMPACT.SQUASH_X, IMPACT.SQUASH_Y, IMPACT.SQUASH_MS);
@@ -589,6 +676,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.attackPhase = 'none';
     this.currentAttack = null;
     this.diving = null;
+    this.chainNext = null;
+    this.chainBuffered = 0;
     this.body.setVelocity(0, 0);
     this.body.setAllowGravity(false);
     this.body.enable = false;
@@ -845,6 +934,18 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
             this.spawnSwing(atk);
             break;
           case 'active':
+            /*
+             * 판정이 끝나는 순간이 연속기가 이어지는 지점이다.
+             * 선입력이 있으면 후딜을 통째로 건너뛰고 다음 타로 넘어간다 —
+             * 이 캔슬이 있어야 툭툭 끊기지 않고 몰아치는 리듬이 나온다.
+             */
+            if (this.chainBuffered > 0 && atk.chain) {
+              // beginAttack이 버퍼를 비우므로 남은 입력을 되돌려 놓는다
+              const carry = this.chainBuffered - 1;
+              this.beginAttack(this.cfg.moves[atk.chain]);
+              this.chainBuffered = carry;
+              break;
+            }
             this.attackPhase = 'recovery';
             this.attackTimer = atk.recovery;
             break;
@@ -852,6 +953,12 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
             this.attackPhase = 'none';
             this.currentAttack = null;
             this.hitTargets.clear();
+
+            // 후딜이 끝난 뒤에도 잠깐은 이어 칠 수 있게 여운을 남긴다
+            if (atk.chain) {
+              this.chainNext = atk.chain;
+              this.chainUntil = time + CHAIN.GRACE_MS;
+            }
             break;
         }
       }
@@ -867,6 +974,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       if (!this.wasOnGround && this.fallSpeed > FIGHTER.LAND_SQUASH_VY) {
         this.pulseSquash(1.22, 0.8, 120);
         sound.play('land', Phaser.Math.Clamp(this.fallSpeed / 1200, 0, 1));
+        this.landUntil = time + 120;
       }
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
@@ -945,8 +1053,12 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     const now = this.scene.time.now;
 
-    // 경직 중 — 크게 날아가면 넉백, 아니면 피격
+    /*
+     * 경직 중 — 공중이면 공중 피격, 지상에서 크게 날아가면 넉백, 아니면 피격.
+     * 연속기로 띄운 뒤의 공중 피격이 잦아져서 전용 포즈를 나눴다.
+     */
     if (now < this.stunUntil) {
+      if (!onGround) return 'hitAir';
       const flung =
         Math.abs(this.body.velocity.x) > 420 || this.body.velocity.y < -320;
       return flung ? 'knockback' : 'hit';
@@ -962,6 +1074,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (now < this.dashUntil) return 'dash';
     // 올라갈 때와 떨어질 때를 나눈다 — 공중 체공 시간이 눈에 읽힌다
     if (!onGround) return this.body.velocity.y > 220 ? 'fall' : 'jump';
+
+    // 착지 직후 짧게 무릎을 굽히는 자세 (스쿼시만으로는 무게가 덜 실린다)
+    if (now < this.landUntil) return 'land';
 
     const vx = Math.abs(this.body.velocity.x);
     if (vx > this.cfg.stats.speed * 0.75) return 'run';

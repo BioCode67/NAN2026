@@ -119,6 +119,12 @@ export type AttackDir = 'neutral' | 'up' | 'down';
 export type MoveSlot =
   /** J */
   | 'light'
+  /** J 연타 2타 */
+  | 'light2'
+  /** J 연타 3타 — 마무리. 크게 띄운다 */
+  | 'light3'
+  /** K 2타 — 마무리. 멀리 날린다 */
+  | 'heavy2'
   /** W + J */
   | 'lightUp'
   /** S + J */
@@ -224,6 +230,21 @@ export interface AttackConfig {
   lunge?: number;
   /** 발동 시 외치는 대사 — 캐릭터성을 드러내는 짧은 한마디 */
   cry?: string;
+
+  /**
+   * 같은 버튼을 다시 누르면 이어지는 다음 타.
+   *
+   * 한 방씩 툭툭 치는 대신 몰아치게 만드는 축이다.
+   * 마무리 타에는 이 값이 없다.
+   */
+  chain?: MoveSlot;
+  /** 연속기 중 몇 번째 타인가 (1부터). 없으면 단발기 */
+  chainStep?: number;
+  /**
+   * 연속기의 마지막 타인가.
+   * 히트스탑·화면 섬광·카메라 충격이 크게 붙는다.
+   */
+  finisher?: boolean;
 
   /** 넉백 수평 성분 */
   knockbackX: number;

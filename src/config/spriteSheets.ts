@@ -8,31 +8,39 @@ export type Pose =
   | 'idle'
   | 'walk'
   | 'run'
+  | 'dash'
   | 'jump'
   | 'fall'
-  | 'attackJ'
-  | 'attackJUp'
-  | 'attackJDown'
-  | 'attackK'
-  | 'attackKUp'
-  | 'attackKDown'
+  | 'land'
   | 'airJ'
   | 'airK'
   | 'dive'
+  | 'attackJ'
+  | 'attackJ2'
+  | 'attackJ3'
+  | 'attackK'
+  | 'attackK2'
+  | 'attackJUp'
+  | 'attackJDown'
+  | 'attackKUp'
+  | 'attackKDown'
   | 'skill'
-  | 'hit'
-  | 'knockback'
   | 'guard'
-  | 'dash'
+  | 'hit'
+  | 'hitAir'
+  | 'knockback'
   | 'win'
   | 'lose';
 
 /** 커맨드 무브 → 재생할 포즈 */
 export const MOVE_POSE: Record<MoveSlot, Pose> = {
   light: 'attackJ',
+  light2: 'attackJ2',
+  light3: 'attackJ3',
+  heavy: 'attackK',
+  heavy2: 'attackK2',
   lightUp: 'attackJUp',
   lightDown: 'attackJDown',
-  heavy: 'attackK',
   heavyUp: 'attackKUp',
   heavyDown: 'attackKDown',
   airLight: 'airJ',
@@ -50,14 +58,22 @@ export const MOVE_POSE: Record<MoveSlot, Pose> = {
  * 새 시트를 뽑기 전에도 모든 기술이 정상 동작한다.
  */
 export const POSE_FALLBACK: Partial<Record<Pose, Pose>> = {
+  // 연속기 2·3타 → 기본 약공격
+  attackJ2: 'attackJ',
+  attackJ3: 'attackJ',
   attackJUp: 'attackJ',
   attackJDown: 'attackJ',
   airJ: 'attackJ',
+  // 강공격 계열 → 기본 강공격
+  attackK2: 'attackK',
   attackKUp: 'attackK',
   attackKDown: 'attackK',
   airK: 'attackK',
   dive: 'attackK',
+  // 이동/피격
   fall: 'jump',
+  land: 'idle',
+  hitAir: 'knockback',
 };
 
 /**
@@ -141,44 +157,62 @@ export const LAYOUT_V1: Partial<Record<Pose, PoseFrames>> = {
 };
 
 /**
- * V2 — 4행 x 6열, 24프레임. **새 시트는 전부 이 규격으로 뽑는다.**
+ * V2 — 5행 x 6열, 30프레임. **새 시트는 전부 이 규격으로 뽑는다.**
  *
- * 커맨드 무브 10종이 각자의 그림을 갖도록 확장한 규격이며,
+ * 커맨드 무브와 연속기가 각자의 그림을 갖도록 확장한 규격이며,
  * tools/gen-sheet.mjs 가 이 순서 그대로 프롬프트를 만든다.
  * 캐릭터만 바꿔 같은 양식으로 찍어내면 아래 한 줄로 등록이 끝난다.
  *
- *   1행: IDLE, WALK, RUN_A, RUN_B, JUMP, FALL
- *   2행: ATTACK_J, ATTACK_J_UP, ATTACK_J_DOWN, ATTACK_K, ATTACK_K_UP, ATTACK_K_DOWN
- *   3행: AIR_J, AIR_K, AIR_DIVE, SKILL_L, SKILL_L2, SKILL_FX(이펙트 단독)
- *   4행: HIT, KNOCKBACK, GUARD, DASH, WIN, LOSE
+ * 행 단위로 성격을 묶었다. 생성기가 인접 프레임을 비슷하게 그리는 성향이 있어,
+ * 같은 계열을 한 줄에 모아두면 결과가 눈에 띄게 안정된다.
+ *
+ *   1행 이동: IDLE, WALK, RUN_A, RUN_B, RUN_C, DASH
+ *   2행 공중: JUMP, FALL, LAND, AIR_J, AIR_K, AIR_DIVE
+ *   3행 연속기: ATTACK_J, ATTACK_J2, ATTACK_J3, ATTACK_K, ATTACK_K2, GUARD
+ *   4행 방향기·스킬: ATTACK_J_UP, ATTACK_J_DOWN, ATTACK_K_UP, ATTACK_K_DOWN, SKILL_L, SKILL_L2
+ *   5행 피격·결과: SKILL_FX(이펙트 단독), HIT, HIT_AIR, KNOCKBACK, WIN, LOSE
  */
 export const LAYOUT_V2: Partial<Record<Pose, PoseFrames>> = {
+  /* 1행 — 이동 */
   idle: 0,
   walk: 1,
-  run: [2, 3],
-  jump: 4,
-  fall: 5,
-  attackJ: 6,
-  attackJUp: 7,
-  attackJDown: 8,
-  attackK: 9,
-  attackKUp: 10,
-  attackKDown: 11,
-  airJ: 12,
-  airK: 13,
-  dive: 14,
+  run: [2, 3, 4],
+  dash: 5,
+
+  /* 2행 — 공중 */
+  jump: 6,
+  fall: 7,
+  land: 8,
+  airJ: 9,
+  airK: 10,
+  dive: 11,
+
+  /* 3행 — 지상 연속기 */
+  attackJ: 12,
+  attackJ2: 13,
+  attackJ3: 14,
+  attackK: 15,
+  attackK2: 16,
+  guard: 17,
+
+  /* 4행 — 방향 커맨드 + 스킬 */
+  attackJUp: 18,
+  attackJDown: 19,
+  attackKUp: 20,
+  attackKDown: 21,
   // SKILL_L → SKILL_L2 로 이어 재생
-  skill: [15, 16],
-  hit: 18,
-  knockback: 19,
-  guard: 20,
-  dash: 21,
-  win: 22,
-  lose: 23,
+  skill: [22, 23],
+
+  /* 5행 — 피격·결과 (24 = SKILL_FX, 캐릭터가 없어 포즈로 쓰지 않는다) */
+  hit: 25,
+  hitAir: 26,
+  knockback: 27,
+  win: 28,
+  lose: 29,
 };
 
 /** V2에서 캐릭터 없이 이펙트만 그려진 프레임 (충격파·투사체용) */
-export const LAYOUT_V2_FX_FRAME = 17;
+export const LAYOUT_V2_FX_FRAME = 24;
 
 /**
  * 스프라이트 시트가 준비된 캐릭터만 등록한다.

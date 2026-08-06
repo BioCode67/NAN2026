@@ -65,6 +65,8 @@ export class BattleScene extends Phaser.Scene {
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
+  /** 연속기 안내 — 지금 이어 칠 수 있는 다음 타를 알려준다 */
+  private chainHint!: Phaser.GameObjects.Text;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
   private hudLayer!: Phaser.GameObjects.Container;
   /** 더블탭 대시 판정용 */
@@ -487,7 +489,13 @@ export class BattleScene extends Phaser.Scene {
 
     // delta 기반 보간 — 프레임률이 달라도 같은 속도로 따라간다
     const t = 1 - Math.pow(0.0015, delta / 1000);
-    cam.setScroll(Phaser.Math.Linear(cam.scrollX, desired, t), 0);
+    /*
+     * 타격 순간의 카메라 킥을 마지막에 더한다.
+     * 보간값에 섞으면 킥이 추적 목표를 끌고 다녀 화면이 붙잡히므로,
+     * 추적은 그대로 두고 결과에만 오프셋을 얹는다.
+     */
+    const kick = this.combat.getCameraKick();
+    cam.setScroll(Phaser.Math.Linear(cam.scrollX, desired, t) + kick, 0);
   }
 
   /** 스킬 시전 — 시전 시 부가 효과(도박 등)까지 처리한다 */
@@ -754,6 +762,26 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(1, 0),
     );
 
+    /*
+     * 연속기 안내.
+     *
+     * 이어 칠 수 있다는 사실을 알려주지 않으면 대부분의 플레이어는
+     * 연속기가 있는 줄도 모른 채 한 대씩만 치고 끝낸다.
+     * 플레이어 머리 위가 아니라 화면 하단 중앙에 고정해 시야에서 벗어나지 않게 한다.
+     */
+    this.chainHint = ui(
+      this.add
+        .text(GAME.WIDTH / 2, HUD_Y - 34, '', {
+          fontFamily: GAME.FONT,
+          fontSize: '17px',
+          color: '#facc15',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5)
+        .setAlpha(0),
+    );
+    this.chainHint.setStroke('#0b1020', 5);
+
     /* 인원수만큼 패널을 가로로 고르게 배치한다 (1P는 항상 맨 왼쪽) */
     const n = this.fighters.length;
     const totalW = n * HUD_PANEL_W + (n - 1) * HUD_GAP;
@@ -861,6 +889,8 @@ export class BattleScene extends Phaser.Scene {
 
 
   private updateHud(): void {
+    this.updateChainHint();
+
     for (const hud of this.huds) {
       const id = hud.fighter.fighterId;
       const value = this.stock.get(id);
@@ -886,6 +916,37 @@ export class BattleScene extends Phaser.Scene {
       hud.percent.setAlpha(hud.fighter.alive ? 1 : 0.4);
       hud.bar.setAlpha(hud.fighter.alive ? 1 : 0.4);
     }
+  }
+
+  /** 플레이어가 지금 이어 칠 수 있는 다음 타를 하단에 띄운다 */
+  private updateChainHint(): void {
+    const next = this.player.alive ? this.player.getChainNextName() : null;
+
+    if (!next) {
+      // 매 프레임 알파를 0으로 덮어쓰지 않는다 — 사라지는 트윈이 끊긴다
+      if (this.chainHint.alpha > 0 && !this.tweens.isTweening(this.chainHint)) {
+        this.tweens.add({
+          targets: this.chainHint,
+          alpha: 0,
+          duration: 140,
+        });
+      }
+      return;
+    }
+
+    const label = `▶ 한 번 더!  ${next}`;
+    if (this.chainHint.text !== label) {
+      this.chainHint.setText(label);
+      this.tweens.killTweensOf(this.chainHint);
+      this.chainHint.setScale(1.25);
+      this.tweens.add({
+        targets: this.chainHint,
+        scale: 1,
+        duration: 160,
+        ease: 'Back.easeOut',
+      });
+    }
+    this.chainHint.setAlpha(1);
   }
 
   /* ================================================================ */
@@ -932,7 +993,7 @@ export class BattleScene extends Phaser.Scene {
     this.projectiles.update(time, delta);
 
     if (this.battleActive) {
-      this.combat.update(time);
+      this.combat.update(time, delta);
       this.items.update(time, delta);
       this.checkBlastZones();
     }

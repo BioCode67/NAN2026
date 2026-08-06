@@ -107,10 +107,11 @@ export class CombatSystem {
   /* 매 프레임 판정                                                   */
   /* ================================================================ */
 
-  update(time: number): void {
+  update(time: number, delta = 16): void {
     this.resolveHits();
     this.tickDots(time);
     this.tickCombos(time);
+    this.decayKick(delta);
   }
 
   /* ================================================================ */
@@ -141,8 +142,12 @@ export class CombatSystem {
 
   private tickCombos(time: number): void {
     for (const [id, c] of this.combos) {
-      if (time >= c.until) this.combos.delete(id);
+      if (time >= c.until) {
+        this.combos.delete(id);
+        this.fadeComboLabel(id);
+      }
     }
+    this.followComboLabels();
   }
 
   /** 현재 콤보 수 (HUD 표시용) */
@@ -152,26 +157,92 @@ export class CombatSystem {
     return c.count;
   }
 
-  private showCombo(attacker: BaseCharacter, count: number): void {
-    const label = this.scene.add
-      .text(attacker.x, attacker.y - 130, `${count} COMBO!`, {
-        fontFamily: GAME.FONT,
-        fontSize: `${Math.min(34, 20 + count)}px`,
-        color: count >= 6 ? '#f472b6' : '#facc15',
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH.FLOATING);
-    label.setStroke('#0b1020', 6);
+  /** 연타 수에 따라 붙는 칭호 — 몰아칠수록 화면이 반응한다 */
+  private comboRank(count: number): { text: string; color: string } {
+    if (count >= 12) return { text: '상한가!!', color: '#ffffff' };
+    if (count >= 9) return { text: '떡상 중!', color: '#f472b6' };
+    if (count >= 6) return { text: '가즈아!', color: '#fb923c' };
+    return { text: '', color: '#facc15' };
+  }
 
+  /**
+   * 연타 카운터 — 매번 새로 띄우지 않고 제자리에서 숫자만 갈아 끼운다.
+   *
+   * 한 대마다 라벨이 새로 생겨 흩어지면 몇 대를 이었는지 읽히지 않는다.
+   * 한 자리에 붙잡아 두고 튕기게 해야 "쌓이고 있다"가 보인다.
+   */
+  private readonly comboLabels = new Map<
+    string,
+    { label: Phaser.GameObjects.Text; rank: Phaser.GameObjects.Text }
+  >();
+
+  private showCombo(attacker: BaseCharacter, count: number): void {
+    let entry = this.comboLabels.get(attacker.fighterId);
+
+    if (!entry) {
+      const label = this.scene.add
+        .text(0, 0, '', { fontFamily: GAME.FONT, fontStyle: 'bold' })
+        .setOrigin(0.5)
+        .setDepth(DEPTH.FLOATING);
+      label.setStroke('#0b1020', 7);
+
+      const rank = this.scene.add
+        .text(0, 0, '', { fontFamily: GAME.FONT, fontSize: '15px', fontStyle: 'bold' })
+        .setOrigin(0.5)
+        .setDepth(DEPTH.FLOATING);
+      rank.setStroke('#0b1020', 5);
+
+      entry = { label, rank };
+      this.comboLabels.set(attacker.fighterId, entry);
+    }
+
+    const { text, color } = this.comboRank(count);
+    entry.label.setText(`${count} HIT`);
+    entry.label.setFontSize(Math.min(46, 22 + count * 2));
+    entry.label.setColor(color);
+    entry.label.setAlpha(1);
+    entry.rank.setText(text);
+    entry.rank.setColor(color);
+    entry.rank.setAlpha(1);
+
+    // 숫자가 올라갈 때마다 튕긴다
+    this.scene.tweens.killTweensOf(entry.label);
+    entry.label.setScale(1.45);
     this.scene.tweens.add({
-      targets: label,
-      scale: { from: 1.5, to: 1 },
-      alpha: { from: 1, to: 0 },
-      y: label.y - 30,
-      duration: 620,
-      ease: 'Quad.easeOut',
-      onComplete: () => label.destroy(),
+      targets: entry.label,
+      scale: 1,
+      duration: 180,
+      ease: 'Back.easeOut',
+    });
+  }
+
+  /** 연타 카운터를 공격자 머리 위에 붙여 둔다 */
+  private followComboLabels(): void {
+    for (const [id, entry] of this.comboLabels) {
+      const owner = this.fighters.find((f) => f.fighterId === id);
+      if (!owner) continue;
+      // 말풍선(머리 위 -96 ~ -122)보다 확실히 위에 둔다 — 겹치면 둘 다 안 읽힌다
+      entry.label.setPosition(owner.x, owner.y - 196);
+      entry.rank.setPosition(owner.x, owner.y - 166);
+    }
+  }
+
+  /** 연타가 끊기면 스르르 사라진다 */
+  private fadeComboLabel(fighterId: string): void {
+    const entry = this.comboLabels.get(fighterId);
+    if (!entry) return;
+    this.comboLabels.delete(fighterId);
+
+    this.scene.tweens.killTweensOf(entry.label);
+    this.scene.tweens.add({
+      targets: [entry.label, entry.rank],
+      alpha: 0,
+      y: '-=24',
+      duration: 260,
+      onComplete: () => {
+        entry.label.destroy();
+        entry.rank.destroy();
+      },
     });
   }
 
@@ -250,31 +321,52 @@ export class CombatSystem {
     // 방어 성공 여부는 receiveHit이 상태를 바꾸기 전에 확인해야 한다
     const guarded = target.isGuarding();
 
-    /* 0) 타격음 — 공격 종류에 따라 두께가 달라진다 */
+    /*
+     * 연타 수를 먼저 센다.
+     * 히트스탑·타격음·화면 흔들림이 전부 연타 수에 비례해 굵어져야
+     * "몰아치고 있다"가 손에 전달된다. 그래서 연출보다 먼저 계산한다.
+     */
+    const combo = this.bumpCombo(attacker.fighterId);
+    // 연타가 쌓일수록 한 대가 무거워진다 (최대 +60%)
+    const weight = Math.min(0.6, (combo - 1) * 0.07);
+    const finisher = atk.finisher === true && !guarded;
+
+    /* 0) 타격음 — 공격 종류에 따라 두께가, 연타 수에 따라 피치가 달라진다 */
     if (guarded) {
       sound.play('land', 0.9);
+    } else if (finisher) {
+      sound.play('finisher');
     } else {
       sound.play(
         atk.type === 'light' ? 'hitLight' : atk.type === 'heavy' ? 'hitHeavy' : 'hitSkill',
+        Math.min(1, 0.3 + combo * 0.12),
       );
     }
 
-    /* 1) 히트스탑 */
-    this.applyHitstop(atk.hitstop);
+    /* 1) 히트스탑 — 마무리 타는 확실히 한 박자 멈춘다 */
+    this.applyHitstop(atk.hitstop * (1 + weight) * (finisher ? 1.5 : 1));
 
     /* 2) 카메라 쉐이크
        명세의 강도 0.3은 Phaser 기준(뷰포트 비율)으로 과도하므로,
        체감상 동일한 0.008~0.022 범위를 공격 데이터에 넣어 사용한다. */
-    this.scene.cameras.main.shake(IMPACT.SHAKE_MS, atk.shake);
+    this.scene.cameras.main.shake(
+      IMPACT.SHAKE_MS,
+      atk.shake * (1 + weight) * (finisher ? 1.6 : 1),
+    );
 
-    /* 3) 임팩트 파티클 */
+    /* 2-b) 카메라 킥 — 때린 방향으로 화면이 밀린다 */
+    const dir = target.x >= fromX ? 1 : -1;
+    this.kickCamera(dir, atk, finisher);
+
+    /* 3) 임팩트 파티클 + 넉백 방향으로 뻗는 충격선 */
     this.spawnImpact(hitX, hitY, attacker.cfg.colors.accent, atk);
+    this.spawnStreaks(hitX, hitY, dir, attacker.cfg.colors.accent, atk, finisher);
+    if (finisher) this.flashScreen(attacker.cfg.colors.accent);
 
     /* 4) 히트 플래시 + 5) 스쿼시 & 스트레치 + 넉백/경직 */
     target.receiveHit(atk, fromX);
 
     /* 6) 주가 변동 — 방어·아이템·콤보가 모두 반영된다 */
-    const combo = this.bumpCombo(attacker.fighterId);
     const baseDamage =
       atk.damage *
       (guarded ? FIGHTER.GUARD_DAMAGE_MUL : 1) *
@@ -290,7 +382,8 @@ export class CombatSystem {
     /* 7) 데미지 플로팅 */
     if (guarded) this.floatText(target.x, hitY - 54, 'GUARD!', '#93c5fd');
     this.floatText(hitX, hitY - 30, `-${result.damage}%`, '#ff5a5a');
-    if (combo >= 3) this.showCombo(attacker, combo);
+    // 2타부터 띄운다 — 3타 연속기를 한 번 넣으면 바로 눈에 들어와야 한다
+    if (combo >= 2) this.showCombo(attacker, combo);
     this.floatText(
       attacker.x,
       attacker.y - 70,
@@ -535,6 +628,100 @@ export class CombatSystem {
   /* 연출 헬퍼                                                        */
   /* ================================================================ */
 
+  /* ---------------------------------------------------------------- */
+  /* 카메라 킥                                                         */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 때린 방향으로 화면 전체가 밀렸다 돌아온다.
+   *
+   * 흔들림(shake)은 사방으로 떨릴 뿐이라 "어느 쪽으로 때렸는지"가 없다.
+   * 방향이 있는 밀림이 하나 더 붙어야 주먹에 무게가 실린다.
+   * BattleScene의 카메라 보간이 매 프레임 scrollX를 덮어쓰므로,
+   * 여기서는 오프셋만 들고 있고 실제 적용은 씬이 더한다.
+   */
+  /*
+   * 수평 성분만 둔다.
+   * 카메라에 월드 경계가 걸려 있고 뷰포트 높이가 월드 높이와 같아,
+   * 세로 스크롤은 언제나 0으로 잘린다 — 세로 킥은 값만 계산될 뿐 화면에 없다.
+   */
+  private readonly kick = { x: 0 };
+
+  private kickCamera(dir: number, atk: AttackConfig, finisher: boolean): void {
+    const power = (atk.shake / 0.016) * (finisher ? 22 : 11);
+    this.kick.x = Phaser.Math.Clamp(this.kick.x + dir * power, -34, 34);
+  }
+
+  private decayKick(delta: number): void {
+    // 프레임률과 무관하게 같은 속도로 잦아들도록 지수 감쇠
+    this.kick.x *= Math.pow(0.002, delta / 1000);
+    if (Math.abs(this.kick.x) < 0.2) this.kick.x = 0;
+  }
+
+  /** BattleScene이 카메라 위치에 더할 가로 오프셋 */
+  getCameraKick(): number {
+    return this.kick.x;
+  }
+
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 충격선 — 타격 지점에서 넉백 방향으로 뻗는 짧은 선들.
+   * 파티클이 사방으로 흩어지는 것과 달리 "밀려나는 방향"을 그린다.
+   */
+  private spawnStreaks(
+    x: number,
+    y: number,
+    dir: number,
+    color: number,
+    atk: AttackConfig,
+    finisher: boolean,
+  ): void {
+    const count = finisher ? 7 : atk.type === 'light' ? 3 : 5;
+    const reach = finisher ? 200 : 120;
+
+    for (let i = 0; i < count; i++) {
+      const spread = Phaser.Math.Between(-30, 30);
+      const len = Phaser.Math.Between(reach * 0.4, reach);
+
+      const streak = this.scene.add
+        .rectangle(x, y + spread, len, finisher ? 5 : 3, color, 0.9)
+        .setOrigin(0, 0.5)
+        .setDepth(DEPTH.IMPACT)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      // 뒤로 뻗을 때는 원점이 오른쪽에 오도록 뒤집는다
+      if (dir < 0) streak.setOrigin(1, 0.5);
+
+      this.scene.tweens.add({
+        targets: streak,
+        x: x + dir * len * 1.1,
+        scaleX: 0.2,
+        alpha: 0,
+        duration: finisher ? 280 : 190,
+        ease: 'Cubic.easeOut',
+        onComplete: () => streak.destroy(),
+      });
+    }
+  }
+
+  /** 마무리 타 순간의 화면 섬광 — 아주 짧게 한 번만 */
+  private flashScreen(color: number): void {
+    const cam = this.scene.cameras.main;
+    const flash = this.scene.add
+      .rectangle(cam.centerX, cam.centerY, GAME.WIDTH, GAME.HEIGHT, color, 0.34)
+      .setDepth(DEPTH.OVERLAY - 1)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    this.scene.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 170,
+      ease: 'Quad.easeOut',
+      onComplete: () => flash.destroy(),
+    });
+  }
+
   /** 임팩트 파티클 + 링 이펙트 */
   private spawnImpact(
     x: number,
@@ -610,6 +797,13 @@ export class CombatSystem {
     this.dots.length = 0;
     this.combos.clear();
     this.fighters = [];
+
+    this.comboLabels.forEach(({ label, rank }) => {
+      label.destroy();
+      rank.destroy();
+    });
+    this.comboLabels.clear();
+    this.kick.x = 0;
 
     if (this.hitstopActive) {
       this.hitstopActive = false;

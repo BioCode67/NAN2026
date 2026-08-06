@@ -112,14 +112,18 @@ const installRecorder = () =>
 
     window.__moves ??= [];
 
-    // 판을 새로 열면 플레이어 객체가 갈리므로 매번 다시 건다. 두 번 감싸지는 않는다.
+    /*
+     * 기록 지점은 attack()이 아니라 beginAttack()이다.
+     *
+     * attack()에서 재면 선입력으로 쌓인 호출까지 "그 시점의 해석"으로 세어버려,
+     * 연타를 몰아 넣었을 때 실제로는 1타→2타→3타가 나갔는데도 1타만 세 번
+     * 나온 것처럼 보인다. 실제로 시작된 모션을 세야 맞다.
+     */
     if (!p.__recorded) {
-      const original = p.attack.bind(p);
-      p.attack = (intent, dir) => {
-        const move = p.resolveMove(intent, dir);
-        const ok = original(intent, dir);
-        if (ok) window.__moves.push(move.name);
-        return ok;
+      const originalBegin = p.beginAttack.bind(p);
+      p.beginAttack = (atk) => {
+        window.__moves.push(atk.name);
+        return originalBegin(atk);
       };
       p.__recorded = true;
     }
@@ -133,6 +137,8 @@ const installRecorder = () =>
       heavyUp: m.heavyUp.name,
       heavyDown: m.heavyDown.name,
       airDive: m.airDive.name,
+      // 연속기 — J 를 세 번 이어 누르면 순서대로 나가야 한다
+      chain: [m.light.name, m.light2.name, m.light3.name],
     };
   });
 
@@ -149,6 +155,8 @@ const playerState = () =>
       alive: p.alive,
       free: p.canAct(),
       airborne: !(p.body.blocked.down || p.body.touching.down),
+      // 지면까지 남은 높이 — "떠 있다"만으로는 착지 직전인지 알 수 없다
+      height: 590 - (p.y + 42),
       stock: scene.stock?.get(p.fighterId) ?? -1,
     };
   });
@@ -216,12 +224,28 @@ const restartRound = async () => {
   return false;
 };
 
-/** 확실히 공중에 뜰 때까지 점프한다 (점프 입력도 같은 이유로 눌러 둔다) */
+/**
+ * 급강하를 넣을 수 있을 만큼 확실히 띄운다.
+ *
+ * "떠 있다"만 보고 누르면 안 된다. 착지 직전 몇 픽셀 높이에서도 조건은 참이지만,
+ * 키 입력이 처리되는 다음 프레임에는 이미 지면이라 공중기가 아니라 지상기가 나간다.
+ * 프레임이 드문 환경일수록 이 틈이 커지므로, 2단 점프까지 써서 여유 높이를 만든다.
+ */
+const DIVE_MIN_HEIGHT = 90;
+
 const goAirborne = async () => {
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 10; i++) {
     const s = await playerState();
-    if (s?.airborne) return true;
-    await hold('Space', 220);
+    if (!s?.alive) return false;
+    if (s.airborne && s.height > DIVE_MIN_HEIGHT) return true;
+
+    // 후딜·경직 중에는 점프가 씹힌다 — 풀린 뒤에 누른다
+    if (s.free || s.airborne) {
+      await hold('Space', 200);
+      await page.waitForTimeout(70);
+      // 2단 점프로 한 번 더 밀어 올려 여유를 만든다
+      await hold('Space', 200);
+    }
     await page.waitForTimeout(90);
   }
   return false;
@@ -248,10 +272,25 @@ const command = async (dirKey, btn, prep) => {
      * S를 누른 채로 점프시키면 공중에서 급강하(fastFall)가 걸려
      * 곧바로 지면에 처박히고, 결국 공중기가 아니라 지상기가 나간다.
      */
-    if (prep) await prep();
+    /*
+     * 준비가 안 됐으면 이번 시도는 건너뛴다.
+     * 공중에 못 뜬 채로 S+K를 누르면 지상 광역기가 나가고,
+     * 그게 기록되어 "급강하가 안 나왔다"가 아니라 "엉뚱한 기술이 나왔다"가 된다.
+     */
+    if (prep && (await prep()) === false) {
+      await page.waitForTimeout(120);
+      continue;
+    }
 
+    /*
+     * 방향키와 버튼은 간격 없이 함께 누른다.
+     *
+     * 게임은 프레임 시점의 키 상태를 읽으므로 순서는 상관없지만, 사이에 틈을 두면
+     * 그 사이 프레임에서 S만 눌린 상태가 되어 공중 급강하(fastFall)가 걸린다.
+     * 프레임이 드문 환경에서는 그 한 프레임에 지면까지 내려와, 공중기를 노렸는데
+     * 지상 광역기가 나가버린다.
+     */
     await page.keyboard.down(dirKey);
-    await page.waitForTimeout(60);
     await page.keyboard.down(btn);
     await page.waitForTimeout(260);
     await page.keyboard.up(btn);
@@ -364,6 +403,45 @@ if (JSON.stringify(fired) !== JSON.stringify(want)) {
 } else {
   console.log(`  ✓ ${want.join(' → ')}`);
 }
+
+/*
+ * 연속기 — J 를 이어 누르면 1타 → 2타 → 마무리로 넘어가야 한다.
+ *
+ * 여기서는 키보드가 아니라 attack()을 직접 세 번 호출한다.
+ * 프레임이 드문 환경에서 키 입력이 프레임 사이로 사라지면 "연타가 안 이어졌다"가
+ * 되는데, 그건 연속기가 아니라 입력이 문제다 — 키보드 경로는 위 커맨드 검증이
+ * 이미 확인했으므로, 여기서는 연타 캔슬과 선입력 버퍼만 떼어 본다.
+ *
+ * 세 번을 한 프레임에 몰아 넣는 것이 곧 "손이 빠른 사람의 연타"다.
+ * 버퍼가 한 칸뿐이면 3타가 버려져 여기서 잡힌다.
+ */
+await restartRound();
+await waitGrounded();
+await clearMoves();
+
+await page.evaluate(() => {
+  const p = window.game.scene.getScene('Battle').player;
+  p.attack('light', 'neutral');
+  p.attack('light', 'neutral');
+  p.attack('light', 'neutral');
+});
+
+// 상태 머신이 세 타를 다 흘려보낼 때까지 기다린다
+for (let i = 0; i < 40; i++) {
+  if ((await readMoves()).length >= expected.chain.length) break;
+  await page.waitForTimeout(120);
+}
+await shot('chain-jjj');
+
+const chained = await readMoves();
+if (JSON.stringify(chained) !== JSON.stringify(expected.chain)) {
+  errors.push(
+    `[연속기] 기대 ${JSON.stringify(expected.chain)} / 실제 ${JSON.stringify(chained)}`,
+  );
+} else {
+  console.log(`  ✓ 연속기 ${expected.chain.join(' → ')}`);
+}
+await clearMoves();
 
 console.log('스킬');
 await page.keyboard.press('l');

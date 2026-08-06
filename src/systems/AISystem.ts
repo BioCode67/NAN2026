@@ -30,6 +30,15 @@ export class AISystem {
   /** 연속 공격 방지용 쿨다운 */
   private attackCooldown = 0;
 
+  /**
+   * 연속기를 이어치기 위해 남겨둔 추가 입력 횟수.
+   *
+   * 봇도 몰아쳐야 연속기가 "내가 쓰는 기능"이 아니라
+   * "이 게임의 전투 방식"으로 읽힌다.
+   */
+  private chainLeft = 0;
+  private chainIntent: 'light' | 'heavy' = 'light';
+
   constructor(
     private readonly self: BaseCharacter,
     private readonly getTarget: () => BaseCharacter | null,
@@ -140,23 +149,7 @@ export class AISystem {
         if (dist > this.self.cfg.moves.heavy.range) this.self.moveHorizontal(dir);
         else this.self.moveHorizontal(0);
 
-        if (this.attackCooldown <= 0) {
-          const intent: 'light' | 'heavy' =
-            Phaser.Math.FloatBetween(0, 1) < this.difficulty.heavyRatio
-              ? 'heavy'
-              : 'light';
-          const atkDir = this.pickAttackDir(dy);
-
-          // 실제로 나갈 기술을 먼저 물어봐야 딜레이를 정확히 잴 수 있다
-          const atk = this.self.resolveMove(intent, atkDir);
-          if (this.self.attack(intent, atkDir)) {
-            this.attackCooldown =
-              atk.startup +
-              atk.active +
-              atk.recovery +
-              this.difficulty.attackCooldown;
-          }
-        }
+        if (this.attackCooldown <= 0) this.swing(dy);
         break;
       }
 
@@ -187,6 +180,49 @@ export class AISystem {
         break;
       }
     }
+  }
+
+  /**
+   * 한 번 친다.
+   *
+   * 연속기를 시작했으면 같은 버튼을 몇 번 더 눌러 이어친다.
+   * 링크마다 정확한 타이밍을 계산하지는 않는다 — 판정 중에 누르면 선입력으로
+   * 쌓이고, 끝난 직후에 누르면 여운으로 이어지므로 대충 눌러도 성립한다.
+   */
+  private swing(dy: number): void {
+    /* 이어치는 중이면 방향을 섞지 않는다 (방향키가 들어가면 연속기가 끊긴다) */
+    if (this.chainLeft > 0) {
+      this.chainLeft--;
+      if (this.self.attack(this.chainIntent, 'neutral')) {
+        this.attackCooldown = 190;
+        return;
+      }
+      // 경직 등으로 실패하면 연속기를 포기한다
+      this.chainLeft = 0;
+    }
+
+    const intent: 'light' | 'heavy' =
+      Phaser.Math.FloatBetween(0, 1) < this.difficulty.heavyRatio
+        ? 'heavy'
+        : 'light';
+    const atkDir = this.pickAttackDir(dy);
+
+    // 실제로 나갈 기술을 먼저 물어봐야 딜레이를 정확히 잴 수 있다
+    const atk = this.self.resolveMove(intent, atkDir);
+    if (!this.self.attack(intent, atkDir)) return;
+
+    /* 항상 이어치지는 않는다 — 늘 3타가 나오면 읽히고 지겹다 */
+    if (atk.chain && Phaser.Math.FloatBetween(0, 1) < 0.65) {
+      this.chainIntent = intent;
+      this.chainLeft = 2;
+      // 판정이 도는 동안 다음 입력을 넣어 선입력으로 쌓는다
+      this.attackCooldown = atk.startup + 40;
+      return;
+    }
+
+    this.chainLeft = 0;
+    this.attackCooldown =
+      atk.startup + atk.active + atk.recovery + this.difficulty.attackCooldown;
   }
 
   /**

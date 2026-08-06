@@ -13,6 +13,7 @@ export type SfxName =
   | 'hitLight'
   | 'hitHeavy'
   | 'hitSkill'
+  | 'finisher'
   | 'whiff'
   | 'jump'
   | 'doubleJump'
@@ -130,17 +131,44 @@ class SoundSystem {
     const i = Math.max(0, Math.min(1, intensity));
 
     switch (name) {
-      // 약공격 — 짧고 건조한 타격
+      /*
+       * 약공격 — 짧고 건조한 타격.
+       * 연타가 쌓일수록(i가 커질수록) 피치가 올라가 몰아치는 느낌을 만든다.
+       */
       case 'hitLight':
-        this.noise({ dur: 0.07, gain: 0.5, freq: 1800, to: 600, q: 1.2 });
-        this.tone({ freq: 220, to: 90, type: 'square', dur: 0.09, gain: 0.28 });
+        this.noise({ dur: 0.07, gain: 0.5, freq: 1500 + i * 900, to: 600, q: 1.2 });
+        this.tone({
+          freq: 200 + i * 130,
+          to: 90,
+          type: 'square',
+          dur: 0.09,
+          gain: 0.28,
+        });
         break;
 
       // 강공격 — 저역이 두껍고 피치가 크게 떨어진다
       case 'hitHeavy':
-        this.noise({ dur: 0.14, gain: 0.62, freq: 1400, to: 260, q: 0.9 });
-        this.tone({ freq: 160, to: 45, type: 'square', dur: 0.18, gain: 0.42 });
+        this.noise({ dur: 0.14, gain: 0.62, freq: 1200 + i * 700, to: 260, q: 0.9 });
+        this.tone({ freq: 150 + i * 60, to: 45, type: 'square', dur: 0.18, gain: 0.42 });
         this.tone({ freq: 80, to: 34, type: 'sine', dur: 0.24, gain: 0.5 });
+        break;
+
+      /*
+       * 연속기 마무리 — 저역을 크게 깔고 금속성 배음을 얹는다.
+       * 앞선 타들과 확실히 다른 소리라야 "끝냈다"가 귀로 전달된다.
+       */
+      case 'finisher':
+        this.noise({ dur: 0.24, gain: 0.75, freq: 3200, to: 200, q: 0.6 });
+        this.tone({ freq: 130, to: 32, type: 'square', dur: 0.3, gain: 0.5 });
+        this.tone({ freq: 55, to: 26, type: 'sine', dur: 0.44, gain: 0.62 });
+        this.tone({
+          freq: 880,
+          to: 260,
+          type: 'triangle',
+          dur: 0.36,
+          gain: 0.22,
+          delay: 0.03,
+        });
         break;
 
       // 스킬 적중 — 강공격 + 금속성 배음

@@ -206,8 +206,14 @@ export const FIGHTER = {
   MAX_JUMPS: 2,
   /** 공중 조작 감쇠 */
   AIR_CONTROL: 0.82,
-  /** 피격 후 무적 시간 (ms) — 스턴락 방지 */
-  INVULN_MS: 180,
+  /**
+   * 피격 후 무적 시간 (ms) — 스턴락 방지.
+   *
+   * 연속기가 생기면서 낮췄다. 무적이 길면 2·3타가 통째로 씹혀
+   * 몰아치는 손맛이 사라진다. (판정 지속이 이보다 길어 무적이 풀리는 순간
+   * 이어서 맞는다 — 완전히 없애지 않고도 연속기가 성립한다)
+   */
+  INVULN_MS: 140,
   /** 착지 시 스쿼시 연출 임계 낙하속도 */
   LAND_SQUASH_VY: 500,
   /** 대시 지속 (ms) */
@@ -238,24 +244,78 @@ export const FIGHTER = {
 export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
   /* --- 지상 약공격 계열 ------------------------------------------ */
 
-  /** J — 빠르고 가벼운 견제 */
+  /**
+   * J — 빠르고 가벼운 견제. 연속기 1타.
+   *
+   * 넉백을 아주 작게 잡는다. 1·2타에서 상대가 밀려나면 3타가 닿지 않아
+   * 연속기가 끊긴다 — 마무리 타에서만 크게 날린다.
+   */
   light: {
     type: 'light',
     slot: 'light',
     name: '약공격',
     damage: 10,
     startup: 70,
-    active: 90,
+    active: 110,
     recovery: 150,
     range: 66,
     hitHeight: 76,
     hitAnchor: 'front',
     fx: 'thrust',
-    knockbackX: 280,
-    knockbackY: -180,
-    hitstun: 220,
+    knockbackX: 150,
+    knockbackY: -90,
+    hitstun: 200,
     hitstop: 70,
     shake: 0.008,
+    chain: 'light2',
+    chainStep: 1,
+  },
+
+  /** J 2타 — 반대 손으로 이어 친다 */
+  light2: {
+    type: 'light',
+    slot: 'light2',
+    name: '연타 2',
+    damage: 10,
+    startup: 105,
+    active: 115,
+    recovery: 160,
+    range: 70,
+    hitHeight: 78,
+    hitAnchor: 'front',
+    fx: 'slash',
+    knockbackX: 170,
+    knockbackY: -110,
+    hitstun: 210,
+    hitstop: 85,
+    shake: 0.01,
+    chain: 'light3',
+    chainStep: 2,
+  },
+
+  /**
+   * J 3타 — 마무리.
+   * 크게 띄워 올려 공중 콤보로 이어갈 수 있게 한다.
+   */
+  light3: {
+    type: 'light',
+    slot: 'light3',
+    name: '마무리 일격',
+    damage: 15,
+    startup: 130,
+    active: 130,
+    recovery: 330,
+    range: 82,
+    hitHeight: 96,
+    hitAnchor: 'front',
+    fx: 'rising',
+    knockbackX: 380,
+    knockbackY: -620,
+    hitstun: 460,
+    hitstop: 150,
+    shake: 0.024,
+    chainStep: 3,
+    finisher: true,
   },
 
   /** W+J — 대공. 위로 쳐올려 콤보를 시작한다 */
@@ -301,24 +361,51 @@ export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
 
   /* --- 지상 강공격 계열 ------------------------------------------ */
 
-  /** K — 느리지만 강한 넉백 */
+  /**
+   * K — 느리지만 강하다. 연속기 1타.
+   * 여기서 크게 날려버리면 2타가 닿지 않으므로 넉백은 억제해 두었다.
+   */
   heavy: {
     type: 'heavy',
     slot: 'heavy',
     name: '강공격',
     damage: 18,
     startup: 180,
-    active: 110,
+    active: 120,
     recovery: 320,
     range: 84,
     hitHeight: 88,
     hitAnchor: 'front',
     fx: 'slash',
-    knockbackX: 560,
-    knockbackY: -380,
-    hitstun: 400,
+    knockbackX: 300,
+    knockbackY: -200,
+    hitstun: 340,
     hitstop: 120,
     shake: 0.016,
+    chain: 'heavy2',
+    chainStep: 1,
+  },
+
+  /** K 2타 — 마무리. 멀리 날려 장외를 노린다 */
+  heavy2: {
+    type: 'heavy',
+    slot: 'heavy2',
+    name: '마무리 강타',
+    damage: 22,
+    startup: 165,
+    active: 130,
+    recovery: 400,
+    range: 92,
+    hitHeight: 94,
+    hitAnchor: 'front',
+    fx: 'slam',
+    knockbackX: 820,
+    knockbackY: -420,
+    hitstun: 520,
+    hitstop: 175,
+    shake: 0.03,
+    chainStep: 2,
+    finisher: true,
   },
 
   /**
@@ -476,7 +563,30 @@ export const MOVE_COMMANDS: Array<{ slot: MoveSlot; keys: string }> = [
   { slot: 'skill', keys: 'L' },
 ];
 
-const MOVE_SLOTS = MOVE_COMMANDS.map((c) => c.slot);
+/**
+ * 연속기 — 같은 버튼을 이어 누르면 순서대로 나간다.
+ *
+ * 커맨드 목록과 따로 두는 이유: 이건 "다른 입력"이 아니라
+ * "같은 입력을 이어서" 내는 것이라, 나열하면 오히려 헷갈린다.
+ */
+export const CHAIN_STRINGS: Array<{ keys: string; slots: MoveSlot[] }> = [
+  { keys: 'J J J', slots: ['light', 'light2', 'light3'] },
+  { keys: 'K K', slots: ['heavy', 'heavy2'] },
+];
+
+/** 연속기 관련 타이밍 */
+export const CHAIN = {
+  /**
+   * 한 타가 완전히 끝난 뒤에도 이만큼은 이어 칠 수 있다.
+   *
+   * 후딜이 끝나는 순간에 정확히 눌러야 이어진다면 연타가 아니라 암기가 된다.
+   * 조금 늦어도 이어지게 해야 몰아치는 느낌이 난다.
+   */
+  GRACE_MS: 260,
+} as const;
+
+// 템플릿에 있는 슬롯 전부 — 커맨드 목록에 없는 연속기 링크도 빠짐없이 채워야 한다
+const MOVE_SLOTS = Object.keys(MOVE_TEMPLATES) as MoveSlot[];
 
 /** 슬롯 템플릿에 캐릭터별 차이만 얹어 기술 하나를 만든다 */
 export function move(

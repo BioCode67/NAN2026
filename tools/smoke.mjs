@@ -188,6 +188,19 @@ const playerState = () =>
       // 지면까지 남은 높이 — "떠 있다"만으로는 착지 직전인지 알 수 없다
       height: 590 - (p.y + 42),
       stock: scene.stock?.get(p.fighterId) ?? -1,
+      /*
+       * FIGHT! 가 떠야 조작이 먹는다.
+       * 개시 연출(READY? → FIGHT!) 동안 BattleScene은 handleInput을 아예
+       * 호출하지 않는다. 이걸 안 보고 키를 넣으면 입력이 통째로 사라져
+       * "커맨드가 안 나갔다"로 오판한다.
+       */
+      active: !!scene.battleActive,
+      /*
+       * 이 플레이어 객체에 기록기가 붙어 있는가.
+       * 판이 갈리면 플레이어 객체가 통째로 새로 만들어지므로,
+       * 이 값이 새 판인지 옛 판인지를 가리는 유일하게 확실한 표시다.
+       */
+      recorded: !!p.__recorded,
     };
   });
 
@@ -222,7 +235,7 @@ const waitUntil = async (check, label, timeout = 25000, quiet = false) => {
  * 규칙대로 급강하가 나가므로, 지상기를 기대한 검증이 엉뚱하게 실패한다.
  */
 const waitGrounded = async () => {
-  const ready = (s) => s.alive && s.free && !s.airborne;
+  const ready = (s) => s.alive && s.active && s.free && !s.airborne;
   if (await waitUntil(ready, '지상 · 행동 가능 대기', 12000, true)) return true;
 
   /*
@@ -239,12 +252,33 @@ const waitGrounded = async () => {
  */
 const restartRound = async () => {
   for (let i = 0; i < 6; i++) {
+    /*
+     * R을 누르기 전에 지금 기록기가 붙어 있는지 봐 둔다.
+     *
+     * "주가가 100이고 조작이 먹으면 새 판"으로는 판별할 수 없다.
+     * 아직 아무도 맞지 않은 **옛 판**도 똑같이 100이어서, R을 누른 직후
+     * 옛 씬을 새 판으로 착각한다. 그러면 기록기를 곧 사라질 옛 플레이어에
+     * 달게 되고, 진짜 새 판에서 나간 기술은 하나도 세어지지 않는다.
+     * (커맨드 검증의 앞쪽 몇 개만 실패하던 원인이 이것이었다)
+     *
+     * 판이 갈리면 플레이어 객체가 새로 만들어지므로 기록기 표시도 함께
+     * 사라진다. 그 사라짐을 새 판의 증거로 삼는다.
+     */
+    const wasRecorded = (await playerState())?.recorded ?? false;
+
     await hold('r', 220);
-    // 주가가 시작값으로 돌아왔고 조작이 먹으면 새 판이다
+
     const fresh = await waitUntil(
-      (s) => s.alive && s.stock === 100 && s.free && !s.airborne,
+      (s) =>
+        s.alive &&
+        s.stock === 100 &&
+        s.active &&
+        s.free &&
+        !s.airborne &&
+        // 기록기가 붙어 있었다면, 그것이 떨어져 나간 뒤라야 진짜 새 판이다
+        (!wasRecorded || !s.recorded),
       '새 판 시작 대기',
-      6000,
+      8000,
       true,
     );
     if (fresh) {
@@ -299,6 +333,8 @@ const command = async (dirKey, btn, prep, expect) => {
   const before = (await readMoves()).length;
   const until = Date.now() + 12000;
   let fired = false;
+  /* 실패했을 때 "무엇이 대신 나갔는지"를 말해 주기 위해 마지막 오답을 남긴다 */
+  let wrong = null;
 
   while (Date.now() < until && !fired) {
     /*
@@ -343,13 +379,19 @@ const command = async (dirKey, btn, prep, expect) => {
      * 테스트가 준비에 실패한 것이므로, 실패로 세지 않고 다시 시도한다.
      */
     if (expect && list[before] !== expect) {
+      wrong = list[before];
       await trimMoves(before);
       continue;
     }
     fired = true;
   }
 
-  if (!fired) errors.push(`[커맨드] ${dirKey}+${btn} 가 기술로 이어지지 않았습니다`);
+  if (!fired) {
+    const why = wrong
+      ? `기대 "${expect}" 대신 "${wrong}" 이(가) 나갔습니다`
+      : '아무 기술도 발동하지 않았습니다';
+    errors.push(`[커맨드] ${dirKey}+${btn} 가 기술로 이어지지 않았습니다 — ${why}`);
+  }
 };
 
 console.log(`스모크 테스트 → ${URL} (캐릭터 #${PICK})`);

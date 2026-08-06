@@ -5,6 +5,7 @@ import {
   prepareOptionalArt,
   probeArt,
   queueOptionalArt,
+  resolveArtPath,
 } from '../config/artAssets';
 import { GAME } from '../config/gameConfig';
 import { SHEET_DEFS, animKey, applyLayout, metaKey } from '../config/spriteSheets';
@@ -48,13 +49,16 @@ export class BootScene extends Phaser.Scene {
    * 찍어 콘솔이 빨개진다 — 아직 안 그린 그림은 오류가 아니다.
    */
   private async loadArt(): Promise<void> {
-    const available = await probeArt([...ART_IMAGES, ...ART_STRIPS]);
+    const [available, sheetPaths] = await Promise.all([
+      probeArt([...ART_IMAGES, ...ART_STRIPS]),
+      this.resolveSheetPaths(),
+    ]);
 
     // 확인하는 사이 씬이 내려갔다면(새로고침 등) 더 진행하지 않는다
     if (!this.scene.isActive()) return;
 
     queueOptionalArt(this.load, available);
-    const queued = available.length + this.queueSpriteSheets();
+    const queued = available.length + this.queueSpriteSheets(sheetPaths);
 
     if (queued === 0) {
       this.finish();
@@ -65,14 +69,37 @@ export class BootScene extends Phaser.Scene {
     this.load.start();
   }
 
-  /** 메타가 있는 캐릭터 시트만 로더에 건다. 건 개수를 돌려준다 */
-  private queueSpriteSheets(): number {
+  /**
+   * 각 캐릭터 시트를 어느 경로로 읽을지 정한다 (webp가 있으면 webp).
+   * 시트도 한 장에 1MB가 넘어 배경과 같은 이유로 가벼운 판을 우선한다.
+   */
+  private async resolveSheetPaths(): Promise<Map<string, string>> {
+    const pairs = await Promise.all(
+      SHEET_DEFS.map(async (def) => {
+        const path = await resolveArtPath(`sprites/${def.key}.png`);
+        return [def.key, path] as const;
+      }),
+    );
+
+    const out = new Map<string, string>();
+    for (const [key, path] of pairs) if (path) out.set(key, path);
+    return out;
+  }
+
+  /** 메타와 그림이 둘 다 있는 캐릭터 시트만 로더에 건다. 건 개수를 돌려준다 */
+  private queueSpriteSheets(paths: Map<string, string>): number {
     let queued = 0;
 
     for (const def of SHEET_DEFS) {
       const meta = this.cache.json.get(metaKey(def.key)) as SheetMeta | undefined;
       if (!meta) {
         console.warn(`[Boot] ${def.key} 메타데이터를 찾지 못해 도형 아트로 대체합니다.`);
+        continue;
+      }
+
+      const path = paths.get(def.key);
+      if (!path) {
+        console.warn(`[Boot] ${def.key} 시트 그림이 없어 도형 아트로 대체합니다.`);
         continue;
       }
 
@@ -84,7 +111,7 @@ export class BootScene extends Phaser.Scene {
       const version = applyLayout(def, count);
       console.info(`[Boot] ${def.key}: ${count}프레임 → ${version} 규격`);
 
-      this.load.spritesheet(def.key, `sprites/${def.key}.png`, {
+      this.load.spritesheet(def.key, path, {
         frameWidth: meta.frameWidth,
         frameHeight: meta.frameHeight,
       });

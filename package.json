@@ -19,6 +19,7 @@
     "prompts": "node tools/gen-prompts.mjs",
     "art": "node tools/gen-art.mjs",
     "art:in": "node tools/art-in.mjs",
+    "art:opt": "node tools/optimize-art.mjs",
     "sheet:merge": "node tools/merge-sheets.mjs"
   },
   "keywords": [

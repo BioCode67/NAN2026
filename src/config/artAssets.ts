@@ -101,27 +101,50 @@ export function queueOptionalArt(
 }
 
 /**
+ * 이 경로에 그림이 실제로 있는가.
+ *
+ * 상태 코드만 봐서는 안 된다 — 개발 서버는 없는 경로에도 index.html을
+ * 200으로 돌려주기 때문에, 내용 종류가 이미지인지까지 확인해야 한다.
+ */
+async function imageExists(path: string): Promise<boolean> {
+  try {
+    const res = await fetch(new URL(path, document.baseURI), { method: 'HEAD' });
+    const type = res.headers.get('content-type') ?? '';
+    return res.ok && type.startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 쓸 수 있는 그림 경로를 고른다. 하나도 없으면 null.
+ *
+ * **가벼운 쪽을 먼저 본다.** 생성기가 뱉는 PNG는 배경 한 장에 6MB라
+ * 그대로 올리면 심사자의 브라우저에서 로딩만 수십 초가 걸린다.
+ * `npm run art:opt` 이 같은 이름의 webp를 만들어 두므로 그쪽을 우선 쓰고,
+ * 아직 안 줄인(=방금 폴더에 떨어뜨린) 그림은 PNG 그대로 집는다.
+ *
+ * 덕분에 "폴더에 넣기만 하면 붙는다"는 규칙은 그대로고,
+ * 배포되는 무게만 줄어든다.
+ */
+export async function resolveArtPath(path: string): Promise<string | null> {
+  const light = path.replace(/\.png$/i, '.webp');
+  if (light !== path && (await imageExists(light))) return light;
+  return (await imageExists(path)) ? path : null;
+}
+
+/**
  * 어떤 그림이 실제로 있는지 먼저 확인한다.
  *
  * 없는 파일을 그냥 로더에 걸어도 게임은 돌아가지만, Phaser가 실패할 때마다
  * console.error를 찍는다(File.js에 박혀 있어 끌 수 없다). 아직 안 그린 그림이
  * 열 장이면 콘솔이 빨갛게 차고, 진짜 오류가 그 사이에 묻힌다.
- *
- * 상태 코드만 봐서는 안 된다 — 개발 서버는 없는 경로에도 index.html을
- * 200으로 돌려주기 때문에, 내용 종류가 이미지인지까지 확인해야 한다.
  */
 export async function probeArt(list: ArtImage[]): Promise<ArtImage[]> {
   const found = await Promise.all(
     list.map(async (a) => {
-      try {
-        const res = await fetch(new URL(a.path, document.baseURI), {
-          method: 'HEAD',
-        });
-        const type = res.headers.get('content-type') ?? '';
-        return res.ok && type.startsWith('image/') ? a : null;
-      } catch {
-        return null;
-      }
+      const path = await resolveArtPath(a.path);
+      return path ? { ...a, path } : null;
     }),
   );
   return found.filter((a): a is ArtImage => a !== null);

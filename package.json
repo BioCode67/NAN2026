@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "gen": "node tools/gen-sheet.mjs",
     "sheet": "node tools/process-sheet.mjs",
     "smoke": "node tools/smoke.mjs"
   },

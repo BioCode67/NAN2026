@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
+import { personaFor, shouldCastSkill } from '../config/aiPersona';
 import { STAGE } from '../config/gameConfig';
+import type { AiPersona } from '../config/aiPersona';
 import type { AIDifficulty, AIState, AttackDir } from '../types';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 
@@ -39,28 +41,45 @@ export class AISystem {
   private chainLeft = 0;
   private chainIntent: 'light' | 'heavy' = 'light';
 
+  /** 이 캐릭터를 어떻게 쓰는가 — 고유 메커니즘에서 따온다 */
+  private readonly persona: AiPersona;
+  /** 스킬이 준비된 시각. "얼마나 참았나"를 재는 데 쓴다 */
+  private skillReadySince = -1;
+  /** 이 시각까지 방어를 유지한다 (0이면 방어 중이 아니다) */
+  private guardUntil = 0;
+
   constructor(
     private readonly self: BaseCharacter,
     private readonly getTarget: () => BaseCharacter | null,
     private readonly difficulty: AIDifficulty,
     private readonly actions: AIActions,
-  ) {}
+  ) {
+    this.persona = personaFor(self.cfg.signature.id);
+  }
+
+  /** 이 봇이 따르는 성격 (테스트·디버그용) */
+  getPersona(): AiPersona {
+    return this.persona;
+  }
 
   /** 현재 상태 (디버그 표시용) */
   getState(): AIState {
     return this.state;
   }
 
-  update(_time: number, delta: number): void {
+  update(time: number, delta: number): void {
     if (!this.self.alive) return;
 
     this.decisionTimer -= delta;
     this.reactionTimer -= delta;
     this.attackCooldown -= delta;
 
+    this.trackSkillReady(time);
+
     const target = this.getTarget();
     if (!target || !target.alive) {
       this.state = 'IDLE';
+      this.releaseGuard();
       this.self.moveHorizontal(0);
       return;
     }
@@ -71,7 +90,7 @@ export class AISystem {
     /* 판단 주기마다 목표 상태를 다시 계산한다 */
     if (this.decisionTimer <= 0) {
       this.decisionTimer = this.difficulty.decisionInterval;
-      const next = this.decideState(target);
+      const next = this.decideState(target, time);
       if (next !== this.pendingState) {
         this.pendingState = next;
         // 회피/스킬처럼 즉각적인 판단은 지연을 절반만 준다
@@ -85,31 +104,71 @@ export class AISystem {
       this.state = this.pendingState;
     }
 
-    this.act(target);
+    this.act(target, time);
+  }
+
+  /**
+   * 스킬이 준비된 채로 얼마나 흘렀는지 잰다.
+   *
+   * "지분 4개까지 참는다" 같은 성격은 조건이 영영 안 맞을 수 있다.
+   * 얼마나 참았는지를 알아야 적당한 선에서 포기하고 지를 수 있다.
+   */
+  private trackSkillReady(time: number): void {
+    if (!this.self.isSkillReady()) {
+      this.skillReadySince = -1;
+      return;
+    }
+    if (this.skillReadySince < 0) this.skillReadySince = time;
+  }
+
+  /** 방어를 푼다 (공격·이동 전에 반드시 거친다) */
+  private releaseGuard(): void {
+    if (this.guardUntil === 0) return;
+    this.guardUntil = 0;
+    this.self.setGuard(false);
   }
 
   /* ================================================================ */
   /* 상태 판단                                                        */
   /* ================================================================ */
 
-  private decideState(target: BaseCharacter): AIState {
+  private decideState(target: BaseCharacter, time: number): AIState {
     const dist = Math.abs(target.x - this.self.x);
     const skill = this.self.cfg.moves.skill;
     // 투사체 스킬은 멀리서도 쓸 수 있다
     const skillRange = skill.projectile ? 520 : skill.range;
     const reach = this.self.cfg.moves.heavy.range;
 
-    // 상대가 공격 모션에 들어갔고 사거리 안이면 회피를 시도한다
+    /*
+     * 상대가 공격 모션에 들어갔고 사거리 안이면 피하거나 막는다.
+     * 잃을 것이 있는 캐릭터(풍선·지분)는 더 자주 반응한다.
+     */
+    const loaded = this.self.getSignatureStacks() > 0;
+    const evadeChance =
+      this.difficulty.evadeChance * (loaded ? this.persona.evadeMulWhenLoaded : 1);
+
     if (
       target.isAttacking() &&
       dist < 150 &&
-      Phaser.Math.FloatBetween(0, 1) < this.difficulty.evadeChance
+      Phaser.Math.FloatBetween(0, 1) < evadeChance
     ) {
       return 'EVADE';
     }
 
-    // 스킬이 준비됐고 사거리에 들어오면 최우선으로 지른다
-    if (this.self.isSkillReady() && dist < skillRange + 40) {
+    /*
+     * 스킬 판단은 캐릭터마다 다르다.
+     * 게이츠는 지분을 모으고, 리누스는 훔친 기술이 생겨야 하고,
+     * 잡스는 후속 입력 창이 열리면 쿨다운과 무관하게 지른다.
+     */
+    if (
+      shouldCastSkill(this.persona, {
+        ready: this.self.isSkillReady(),
+        stacks: this.self.getSignatureStacks(),
+        windowOpen: this.self.isSignatureWindowOpen(),
+        readyForMs: this.skillReadySince < 0 ? 0 : time - this.skillReadySince,
+        inRange: dist < skillRange + 40,
+      })
+    ) {
       return 'SKILL';
     }
 
@@ -130,17 +189,29 @@ export class AISystem {
   /* 상태별 행동                                                      */
   /* ================================================================ */
 
-  private act(target: BaseCharacter): void {
+  private act(target: BaseCharacter, time: number): void {
     const dx = target.x - this.self.x;
     const dy = target.y - this.self.y;
     const dist = Math.abs(dx);
     const dir: -1 | 1 = dx >= 0 ? 1 : -1;
+
+    /* 방어 중이면 시간이 끝날 때까지 그대로 버틴다 */
+    if (this.guardUntil > 0) {
+      if (time < this.guardUntil) {
+        this.self.moveHorizontal(0);
+        this.self.setGuard(true);
+        return;
+      }
+      this.releaseGuard();
+    }
 
     switch (this.state) {
       case 'CHASE': {
         this.self.moveHorizontal(dir);
         // 상대가 위에 있으면 따라 올라간다
         if (dy < -70 && dist < 200) this.self.jump();
+        // 부스터를 가진 캐릭터는 공중에서도 대시로 거리를 좁힌다
+        if (this.persona.useAirDash && dist > 220) this.self.dash(dir);
         break;
       }
 
@@ -154,6 +225,19 @@ export class AISystem {
       }
 
       case 'EVADE': {
+        /*
+         * 막을 것인가 피할 것인가.
+         *
+         * 리누스에게 방어는 회피가 아니라 공격 준비다 — 막아야 기술을 훔친다.
+         * 그래서 성격표의 확률로 갈라, 이 캐릭터만 자주 받아내게 한다.
+         */
+        if (Phaser.Math.FloatBetween(0, 1) < this.persona.guardChance) {
+          this.guardUntil = time + this.persona.guardMs;
+          this.self.moveHorizontal(0);
+          this.self.setGuard(true);
+          break;
+        }
+
         // 반대 방향으로 물러나되 낭떠러지로는 가지 않는다
         const away: -1 | 1 = (dir * -1) as -1 | 1;
         if (this.canStepTo(away)) this.self.moveHorizontal(away);
@@ -190,6 +274,9 @@ export class AISystem {
    * 쌓이고, 끝난 직후에 누르면 여운으로 이어지므로 대충 눌러도 성립한다.
    */
   private swing(dy: number): void {
+    // 막은 채로는 못 친다
+    this.releaseGuard();
+
     /* 이어치는 중이면 방향을 섞지 않는다 (방향키가 들어가면 연속기가 끊긴다) */
     if (this.chainLeft > 0) {
       this.chainLeft--;
@@ -265,10 +352,15 @@ export class AISystem {
     if (!outLeft && !outRight) return false;
 
     const dir: -1 | 1 = this.self.x < center ? 1 : -1;
+    this.releaseGuard();
     this.self.moveHorizontal(dir);
 
     // 지면보다 아래로 떨어졌으면 점프로 복귀 시도
-    if (this.self.y > STAGE.GROUND_Y - 20) this.self.jump();
+    if (this.self.y > STAGE.GROUND_Y - 20) {
+      this.self.jump();
+      // 부스터는 이 캐릭터의 유일한 복귀 수단이다 — 장외에서야 값어치가 드러난다
+      if (this.persona.useAirDash) this.self.dash(dir);
+    }
 
     return true;
   }

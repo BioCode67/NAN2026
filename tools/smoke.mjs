@@ -697,6 +697,123 @@ await page.keyboard.press('d');
 await page.waitForTimeout(150);
 await shot('dash');
 
+/*
+ * 봇 성격.
+ *
+ * 캐릭터마다 고유 메커니즘을 만들어 놨어도 봇이 그걸 쓰지 않으면
+ * 네 명이 붙어도 이름표만 다른 같은 봇 넷과 싸우는 것이 된다.
+ * 플레이어를 가만히 둔 채 한동안 지켜보며 두 가지를 본다.
+ *   - 봇마다 서로 다른 성격을 들고 있는가
+ *   - 막는 캐릭터(리누스)가 실제로 막는가
+ * 겸사겸사 봇이 여전히 공격적인지도 확인한다 — 방어를 넣었으니 소극적으로
+ * 변했을 수 있다. 가만히 서 있는데 아무도 안 때리면 그게 더 큰 문제다.
+ */
+console.log('봇 성격');
+await restartRound();
+{
+  /*
+   * 관전 창은 FIGHT! 가 뜬 뒤에 연다.
+   *
+   * 헤드리스는 10~15 FPS라 인트로(READY?/FIGHT!)가 벽시계로 몇 초씩 늘어진다.
+   * 그동안 봇은 아예 돌지 않으므로(battleActive=false), 시간을 재서 기다리면
+   * 관전 창 전체를 인트로가 먹고 "봇이 공격을 안 한다"는 오판이 나온다.
+   */
+  await page
+    .waitForFunction(
+      () => window.game?.scene?.getScene('Battle')?.battleActive === true,
+      null,
+      { timeout: 30000, polling: 200 },
+    )
+    .catch(() => errors.push('[봇] 전투가 시작되지 않았습니다'));
+
+  /*
+   * 1) 배선 확인 — 봇이 자기 캐릭터의 성격을 들고 있는가.
+   *
+   * 이건 확률이 섞이지 않아 매번 같은 답이 나온다. 성격표를 만들어 놓고
+   * 엉뚱한 캐릭터에 붙이는 실수가 가장 흔하고 가장 안 보이므로 여기서 잡는다.
+   */
+  const wiring = await page.evaluate(() => {
+    const sc = window.game?.scene?.getScene('Battle');
+    if (!sc?.ais) return null;
+    const bots = sc.fighters.filter((f) => f.side === 'ai');
+    return sc.ais.map((a, i) => ({
+      name: bots[i].cfg.name,
+      sig: bots[i].cfg.signature.id,
+      label: a.getPersona().label,
+    }));
+  });
+
+  if (!wiring) {
+    errors.push('[봇] 봇 정보를 읽지 못했습니다');
+  } else {
+    const labels = wiring.map((w) => w.label);
+    if (new Set(labels).size < labels.length) {
+      errors.push(`[봇] 성격이 겹칩니다: ${labels.join(' / ')}`);
+    }
+    // 고유 메커니즘 → 성격 이 1:1로 붙었는지 (같은 메커니즘이면 같은 성격)
+    const bySig = new Map();
+    for (const w of wiring) {
+      const prev = bySig.get(w.sig);
+      if (prev && prev !== w.label) {
+        errors.push(`[봇] ${w.sig} 에 성격이 두 개 붙어 있습니다`);
+      }
+      bySig.set(w.sig, w.label);
+    }
+    console.log(
+      `  ✓ 성격 배선 ${wiring.map((w) => `${w.name}=${w.label}`).join(' / ')}`,
+    );
+  }
+
+  /*
+   * 2) 소극적으로 변하지 않았는가.
+   *
+   * 방어를 넣었으니 봇이 막기만 하다 끝날 수 있다. 플레이어가 치는 상황을
+   * 만들어 주며 지켜보다가, 아무도 공격 자세에 들어가지 않고 주가도 그대로면
+   * 그때만 실패로 본다. 몇 초 만에 때리느냐는 월드 크기와 프레임률에 좌우되므로
+   * 시간은 기준으로 삼지 않는다.
+   */
+  const seen = { guarded: false, attacked: false };
+  let stock = 100;
+
+  const until = Date.now() + 14000;
+  while (Date.now() < until) {
+    await dismissPrompt();
+    // 봇이 막을 것이 있어야 방어도 나온다 — 가만히 서 있으면 EVADE 자체가 안 뜬다
+    await page.keyboard.press('j');
+
+    const snap = await page.evaluate(() => {
+      const sc = window.game?.scene?.getScene('Battle');
+      if (!sc?.ais) return null;
+      return {
+        states: sc.ais.map((a) => a.getState()),
+        guarding: sc.fighters.some((f) => f.side === 'ai' && f.isGuarding()),
+        stock: sc.stock.get(sc.player.fighterId),
+      };
+    });
+
+    if (snap) {
+      if (snap.guarding) seen.guarded = true;
+      if (snap.states.includes('ATTACK')) seen.attacked = true;
+      stock = Math.min(stock, snap.stock);
+    }
+    await page.waitForTimeout(140);
+  }
+
+  if (!seen.attacked && stock >= 98) {
+    errors.push('[봇] 14초 동안 아무도 공격하지 않았습니다 — 방어만 하고 있습니다');
+  }
+
+  /*
+   * 방어를 봤는지는 알림으로만 남긴다.
+   * 봇이 막을지는 확률이고 상대도 무작위로 뽑히므로, 못 봤다고 고장은 아니다.
+   * 막을지 말지의 규칙 자체는 npm run test:ai 가 확정적으로 검사한다.
+   */
+  console.log(
+    `    공격 ${seen.attacked ? 'O' : '-'} · 방어 ${seen.guarded ? 'O' : '-'} · 주가 ${stock}%`,
+  );
+}
+await shot('ai-persona');
+
 console.log('전투 진행');
 for (let i = 0; i < 20; i++) {
   await page.keyboard.press('j');

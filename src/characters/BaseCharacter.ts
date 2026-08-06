@@ -7,20 +7,30 @@ import {
   STAGE,
   STOCK,
   TIERS,
+  resolveMoveSlot,
 } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import type { ItemConfig, ItemMods } from '../config/items';
 import { createFighterView } from './FighterView';
 import type { FighterView } from './FighterView';
+import { MOVE_POSE } from '../config/spriteSheets';
 import type { Pose } from '../config/spriteSheets';
 import { StockTier } from '../types';
 import type {
   AttackConfig,
+  AttackDir,
   AttackPhase,
-  AttackType,
   CharacterConfig,
   Side,
 } from '../types';
+
+/** 히트박스가 놓이는 자리 — 판정과 이펙트가 같은 계산을 공유한다 */
+interface HitArea {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
 
 /** 머리 위 미니 게이지 규격 */
 const GAUGE_W = 82;
@@ -320,10 +330,28 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     return true;
   }
 
-  /** 약공격(J) / 강공격(K) — 캐릭터마다 속도·리치·위력이 다르다 */
-  attack(type: Exclude<AttackType, 'skill'>): boolean {
-    if (!this.canAct()) return false;
-    this.beginAttack(type === 'light' ? this.cfg.light : this.cfg.heavy);
+  /** 지금 이 입력이 어떤 기술로 나가는가 (AI가 딜레이를 계산할 때도 쓴다) */
+  resolveMove(intent: 'light' | 'heavy', dir: AttackDir): AttackConfig {
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    return this.cfg.moves[resolveMoveSlot(intent, dir, onGround)];
+  }
+
+  /**
+   * 약공격(J) / 강공격(K).
+   *
+   * 방향키(W/S)와 지상·공중 여부에 따라 서로 다른 기술이 나간다.
+   * 같은 버튼이라도 상황마다 다른 그림·다른 판정이 나오게 하는 것이
+   * 이 게임 전투의 핵심이다.
+   */
+  attack(intent: 'light' | 'heavy', dir: AttackDir = 'neutral'): boolean {
+    if (!this.alive) return false;
+    if (this.attackPhase !== 'none') return false;
+    if (this.scene.time.now < this.stunUntil) return false;
+
+    // 방어는 공격으로 캔슬할 수 있다 (S를 누른 채 하단기를 내기 위해)
+    this.guarding = false;
+
+    this.beginAttack(this.resolveMove(intent, dir));
     return true;
   }
 
@@ -332,22 +360,12 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (!this.canAct()) return false;
     if (!this.isSkillReady()) return false;
 
-    const skill = this.cfg.skill;
+    const skill = this.cfg.moves.skill;
     const cooldown =
       (skill.cooldown ?? 10000) * this.cooldownMul * (this.mods.cooldownMul ?? 1);
     this.skillReadyAt = this.scene.time.now + cooldown;
 
     this.beginAttack(skill);
-
-    // 로켓 드롭처럼 시전과 동시에 자신이 튀어오르는 스킬
-    if (skill.selfLaunch) {
-      this.body.setVelocityY(skill.selfLaunch);
-      this.jumpsLeft = 0;
-
-      // 솟구친 뒤 내리꽂는 스킬이면 정점에서 하강으로 전환한다
-      if (skill.divePlunge) this.diving = { atk: skill, phase: 'rising' };
-    }
-
     this.say(this.pickQuote('skill'), this.cfg.colors.accent);
     return true;
   }
@@ -360,7 +378,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 남은 스킬 쿨다운 비율 (0 = 사용 가능, 1 = 방금 씀) */
   getSkillCooldownRatio(): number {
     const cooldown =
-      (this.cfg.skill.cooldown ?? 10000) *
+      (this.cfg.moves.skill.cooldown ?? 10000) *
       this.cooldownMul *
       (this.mods.cooldownMul ?? 1);
     const remain = this.skillReadyAt - this.scene.time.now;
@@ -378,8 +396,89 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.hitTargets.clear();
     this.body.setAccelerationX(0);
 
-    // 선딜 동안 살짝 웅크렸다가 뻗는 느낌
-    this.pulseSquash(1.12, 0.9, atk.startup);
+    /* 선딜 예비동작 — 어느 방향으로 내는 기술인지 몸이 먼저 알려준다 */
+    switch (atk.hitAnchor ?? 'front') {
+      case 'up':
+        // 무릎을 굽혔다가 위로 뻗는다
+        this.pulseSquash(1.2, 0.82, atk.startup);
+        break;
+      case 'down':
+        this.pulseSquash(1.16, 0.86, atk.startup);
+        break;
+      case 'around':
+        this.pulseSquash(0.9, 1.14, atk.startup);
+        break;
+      default:
+        this.pulseSquash(1.12, 0.9, atk.startup);
+    }
+
+    /* 상승기 — 시전과 동시에 자신이 솟구친다 */
+    if (atk.selfLaunch) {
+      this.body.setVelocityY(atk.selfLaunch);
+      this.jumpsLeft = 0;
+      sound.play('jump');
+    }
+
+    /*
+     * 낙하 공격.
+     *  - selfLaunch가 함께 있으면 솟구쳤다 정점에서 하강 (로켓 드롭)
+     *  - 없으면 그 자리에서 즉시 내리꽂는다 (공중 급강하)
+     */
+    if (atk.divePlunge) {
+      if (atk.selfLaunch) {
+        this.diving = { atk, phase: 'rising' };
+      } else {
+        this.diving = { atk, phase: 'falling' };
+        this.body.setVelocityY(atk.divePlunge.speed);
+      }
+    }
+
+    /* 기술 고유 대사 — 캐릭터성을 가장 싸게 전달하는 수단 */
+    if (atk.cry) this.say(atk.cry, this.cfg.colors.accent);
+  }
+
+  /**
+   * 이 기술의 판정이 놓이는 자리.
+   *
+   * 상단기는 머리 위, 하단기는 발밑, 광역기는 몸 주변 전체에 놓인다.
+   * 히트박스와 이펙트가 어긋나면 "왜 안 맞았는지" 알 수 없으므로
+   * 두 곳 모두 이 계산 하나만 쓴다.
+   */
+  private computeHitArea(atk: AttackConfig): HitArea {
+    const w = atk.range;
+    const h = atk.hitHeight;
+
+    switch (atk.hitAnchor ?? 'front') {
+      case 'up':
+        /*
+         * 상자 아래쪽이 상대의 상체에 걸치도록 내려 잡는다.
+         * 머리 위로만 띄우면 대공 전용이 되어, 눈앞에 서 있는 상대를
+         * 띄울 수 없다 — 콤보 시작기라는 역할이 사라진다.
+         */
+        return {
+          cx: this.x + this.facing * (w * 0.28),
+          cy: this.y - FIGHTER.BODY_H / 2 - h / 2 + 34,
+          w,
+          h,
+        };
+      case 'down':
+        return {
+          cx: this.x + this.facing * (FIGHTER.BODY_W / 2 + w / 2),
+          cy: this.y + FIGHTER.BODY_H / 2 - h / 2 + 4,
+          w,
+          h,
+        };
+      case 'around':
+        // range가 전방 사거리가 아니라 좌우를 합친 전체 폭이 된다
+        return { cx: this.x, cy: this.y + FIGHTER.BODY_H / 2 - h / 2, w, h };
+      default:
+        return {
+          cx: this.x + this.facing * (FIGHTER.BODY_W / 2 + w / 2),
+          cy: this.y - 6,
+          w,
+          h,
+        };
+    }
   }
 
   /** 현재 활성 히트박스 (투사체 공격이거나 비활성이면 null) */
@@ -388,14 +487,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const a = this.currentAttack;
     // 투사체 공격은 근접 판정이 없다 — 판정은 ProjectileSystem이 맡는다
     if (a.projectile) return null;
-    const cx = this.x + this.facing * (FIGHTER.BODY_W / 2 + a.range / 2);
-    const cy = this.y - 6;
-    this.hitboxRect.setTo(
-      cx - a.range / 2,
-      cy - a.hitHeight / 2,
-      a.range,
-      a.hitHeight,
-    );
+
+    const { cx, cy, w, h } = this.computeHitArea(a);
+    this.hitboxRect.setTo(cx - w / 2, cy - h / 2, w, h);
     return this.hitboxRect;
   }
 
@@ -456,9 +550,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.stunUntil = now + stun;
     this.invulnUntil = now + FIGHTER.INVULN_MS;
 
-    // 공격 모션 강제 취소
+    // 공격 모션 강제 취소 — 낙하 공격도 함께 끊어야 그대로 처박히지 않는다
     this.attackPhase = 'none';
     this.currentAttack = null;
+    this.diving = null;
     this.jumpsLeft = 0;
 
     this.flash();
@@ -493,6 +588,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.alive = false;
     this.attackPhase = 'none';
     this.currentAttack = null;
+    this.diving = null;
     this.body.setVelocity(0, 0);
     this.body.setAllowGravity(false);
     this.body.enable = false;
@@ -858,19 +954,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     if (this.guarding && onGround) return 'guard';
 
+    // 기술마다 전용 포즈가 있다 (시트에 없으면 뷰가 대체 사슬을 따라간다)
     if (this.attackPhase !== 'none' && this.currentAttack) {
-      switch (this.currentAttack.type) {
-        case 'light':
-          return 'attackJ';
-        case 'heavy':
-          return 'attackK';
-        default:
-          return 'skill';
-      }
+      return MOVE_POSE[this.currentAttack.slot];
     }
 
     if (now < this.dashUntil) return 'dash';
-    if (!onGround) return 'jump';
+    // 올라갈 때와 떨어질 때를 나눈다 — 공중 체공 시간이 눈에 읽힌다
+    if (!onGround) return this.body.velocity.y > 220 ? 'fall' : 'jump';
 
     const vx = Math.abs(this.body.velocity.x);
     if (vx > this.cfg.stats.speed * 0.75) return 'run';
@@ -881,7 +972,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */
   private spawnSwing(atk: AttackConfig): void {
     sound.play('whiff');
-    this.view.triggerAttack(atk.type, atk.active);
+    this.view.triggerAttack(atk, atk.active);
+
+    // 돌진기 — 판정이 켜지는 순간 앞으로 치고 나간다
+    if (atk.lunge) this.body.setVelocityX(this.facing * atk.lunge);
 
     // 투사체 공격이면 탄을 쏘고 근접 스윙은 그리지 않는다
     if (atk.projectile) {
@@ -889,18 +983,34 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       return;
     }
 
-    const cx = this.x + this.facing * (FIGHTER.BODY_W / 2 + atk.range / 2);
-    const cy = this.y - 6;
+    const area = this.computeHitArea(atk);
+    const color = this.cfg.colors.accent;
+    const ms = Math.max(120, atk.active);
 
+    switch (atk.fx ?? 'slash') {
+      case 'thrust':
+        this.fxThrust(area, color, ms);
+        break;
+      case 'rising':
+        this.fxRising(area, color, ms);
+        break;
+      case 'slam':
+        this.fxSlam(area, color, ms);
+        break;
+      case 'spin':
+        this.fxSpin(area, color, ms);
+        break;
+      default:
+        this.fxSlash(area, color, ms);
+    }
+  }
+
+  /* --- 기술별 스윙 이펙트 ------------------------------------------ */
+
+  /** 베기 — 앞으로 넓게 퍼지는 호 */
+  private fxSlash(a: HitArea, color: number, ms: number): void {
     const swing = this.scene.add
-      .ellipse(
-        cx,
-        cy,
-        atk.range * 1.1,
-        atk.hitHeight * 0.9,
-        this.cfg.colors.accent,
-        0.35,
-      )
+      .ellipse(a.cx, a.cy, a.w * 1.1, a.h * 0.9, color, 0.35)
       .setDepth(DEPTH.IMPACT);
 
     this.scene.tweens.add({
@@ -908,9 +1018,86 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       scaleX: 1.4,
       scaleY: 0.7,
       alpha: 0,
-      duration: Math.max(120, atk.active),
+      duration: ms,
       ease: 'Quad.easeOut',
       onComplete: () => swing.destroy(),
+    });
+  }
+
+  /** 찌르기 — 가늘고 길게 뻗는 선 */
+  private fxThrust(a: HitArea, color: number, ms: number): void {
+    const line = this.scene.add
+      .ellipse(this.x + this.facing * 20, a.cy, a.w * 0.5, a.h * 0.34, color, 0.5)
+      .setDepth(DEPTH.IMPACT);
+
+    this.scene.tweens.add({
+      targets: line,
+      x: a.cx + this.facing * a.w * 0.2,
+      scaleX: 2.2,
+      alpha: 0,
+      duration: ms,
+      ease: 'Quad.easeOut',
+      onComplete: () => line.destroy(),
+    });
+  }
+
+  /** 쳐올림 — 위로 솟구치는 기둥 */
+  private fxRising(a: HitArea, color: number, ms: number): void {
+    const column = this.scene.add
+      .ellipse(a.cx, a.cy + a.h * 0.3, a.w * 0.7, a.h * 0.6, color, 0.42)
+      .setDepth(DEPTH.IMPACT);
+
+    this.scene.tweens.add({
+      targets: column,
+      y: a.cy - a.h * 0.35,
+      scaleX: 0.6,
+      scaleY: 1.6,
+      alpha: 0,
+      duration: ms * 1.1,
+      ease: 'Cubic.easeOut',
+      onComplete: () => column.destroy(),
+    });
+  }
+
+  /** 내려찍기 — 지면을 따라 좌우로 퍼지는 납작한 링 */
+  private fxSlam(a: HitArea, color: number, ms: number): void {
+    for (const dir of [-1, 1]) {
+      const wave = this.scene.add
+        .ellipse(this.x, a.cy + a.h * 0.3, a.w * 0.25, a.h * 0.5)
+        .setDepth(DEPTH.IMPACT);
+      wave.isFilled = false;
+      wave.setStrokeStyle(5, color, 0.9);
+
+      this.scene.tweens.add({
+        targets: wave,
+        x: this.x + dir * a.w * 0.42,
+        scaleX: 2.6,
+        scaleY: 0.7,
+        alpha: 0,
+        duration: ms * 1.2,
+        ease: 'Cubic.easeOut',
+        onComplete: () => wave.destroy(),
+      });
+    }
+  }
+
+  /** 회전 — 몸 주위를 도는 링 */
+  private fxSpin(a: HitArea, color: number, ms: number): void {
+    const ring = this.scene.add
+      .ellipse(this.x, this.y, a.w * 0.5, a.h * 0.5)
+      .setDepth(DEPTH.IMPACT);
+    ring.isFilled = false;
+    ring.setStrokeStyle(5, color, 0.85);
+
+    this.scene.tweens.add({
+      targets: ring,
+      scaleX: 2.2,
+      scaleY: 1.6,
+      angle: 180 * this.facing,
+      alpha: 0,
+      duration: ms,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy(),
     });
   }
 

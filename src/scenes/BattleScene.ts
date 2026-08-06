@@ -18,7 +18,7 @@ import { ProjectileSystem } from '../systems/ProjectileSystem';
 import { sound } from '../systems/SoundSystem';
 import { StockSystem } from '../systems/StockSystem';
 import { StockTier } from '../types';
-import type { BattleSceneData } from '../types';
+import type { AttackDir, BattleSceneData } from '../types';
 
 /** HUD 한 칸(파이터 1명분) */
 interface FighterHud {
@@ -335,12 +335,20 @@ export class BattleScene extends Phaser.Scene {
     const kb = this.input.keyboard;
     if (!kb) return;
 
+    /*
+     * W는 점프가 아니라 "위" 방향키다.
+     *
+     * W+J / W+K 로 상단기를 내려면 W를 누른 채 버튼을 눌러야 하는데,
+     * W가 점프까지 겸하면 상단기를 낼 때마다 먼저 떠버려 지상 상단기를
+     * 낼 방법이 없어진다. 점프는 SPACE와 ↑ 로 나눴다.
+     */
     this.keys = kb.addKeys({
       left: Phaser.Input.Keyboard.KeyCodes.A,
       right: Phaser.Input.Keyboard.KeyCodes.D,
       up: Phaser.Input.Keyboard.KeyCodes.W,
       down: Phaser.Input.Keyboard.KeyCodes.S,
       jump: Phaser.Input.Keyboard.KeyCodes.SPACE,
+      jumpAlt: Phaser.Input.Keyboard.KeyCodes.UP,
       light: Phaser.Input.Keyboard.KeyCodes.J,
       heavy: Phaser.Input.Keyboard.KeyCodes.K,
       skill: Phaser.Input.Keyboard.KeyCodes.L,
@@ -369,11 +377,12 @@ export class BattleScene extends Phaser.Scene {
     const JustDown = Phaser.Input.Keyboard.JustDown;
     const left = this.keys.left!.isDown;
     const right = this.keys.right!.isDown;
+    const up = this.keys.up!.isDown;
+    const down = this.keys.down!.isDown;
     const onGround = p.body.blocked.down || p.body.touching.down;
 
-    /* S — 지상에서는 방어, 공중에서는 급강하 */
-    p.setGuard(this.keys.down!.isDown && onGround);
-    if (this.keys.down!.isDown && !onGround) p.fastFall();
+    /* 공격 방향 — 같은 버튼이라도 W/S를 함께 누르면 다른 기술이 나간다 */
+    const dir: AttackDir = up ? 'up' : down ? 'down' : 'neutral';
 
     /* A/D 더블탭 → 대시 */
     if (JustDown(this.keys.left!) && this.checkDoubleTap(-1)) p.dash(-1);
@@ -381,10 +390,19 @@ export class BattleScene extends Phaser.Scene {
 
     p.moveHorizontal(left && !right ? -1 : right && !left ? 1 : 0);
 
-    if (JustDown(this.keys.jump!) || JustDown(this.keys.up!)) p.jump();
-    if (JustDown(this.keys.light!)) p.attack('light');
-    if (JustDown(this.keys.heavy!)) p.attack('heavy');
+    if (JustDown(this.keys.jump!) || JustDown(this.keys.jumpAlt!)) p.jump();
+    if (JustDown(this.keys.light!)) p.attack('light', dir);
+    if (JustDown(this.keys.heavy!)) p.attack('heavy', dir);
     if (JustDown(this.keys.skill!)) this.castSkill(p);
+
+    /*
+     * S — 지상에서는 방어, 공중에서는 급강하.
+     *
+     * 공격 판정보다 뒤에 둬야 S+J/K 하단기가 방어에 막히지 않는다.
+     * (공격 중이면 setGuard가 스스로 방어를 걸지 않는다)
+     */
+    p.setGuard(down && onGround);
+    if (down && !onGround) p.fastFall();
   }
 
   /** 같은 방향키를 짧은 간격으로 두 번 눌렀는가 */
@@ -700,14 +718,28 @@ export class BattleScene extends Phaser.Scene {
       return obj;
     };
 
-    // 조작키 안내는 상단에 둔다 — 하단은 HUD 패널이 가득 차 겹친다
+    /*
+     * 조작키 안내는 상단에 둔다 — 하단은 HUD 패널이 가득 차 겹친다.
+     * 커맨드가 늘어나 한 줄에 담기지 않으므로 두 줄로 나눴다.
+     */
     ui(
       this.add
         .text(
           GAME.WIDTH / 2,
-          20,
-          'WASD 이동 · SPACE 점프(2단) · S 방어 · AA/DD 대시 · J 약공격 · K 강공격 · L 스킬 · P 일시정지 · R 재시작',
+          16,
+          'A/D 이동 · SPACE(↑) 점프(2단) · S 방어 · AA/DD 대시 · P 일시정지 · R 재시작',
           { fontFamily: GAME.FONT, fontSize: '13px', color: '#5d739f' },
+        )
+        .setOrigin(0.5),
+    );
+
+    ui(
+      this.add
+        .text(
+          GAME.WIDTH / 2,
+          34,
+          'J 약공격 · K 강공격 · L 스킬  ｜  W+J·W+K 상단기(띄우기) · S+J·S+K 하단기(광역) · 공중 S+J/K 급강하 찍기',
+          { fontFamily: GAME.FONT, fontSize: '13px', color: '#7f93bd' },
         )
         .setOrigin(0.5),
     );

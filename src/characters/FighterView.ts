@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
 import { FIGHTER, IMPACT } from '../config/gameConfig';
-import { SPRITE_SHEETS, animKey, metaKey } from '../config/spriteSheets';
+import { SPRITE_SHEETS, animKey, metaKey, resolvePose } from '../config/spriteSheets';
 import type { Pose, SheetMeta, SpriteSheetDef } from '../config/spriteSheets';
 import { ARM_X, buildFighterArt } from './CharacterArt';
 import type { FighterArt } from './CharacterArt';
-import type { AttackType, CharacterConfig } from '../types';
+import type { AttackConfig, CharacterConfig } from '../types';
 
 /**
  * 파이터의 겉모습을 담당하는 뷰.
@@ -23,8 +23,8 @@ export interface FighterView {
   setPose(pose: Pose): void;
   /** 시간 기반 모션 갱신 (도형 아트의 걷기 등) */
   update(time: number, onGround: boolean): void;
-  /** 공격 모션 트리거 */
-  triggerAttack(type: AttackType, durationMs: number): void;
+  /** 공격 모션 트리거 — 기술마다 팔이 다르게 움직인다 */
+  triggerAttack(atk: AttackConfig, durationMs: number): void;
   /** 피격 흰색 점멸 */
   flash(): void;
   /** 상장폐지 — 회색으로 식는다 */
@@ -68,20 +68,21 @@ class SpriteView implements FighterView {
   setPose(pose: Pose): void {
     if (pose === this.current) return;
 
-    // 시트에 없는 포즈는 idle로 대체
-    const frames = this.def.poses[pose] ?? this.def.poses.idle;
-    if (frames === undefined) return;
+    // 시트에 없는 포즈는 대체 사슬(상단기 → 기본 약공격 …)을 따라 내려간다
+    const resolved = resolvePose(this.def.poses, pose);
+    if (!resolved) return;
     this.current = pose;
 
-    if (typeof frames === 'number') {
+    if (typeof resolved.frames === 'number') {
       this.sprite.anims.stop();
-      this.sprite.setFrame(frames);
+      this.sprite.setFrame(resolved.frames);
       return;
     }
 
-    const key = animKey(this.def.key, pose);
+    // 애니메이션 키는 대체된 포즈 이름으로 등록되어 있다
+    const key = animKey(this.def.key, resolved.pose);
     if (this.scene.anims.exists(key)) this.sprite.play(key, true);
-    else this.sprite.setFrame(frames[0] ?? 0);
+    else this.sprite.setFrame(resolved.frames[0] ?? 0);
   }
 
   update(): void {
@@ -160,15 +161,42 @@ class ShapeView implements FighterView {
     armBack.y = this.armHomeY;
   }
 
-  /** 앞팔을 쭉 뻗었다 되돌린다 */
-  triggerAttack(type: AttackType, durationMs: number): void {
+  /**
+   * 앞팔을 뻗었다 되돌린다.
+   *
+   * 뻗는 방향은 히트박스 위치를 그대로 따라간다.
+   * 시트가 없는 캐릭터도 상단기·하단기·광역기가 눈으로 구분되어야
+   * 커맨드를 나눈 의미가 살아난다.
+   */
+  triggerAttack(atk: AttackConfig, durationMs: number): void {
     const arm = this.art.armFront;
+    const reach = atk.type === 'light' ? 20 : 30;
+
+    /* 히트박스가 놓이는 자리로 팔을 보낸다 */
+    let dx = reach;
+    let dy = -6;
+    switch (atk.hitAnchor ?? 'front') {
+      case 'up':
+        dx = reach * 0.35;
+        dy = -38;
+        break;
+      case 'down':
+        dx = reach * 1.15;
+        dy = 22;
+        break;
+      case 'around':
+        // 몸을 돌리는 기술 — 팔을 크게 벌린다
+        dx = reach * 1.3;
+        dy = 6;
+        break;
+    }
+
     this.scene.tweens.killTweensOf(arm);
     arm.setPosition(ARM_X, this.armHomeY);
     this.scene.tweens.add({
       targets: arm,
-      x: ARM_X + (type === 'light' ? 20 : 30),
-      y: this.armHomeY - 6,
+      x: ARM_X + dx,
+      y: this.armHomeY + dy,
       duration: Math.max(60, durationMs * 0.5),
       yoyo: true,
       ease: 'Quad.easeOut',

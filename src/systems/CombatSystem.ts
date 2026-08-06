@@ -326,9 +326,15 @@ export class CombatSystem {
     const dive = atk.divePlunge;
     if (!dive) return;
 
+    /*
+     * 같은 충격파 코드를 궁극기(로켓 드롭)와 공중 급강하가 함께 쓴다.
+     * 연출 강도를 고정하면 작은 급강하마저 화면이 뒤집히므로 범위에 비례시킨다.
+     */
+    const power = Phaser.Math.Clamp(dive.shockRange / 420, 0.4, 1);
+
     sound.play('hitHeavy');
-    this.applyHitstop(150);
-    this.scene.cameras.main.shake(280, 0.03);
+    this.applyHitstop(90 + 60 * power);
+    this.scene.cameras.main.shake(180 + 100 * power, 0.014 + 0.016 * power);
 
     const groundY = owner.y + FIGHTER.BODY_H / 2;
 
@@ -417,7 +423,7 @@ export class CombatSystem {
    * BattleScene이 스킬 사용 직후 호출한다.
    */
   onSkillCast(caster: BaseCharacter): void {
-    const skill = caster.cfg.skill;
+    const skill = caster.cfg.moves.skill;
     sound.play('skill');
 
     // 패니 와이즈맨 — 리츠고! : 주가를 걸고 도박한다
@@ -604,9 +610,15 @@ export class CombatSystem {
     this.dots.length = 0;
     this.combos.clear();
     this.fighters = [];
+
     if (this.hitstopActive) {
       this.hitstopActive = false;
-      this.scene.physics.world.resume();
+      /*
+       * 씬이 내려가는 중이라면 물리 월드는 이미 정리돼 null일 수 있다.
+       * 히트스탑 도중에 R로 재시작하면 실제로 그 순간을 밟는다 —
+       * 그대로 두면 재시작이 예외로 끝난다.
+       */
+      this.scene.physics?.world?.resume();
     }
   }
 }

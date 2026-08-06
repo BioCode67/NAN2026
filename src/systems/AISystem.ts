@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { STAGE } from '../config/gameConfig';
-import type { AIDifficulty, AIState } from '../types';
+import type { AIDifficulty, AIState, AttackDir } from '../types';
 import type { BaseCharacter } from '../characters/BaseCharacter';
 
 /** AI가 씬에 위임하는 동작 */
@@ -85,10 +85,10 @@ export class AISystem {
 
   private decideState(target: BaseCharacter): AIState {
     const dist = Math.abs(target.x - this.self.x);
-    const skill = this.self.cfg.skill;
+    const skill = this.self.cfg.moves.skill;
     // 투사체 스킬은 멀리서도 쓸 수 있다
     const skillRange = skill.projectile ? 520 : skill.range;
-    const reach = this.self.cfg.heavy.range;
+    const reach = this.self.cfg.moves.heavy.range;
 
     // 상대가 공격 모션에 들어갔고 사거리 안이면 회피를 시도한다
     if (
@@ -110,7 +110,7 @@ export class AISystem {
     }
 
     // 너무 멀면 추적
-    if (dist > this.self.cfg.light.range) {
+    if (dist > this.self.cfg.moves.light.range) {
       return 'CHASE';
     }
 
@@ -137,16 +137,19 @@ export class AISystem {
 
       case 'ATTACK': {
         // 사거리를 유지하며 미세 조정
-        if (dist > this.self.cfg.heavy.range) this.self.moveHorizontal(dir);
+        if (dist > this.self.cfg.moves.heavy.range) this.self.moveHorizontal(dir);
         else this.self.moveHorizontal(0);
 
         if (this.attackCooldown <= 0) {
-          const useHeavy =
-            Phaser.Math.FloatBetween(0, 1) < this.difficulty.heavyRatio;
-          const ok = this.self.attack(useHeavy ? 'heavy' : 'light');
-          if (ok) {
-            // 캐릭터마다 딜레이가 다르므로 자기 공격 데이터로 계산한다
-            const atk = useHeavy ? this.self.cfg.heavy : this.self.cfg.light;
+          const intent: 'light' | 'heavy' =
+            Phaser.Math.FloatBetween(0, 1) < this.difficulty.heavyRatio
+              ? 'heavy'
+              : 'light';
+          const atkDir = this.pickAttackDir(dy);
+
+          // 실제로 나갈 기술을 먼저 물어봐야 딜레이를 정확히 잴 수 있다
+          const atk = this.self.resolveMove(intent, atkDir);
+          if (this.self.attack(intent, atkDir)) {
             this.attackCooldown =
               atk.startup +
               atk.active +
@@ -184,6 +187,31 @@ export class AISystem {
         break;
       }
     }
+  }
+
+  /**
+   * 공격 방향을 고른다.
+   *
+   * 봇이 중립기만 계속 내면 커맨드 무브를 만든 의미가 플레이어 쪽에만 남는다.
+   * 상대 높이를 보고 상단기·하단기를 섞어, 맞는 쪽에서도 기술 종류가 느껴지게 한다.
+   *
+   * @param dy 상대 Y - 자기 Y (음수면 상대가 위에 있다)
+   */
+  private pickAttackDir(dy: number): AttackDir {
+    const onGround =
+      this.self.body.blocked.down || this.self.body.touching.down;
+
+    // 공중에서 상대가 아래에 있으면 급강하 찍기로 마무리를 노린다
+    if (!onGround) return dy > 40 ? 'down' : 'neutral';
+
+    // 상대가 머리 위에 있으면 상단기로 쳐올린다
+    if (dy < -70) return 'up';
+
+    // 그 외에는 중립기 위주로 두고 가끔 하단기를 섞는다
+    const roll = Phaser.Math.FloatBetween(0, 1);
+    if (roll < 0.22) return 'down';
+    if (roll < 0.34) return 'up';
+    return 'neutral';
   }
 
   /* ================================================================ */

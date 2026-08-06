@@ -101,6 +101,71 @@ export type AttackType = 'light' | 'heavy' | 'skill';
 /** 공격 상태 머신 단계 */
 export type AttackPhase = 'none' | 'startup' | 'active' | 'recovery';
 
+/**
+ * 공격 입력 방향.
+ *
+ * 같은 J/K라도 W(위)·S(아래)를 함께 누르면 다른 기술이 나간다.
+ * 캐릭터 한 명이 J·K·L 세 동작만 갖는 단조로움을 없애는 축이다.
+ */
+export type AttackDir = 'neutral' | 'up' | 'down';
+
+/**
+ * 커맨드 무브 슬롯 — 캐릭터 한 명이 가지는 기술 목록.
+ *
+ * 지상 6종(J/K × 중립·위·아래) + 공중 3종 + 시그니처 스킬.
+ * 슬롯 이름이 곧 입력 커맨드이므로, 새 캐릭터를 만들 때
+ * 이 열 칸만 채우면 기술 세트가 완성된다.
+ */
+export type MoveSlot =
+  /** J */
+  | 'light'
+  /** W + J */
+  | 'lightUp'
+  /** S + J */
+  | 'lightDown'
+  /** K */
+  | 'heavy'
+  /** W + K — 솟구치며 띄우는 상승기 */
+  | 'heavyUp'
+  /** S + K — 지면을 내려찍는 광역기 */
+  | 'heavyDown'
+  /** 공중 J */
+  | 'airLight'
+  /** 공중 K */
+  | 'airHeavy'
+  /** 공중 S + J/K — 내리꽂는 급강하 */
+  | 'airDive'
+  /** L */
+  | 'skill';
+
+/**
+ * 히트박스를 몸 기준 어디에 놓을지.
+ *
+ * 상단기·하단기가 같은 자리에 판정을 내면 커맨드를 나눈 의미가 없다.
+ */
+export type HitAnchor =
+  /** 전방 (기본) */
+  | 'front'
+  /** 머리 위 */
+  | 'up'
+  /** 발밑 전방 */
+  | 'down'
+  /** 몸 주변 전체 (광역) */
+  | 'around';
+
+/** 스윙 이펙트 모양 — 기술마다 다르게 보이도록 */
+export type SwingFx =
+  /** 찌르기 — 앞으로 뻗는 가는 선 */
+  | 'thrust'
+  /** 베기 — 호를 그리는 잔상 */
+  | 'slash'
+  /** 쳐올림 — 위로 솟는 기둥 */
+  | 'rising'
+  /** 내려찍기 — 지면을 따라 퍼지는 충격 */
+  | 'slam'
+  /** 회전 — 몸 주위를 도는 링 */
+  | 'spin';
+
 /** 시그니처 스킬 특수 효과 */
 export type SkillEffect =
   /** 추가 효과 없음 */
@@ -133,6 +198,8 @@ export interface ProjectileConfig {
 /** 하나의 공격 동작을 정의하는 데이터 */
 export interface AttackConfig {
   type: AttackType;
+  /** 어느 커맨드로 나가는 기술인가 */
+  slot: MoveSlot;
   /** 공격 이름 (UI/로그용) */
   name: string;
   /** 기본 피해량 = 피격자가 잃는 주가(%) */
@@ -149,6 +216,14 @@ export interface AttackConfig {
   range: number;
   /** 히트박스 세로 높이 */
   hitHeight: number;
+  /** 히트박스를 몸 기준 어디에 놓을지 (기본 front) */
+  hitAnchor?: HitAnchor;
+  /** 스윙 이펙트 모양 (기본 slash) */
+  fx?: SwingFx;
+  /** 판정이 켜지는 순간 앞으로 치고 나가는 속도 (돌진기) */
+  lunge?: number;
+  /** 발동 시 외치는 대사 — 캐릭터성을 드러내는 짧은 한마디 */
+  cry?: string;
 
   /** 넉백 수평 성분 */
   knockbackX: number;
@@ -170,11 +245,14 @@ export interface AttackConfig {
   effectValue?: number;
   /** 스킬 전용 — 효과 지속시간 (ms) */
   effectDuration?: number;
-  /** 스킬 전용 — 시전 시 자신이 튀어오르는 속도 (음수 = 위로) */
+  /** 시전 시 자신이 튀어오르는 속도 (음수 = 위로). 상승기·로켓 드롭이 쓴다 */
   selfLaunch?: number;
   /**
-   * 스킬 전용 — 솟구친 뒤 내리꽂는 낙하 공격.
-   * 착지 순간 지면에 광역 충격파가 생긴다. (로켓 드롭)
+   * 내리꽂는 낙하 공격.
+   * 착지 순간 지면에 광역 충격파가 생긴다.
+   *
+   * selfLaunch가 함께 있으면 "솟구쳤다가 정점에서 하강"(로켓 드롭),
+   * 없으면 즉시 하강한다(공중 급강하).
    */
   divePlunge?: {
     /** 하강 속도 */
@@ -266,12 +344,12 @@ export interface CharacterConfig {
   art: ArtConfig;
   passive: PassiveConfig;
   /**
-   * 기본 공격도 캐릭터마다 다르다.
-   * 속도형·리치형·한방형의 차이가 여기서 갈린다.
+   * 커맨드 무브 세트.
+   *
+   * 속도형·리치형·한방형의 차이뿐 아니라,
+   * "그 인물이라면 이렇게 싸울 것"이라는 캐릭터성이 여기서 갈린다.
    */
-  light: AttackConfig;
-  heavy: AttackConfig;
-  skill: AttackConfig;
+  moves: Record<MoveSlot, AttackConfig>;
   quotes: QuoteSet;
 }
 

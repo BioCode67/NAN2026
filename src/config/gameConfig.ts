@@ -1,6 +1,12 @@
 import Phaser from 'phaser';
 import { StockTier } from '../types';
-import type { AttackConfig, AIDifficulty, TierEffect } from '../types';
+import type {
+  AttackConfig,
+  AttackDir,
+  AIDifficulty,
+  MoveSlot,
+  TierEffect,
+} from '../types';
 
 /* ------------------------------------------------------------------ */
 /* 기본 상수                                                           */
@@ -219,53 +225,303 @@ export const FIGHTER = {
 } as const;
 
 /* ------------------------------------------------------------------ */
-/* 기본 공격 데이터                                                    */
+/* 커맨드 무브 템플릿                                                  */
 /* ------------------------------------------------------------------ */
 
-/** 약공격 (J) — 빠르고 가볍다 */
-export const LIGHT_ATTACK: AttackConfig = {
-  type: 'light',
-  name: '약공격',
-  damage: 10,
-  startup: 70,
-  active: 90,
-  recovery: 150,
-  range: 66,
-  hitHeight: 76,
-  knockbackX: 280,
-  knockbackY: -180,
-  hitstun: 220,
-  hitstop: 70,
-  shake: 0.008,
-};
-
-/** 강공격 (K) — 느리지만 강한 넉백 */
-export const HEAVY_ATTACK: AttackConfig = {
-  type: 'heavy',
-  name: '강공격',
-  damage: 18,
-  startup: 180,
-  active: 110,
-  recovery: 320,
-  range: 84,
-  hitHeight: 88,
-  knockbackX: 560,
-  knockbackY: -380,
-  hitstun: 400,
-  hitstop: 120,
-  shake: 0.016,
-};
-
 /**
- * 기본 공격 템플릿에서 캐릭터별 공격을 만든다.
- * 달라지는 값만 적으면 되므로 캐릭터 데이터가 짧아진다.
+ * 슬롯별 기본 성능.
+ *
+ * 캐릭터 데이터에는 "그 캐릭터에서 달라지는 값"만 적는다.
+ * 슬롯의 역할(상승기는 띄우고, 하단기는 낮게 넓게)은 여기서 한 번만 정의하므로,
+ * 캐릭터를 늘려도 각 커맨드의 손맛은 일관되게 유지된다.
  */
-export function melee(
-  type: 'light' | 'heavy',
+export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
+  /* --- 지상 약공격 계열 ------------------------------------------ */
+
+  /** J — 빠르고 가벼운 견제 */
+  light: {
+    type: 'light',
+    slot: 'light',
+    name: '약공격',
+    damage: 10,
+    startup: 70,
+    active: 90,
+    recovery: 150,
+    range: 66,
+    hitHeight: 76,
+    hitAnchor: 'front',
+    fx: 'thrust',
+    knockbackX: 280,
+    knockbackY: -180,
+    hitstun: 220,
+    hitstop: 70,
+    shake: 0.008,
+  },
+
+  /** W+J — 대공. 위로 쳐올려 콤보를 시작한다 */
+  lightUp: {
+    type: 'light',
+    slot: 'lightUp',
+    name: '상단 견제',
+    damage: 9,
+    startup: 92,
+    active: 100,
+    recovery: 190,
+    range: 72,
+    hitHeight: 104,
+    hitAnchor: 'up',
+    fx: 'rising',
+    // 수평 넉백을 죽이고 위로만 띄운다 — 띄운 뒤 쫓아가는 맛
+    knockbackX: 130,
+    knockbackY: -540,
+    hitstun: 300,
+    hitstop: 80,
+    shake: 0.01,
+  },
+
+  /** S+J — 저공. 리치가 길지만 띄우지 못한다 */
+  lightDown: {
+    type: 'light',
+    slot: 'lightDown',
+    name: '하단 견제',
+    damage: 8,
+    startup: 84,
+    active: 90,
+    recovery: 200,
+    range: 92,
+    hitHeight: 46,
+    hitAnchor: 'down',
+    fx: 'slash',
+    knockbackX: 330,
+    knockbackY: -110,
+    hitstun: 250,
+    hitstop: 70,
+    shake: 0.008,
+  },
+
+  /* --- 지상 강공격 계열 ------------------------------------------ */
+
+  /** K — 느리지만 강한 넉백 */
+  heavy: {
+    type: 'heavy',
+    slot: 'heavy',
+    name: '강공격',
+    damage: 18,
+    startup: 180,
+    active: 110,
+    recovery: 320,
+    range: 84,
+    hitHeight: 88,
+    hitAnchor: 'front',
+    fx: 'slash',
+    knockbackX: 560,
+    knockbackY: -380,
+    hitstun: 400,
+    hitstop: 120,
+    shake: 0.016,
+  },
+
+  /**
+   * W+K — 상승기.
+   * 자신도 함께 솟구치므로, 대공이자 공중 콤보 진입기가 된다.
+   */
+  heavyUp: {
+    type: 'heavy',
+    slot: 'heavyUp',
+    name: '상승 강타',
+    damage: 17,
+    startup: 150,
+    active: 150,
+    recovery: 380,
+    range: 78,
+    hitHeight: 132,
+    hitAnchor: 'up',
+    fx: 'rising',
+    knockbackX: 180,
+    knockbackY: -780,
+    hitstun: 460,
+    hitstop: 130,
+    shake: 0.018,
+    selfLaunch: -540,
+  },
+
+  /** S+K — 지면 내려찍기. 좌우 양쪽을 함께 친다 */
+  heavyDown: {
+    type: 'heavy',
+    slot: 'heavyDown',
+    name: '내려찍기',
+    damage: 20,
+    startup: 215,
+    active: 130,
+    recovery: 400,
+    range: 152,
+    hitHeight: 60,
+    hitAnchor: 'around',
+    fx: 'slam',
+    knockbackX: 420,
+    knockbackY: -540,
+    hitstun: 440,
+    hitstop: 145,
+    shake: 0.022,
+  },
+
+  /* --- 공중 --------------------------------------------------------- */
+
+  /** 공중 J — 빠른 견제. 착지 전에 한 번 더 끼워 넣는 용도 */
+  airLight: {
+    type: 'light',
+    slot: 'airLight',
+    name: '공중 견제',
+    damage: 9,
+    startup: 58,
+    active: 110,
+    recovery: 130,
+    range: 74,
+    hitHeight: 86,
+    hitAnchor: 'front',
+    fx: 'slash',
+    knockbackX: 300,
+    knockbackY: -240,
+    hitstun: 240,
+    hitstop: 70,
+    shake: 0.008,
+  },
+
+  /** 공중 K — 몸을 돌려 주변을 훑는다 */
+  airHeavy: {
+    type: 'heavy',
+    slot: 'airHeavy',
+    name: '공중 회전',
+    damage: 16,
+    startup: 135,
+    active: 160,
+    recovery: 250,
+    range: 118,
+    hitHeight: 100,
+    hitAnchor: 'around',
+    fx: 'spin',
+    knockbackX: 520,
+    knockbackY: -300,
+    hitstun: 380,
+    hitstop: 120,
+    shake: 0.016,
+  },
+
+  /**
+   * 공중 S+J/K — 급강하 찍기.
+   *
+   * 넉백 Y가 양수라 상대를 아래로 처박는다(스파이크).
+   * 장외가 곧 상장폐지인 이 게임에서 가장 위험한 마무리기다.
+   */
+  airDive: {
+    type: 'heavy',
+    slot: 'airDive',
+    name: '급강하 찍기',
+    damage: 19,
+    startup: 110,
+    active: 460,
+    recovery: 300,
+    range: 86,
+    hitHeight: 104,
+    hitAnchor: 'around',
+    fx: 'slam',
+    knockbackX: 240,
+    knockbackY: 420,
+    hitstun: 420,
+    hitstop: 150,
+    shake: 0.02,
+    divePlunge: {
+      speed: 1280,
+      shockRange: 210,
+      shockDamage: 10,
+    },
+  },
+
+  /* --- 시그니처 스킬 ------------------------------------------------ */
+
+  /** L — 캐릭터마다 완전히 다르므로 템플릿은 뼈대만 준다 */
+  skill: {
+    type: 'skill',
+    slot: 'skill',
+    name: '시그니처',
+    damage: 24,
+    startup: 250,
+    active: 150,
+    recovery: 400,
+    range: 110,
+    hitHeight: 96,
+    hitAnchor: 'front',
+    fx: 'slash',
+    knockbackX: 600,
+    knockbackY: -440,
+    hitstun: 480,
+    hitstop: 140,
+    shake: 0.018,
+    cooldown: 10000,
+    effect: 'none',
+  },
+};
+
+/** 커맨드 안내에 쓰는 슬롯 순서 + 입력 표기 */
+export const MOVE_COMMANDS: Array<{ slot: MoveSlot; keys: string }> = [
+  { slot: 'light', keys: 'J' },
+  { slot: 'lightUp', keys: 'W+J' },
+  { slot: 'lightDown', keys: 'S+J' },
+  { slot: 'heavy', keys: 'K' },
+  { slot: 'heavyUp', keys: 'W+K' },
+  { slot: 'heavyDown', keys: 'S+K' },
+  { slot: 'airLight', keys: '공중 J' },
+  { slot: 'airHeavy', keys: '공중 K' },
+  { slot: 'airDive', keys: '공중 S+K' },
+  { slot: 'skill', keys: 'L' },
+];
+
+const MOVE_SLOTS = MOVE_COMMANDS.map((c) => c.slot);
+
+/** 슬롯 템플릿에 캐릭터별 차이만 얹어 기술 하나를 만든다 */
+export function move(
+  slot: MoveSlot,
   over: Partial<AttackConfig> & { name: string },
 ): AttackConfig {
-  const base = type === 'light' ? LIGHT_ATTACK : HEAVY_ATTACK;
-  return { ...base, ...over, type };
+  const base = MOVE_TEMPLATES[slot];
+  // slot/type은 템플릿이 결정한다 — 캐릭터 데이터가 잘못 덮어쓰지 못하게
+  return { ...base, ...over, slot, type: base.type };
+}
+
+/**
+ * 캐릭터의 기술 세트를 만든다.
+ *
+ * 적지 않은 슬롯은 템플릿 그대로 채워지므로, 캐릭터를 추가할 때
+ * "이 인물답게 달라지는 기술"만 쓰면 나머지 칸이 비지 않는다.
+ */
+export function moveSet(
+  over: Partial<Record<MoveSlot, Partial<AttackConfig> & { name: string }>>,
+): Record<MoveSlot, AttackConfig> {
+  const out = {} as Record<MoveSlot, AttackConfig>;
+  for (const slot of MOVE_SLOTS) {
+    out[slot] = move(slot, over[slot] ?? { name: MOVE_TEMPLATES[slot].name });
+  }
+  return out;
+}
+
+/**
+ * 입력(약/강 + 방향 + 지상/공중)을 슬롯으로 바꾼다.
+ *
+ * 공중에서 아래를 누르면 약·강 어느 쪽이든 급강하로 모은다.
+ * 마무리기를 외우기 쉬워야 실제로 쓰이기 때문이다.
+ */
+export function resolveMoveSlot(
+  intent: 'light' | 'heavy',
+  dir: AttackDir,
+  onGround: boolean,
+): MoveSlot {
+  if (!onGround) {
+    if (dir === 'down') return 'airDive';
+    return intent === 'light' ? 'airLight' : 'airHeavy';
+  }
+  if (dir === 'up') return intent === 'light' ? 'lightUp' : 'heavyUp';
+  if (dir === 'down') return intent === 'light' ? 'lightDown' : 'heavyDown';
+  return intent;
 }
 
 /* ------------------------------------------------------------------ */

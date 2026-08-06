@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { buildFighterArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
-import { DEPTH, GAME } from '../config/gameConfig';
+import { DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import type { BattleSceneData, CharacterConfig, CharacterId } from '../types';
 
@@ -36,6 +36,7 @@ export class SelectScene extends Phaser.Scene {
   private taglineText!: Phaser.GameObjects.Text;
   private passiveText!: Phaser.GameObjects.Text;
   private skillText!: Phaser.GameObjects.Text;
+  private movesText!: Phaser.GameObjects.Text;
   private quoteText!: Phaser.GameObjects.Text;
 
   constructor() {
@@ -186,8 +187,9 @@ export class SelectScene extends Phaser.Scene {
   private buildInfoPanel(): void {
     const panelY = 500;
 
+    // 커맨드 목록까지 들어가므로 패널을 아래로 늘렸다
     this.add
-      .rectangle(GAME.WIDTH / 2, panelY + 46, 980, 132, 0x141c33, 0.85)
+      .rectangle(GAME.WIDTH / 2, panelY + 66, 980, 172, 0x141c33, 0.85)
       .setStrokeStyle(2, 0x2f3f6b)
       .setDepth(DEPTH.HUD - 1);
 
@@ -223,6 +225,21 @@ export class SelectScene extends Phaser.Scene {
         fontSize: '14px',
         color: '#cbd5e1',
         wordWrap: { width: 900 },
+      })
+      .setDepth(DEPTH.HUD);
+
+    /*
+     * 커맨드 목록.
+     * 캐릭터마다 기술 이름이 전부 다르므로, 여기서 미리 보여주지 않으면
+     * 플레이어가 W+K / S+K 같은 입력이 있다는 사실 자체를 모른 채 끝난다.
+     */
+    this.movesText = this.add
+      .text(GAME.WIDTH / 2 - 460, panelY + 114, '', {
+        fontFamily: GAME.FONT,
+        fontSize: '13px',
+        color: '#8fa6d8',
+        wordWrap: { width: 940 },
+        lineSpacing: 4,
       })
       .setDepth(DEPTH.HUD);
 
@@ -318,11 +335,21 @@ export class SelectScene extends Phaser.Scene {
     this.nameText.setText(cfg.name);
     this.taglineText.setText(`"${cfg.tagline}"`);
     this.passiveText.setText(`[패시브] ${cfg.passive.name} — ${cfg.passive.desc}`);
+    const skill = cfg.moves.skill;
     this.skillText.setText(
-      `[스킬 L] ${cfg.skill.name} — 피해 ${cfg.skill.damage}% · 쿨다운 ${(
-        (cfg.skill.cooldown ?? 0) / 1000
+      `[스킬 L] ${skill.name} — 피해 ${skill.damage}% · 쿨다운 ${(
+        (skill.cooldown ?? 0) / 1000
       ).toFixed(0)}초`,
     );
+
+    // 스킬은 위 줄에서 이미 설명했으므로 커맨드 목록에서는 뺀다
+    this.movesText.setText(
+      '[커맨드] ' +
+        MOVE_COMMANDS.filter((c) => c.slot !== 'skill')
+          .map((c) => `${c.keys} ${cfg.moves[c.slot].name}`)
+          .join('  ·  '),
+    );
+
     this.quoteText.setText(`“${cfg.quotes.intro[0] ?? ''}”`);
   }
 

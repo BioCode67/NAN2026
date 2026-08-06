@@ -5,6 +5,8 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    /* import.meta.env (Vite가 주입하는 DEV/PROD 플래그) 타입 */
+    "types": ["vite/client"],
 
     /* 엄격 모드 */
     "strict": true,

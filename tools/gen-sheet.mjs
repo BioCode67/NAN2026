@@ -6,10 +6,15 @@
  * docs/art-spec.md 의 규격과 캐릭터별 무기·엽기 포인트가 코드로 들어가 있어
  * 매번 프롬프트를 다시 쓰지 않아도 된다.
  *
- * 준비:
- *   https://aistudio.google.com/apikey 에서 키 발급 후
- *   Windows PowerShell:  $env:GEMINI_API_KEY = "발급받은키"
- *   bash:                export GEMINI_API_KEY=발급받은키
+ * 준비 — https://aistudio.google.com/apikey 에서 키를 발급받아 둘 중 하나로 전달한다.
+ *
+ *   (A) 프로젝트 루트에 .env.local 파일 (권장)
+ *         GEMINI_API_KEY=발급받은키
+ *       .gitignore에 걸려 있어 커밋되지 않는다.
+ *
+ *   (B) 환경변수
+ *         PowerShell:  $env:GEMINI_API_KEY = "발급받은키"
+ *         bash:        export GEMINI_API_KEY=발급받은키
  *
  * 사용법:
  *   node tools/gen-sheet.mjs gates          # 생성 + 전처리까지
@@ -24,8 +29,41 @@
  * 생성이 마음에 안 들면 그냥 다시 돌리면 된다. 같은 프롬프트라도 매번 다르게 나온다.
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+
+/**
+ * .env.local 에서 키를 읽는다.
+ *
+ * 셸 환경변수는 터미널을 새로 열 때마다 다시 넣어야 하고,
+ * 명령줄에 직접 적으면 키가 셸 기록에 남는다. 파일 쪽이 안전하다.
+ * 의존성을 늘리지 않으려고 필요한 만큼만 직접 파싱한다.
+ */
+function loadEnvFile(file = '.env.local') {
+  if (!existsSync(file)) return;
+
+  for (const raw of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    // 따옴표로 감싼 값 허용
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    // 이미 셸에 있는 값이 우선
+    if (key && process.env[key] === undefined) process.env[key] = val;
+  }
+}
+
+loadEnvFile();
 
 /* ------------------------------------------------------------------ */
 /* 캐릭터 정의 — 무기는 실제 전투 수치(리치·발동속도·위력)와 맞췄다      */
@@ -188,10 +226,11 @@ if (!ids.length) {
 const apiKey = process.env.GEMINI_API_KEY;
 if (!dry && !apiKey) {
   console.error(
-    'GEMINI_API_KEY 가 없습니다.\n' +
-      '  https://aistudio.google.com/apikey 에서 발급 후\n' +
-      '  PowerShell:  $env:GEMINI_API_KEY = "키"\n' +
-      '  bash:        export GEMINI_API_KEY=키\n\n' +
+    'GEMINI_API_KEY 가 없습니다.\n\n' +
+      '  1) https://aistudio.google.com/apikey 에서 키 발급\n' +
+      '  2) 프로젝트 루트에 .env.local 파일을 만들고 아래 한 줄:\n' +
+      '       GEMINI_API_KEY=발급받은키\n\n' +
+      '  (.gitignore에 걸려 있어 커밋되지 않습니다)\n\n' +
       '키 없이 프롬프트만 보려면 --dry 를 붙이세요.',
   );
   process.exit(1);

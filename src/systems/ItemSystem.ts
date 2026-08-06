@@ -194,6 +194,8 @@ export class ItemSystem {
 
   private grant(fighter: BaseCharacter, cfg: ItemConfig, time: number): void {
     sound.play('gambleWin');
+    // 집어드는 동작을 짧게 보여준다 — 아이템이 그냥 사라지면 주웠는지도 모른다
+    fighter.playItemGet();
 
     /*
      * 폭탄 — 획득이 아니라 사고다.

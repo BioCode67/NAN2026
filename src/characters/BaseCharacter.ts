@@ -165,6 +165,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private wasOnGround = true;
   /** 착지 포즈가 유지되는 시각 */
   private landUntil = 0;
+  /** 아이템을 집어드는 포즈가 유지되는 시각 */
+  private itemGetUntil = 0;
+  /** 프롬프트 시전 포즈가 유지되는 시각 */
+  private promptUntil = 0;
+  /** 도발 포즈가 유지되는 시각 */
+  private tauntUntil = 0;
+  /** 방어가 깨져 기절한 시각까지 */
+  private dizzyUntil = 0;
   /** 착지 스쿼시 판정을 위한 최대 낙하속도 기록 */
   private fallSpeed = 0;
   private lastSayAt = 0;
@@ -350,6 +358,56 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.pulseSquash(scale > 1 ? 0.8 : 1.2, scale > 1 ? 1.25 : 0.85, 260);
   }
 
+  /**
+   * 아이템을 집어드는 순간의 포즈.
+   * 짧게만 보여주고, 이후에는 들고 있는 포즈(itemHold)로 넘어간다.
+   */
+  playItemGet(): void {
+    this.itemGetUntil = this.scene.time.now + 320;
+    this.pulseSquash(1.16, 0.86, 200);
+  }
+
+  /** 프롬프트 오브를 깨고 외치는 포즈 */
+  playPromptCast(): void {
+    this.promptUntil = this.scene.time.now + 1600;
+    this.pulseSquash(0.82, 1.24, 300);
+  }
+
+  /** 도발 (T) — 성능은 없고 캐릭터성만 있는 동작 */
+  taunt(): boolean {
+    if (!this.canAct()) return false;
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    if (!onGround) return false;
+
+    this.tauntUntil = this.scene.time.now + 700;
+    this.body.setVelocityX(0);
+    this.pulseSquash(0.9, 1.14, 260);
+    this.say(this.pickQuote('surge'), this.cfg.colors.accent);
+    return true;
+  }
+
+  /**
+   * 방어가 깨진다.
+   *
+   * 방어로 버티기만 하는 플레이를 막는 장치다. 기절 중에는 아무것도 못 하고,
+   * 그림도 눈이 도는 전용 포즈로 바뀌어 "지금 무방비"라는 걸 상대도 안다.
+   */
+  breakGuard(): void {
+    if (!this.alive) return;
+
+    this.guarding = false;
+    this.dizzyUntil = this.scene.time.now + 1100;
+    this.stunUntil = this.dizzyUntil;
+    this.body.setVelocityX(0);
+    this.pulseSquash(1.3, 0.74, 320);
+    sound.play('gambleLose');
+  }
+
+  /** 기절 중인가 */
+  isDizzy(): boolean {
+    return this.scene.time.now < this.dizzyUntil;
+  }
+
   /** 전투 승리 — 승리 포즈로 고정한다 */
   showVictory(): void {
     if (!this.alive) return;
@@ -380,6 +438,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 지금 이 입력이 어떤 기술로 나가는가 (AI가 딜레이를 계산할 때도 쓴다) */
   resolveMove(intent: 'light' | 'heavy', dir: AttackDir): AttackConfig {
     const onGround = this.body.blocked.down || this.body.touching.down;
+    const dashing = this.scene.time.now < this.dashUntil;
 
     // 직전 타의 여운이 남아 있으면 1타가 아니라 다음 타로 이어진다
     if (
@@ -392,7 +451,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       return this.cfg.moves[this.chainNext];
     }
 
-    return this.cfg.moves[resolveMoveSlot(intent, dir, onGround)];
+    return this.cfg.moves[resolveMoveSlot(intent, dir, onGround, dashing)];
   }
 
   /**
@@ -667,6 +726,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     // 맞으면 연속기는 끊긴다. 이어치기가 공짜가 되지 않게 하는 안전장치다
     this.chainNext = null;
     this.chainBuffered = 0;
+    // 연출 포즈도 끊는다 — 맞는 중에 도발 자세로 서 있으면 안 된다
+    this.tauntUntil = 0;
+    this.promptUntil = 0;
 
     this.flash();
     this.pulseSquash(IMPACT.SQUASH_X, IMPACT.SQUASH_Y, IMPACT.SQUASH_MS);
@@ -1081,6 +1143,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     const now = this.scene.time.now;
 
+    // 방어가 깨진 기절은 일반 경직보다 우선한다 (무방비 상태를 확실히 보여준다)
+    if (now < this.dizzyUntil) return 'dizzy';
+
     /*
      * 경직 중 — 공중이면 공중 피격, 지상에서 크게 날아가면 넉백, 아니면 피격.
      * 연속기로 띄운 뒤의 공중 피격이 잦아져서 전용 포즈를 나눴다.
@@ -1091,6 +1156,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
         Math.abs(this.body.velocity.x) > 420 || this.body.velocity.y < -320;
       return flung ? 'knockback' : 'hit';
     }
+
+    // 프롬프트 시전·도발은 전투 동작이 아니라 연출이라 공격보다 앞에 둔다
+    if (now < this.promptUntil) return 'promptCast';
+    if (now < this.tauntUntil) return 'taunt';
 
     if (this.guarding && onGround) return 'guard';
 
@@ -1105,11 +1174,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 착지 직후 짧게 무릎을 굽히는 자세 (스쿼시만으로는 무게가 덜 실린다)
     if (now < this.landUntil) return 'land';
+    if (now < this.itemGetUntil) return 'itemGet';
 
     const vx = Math.abs(this.body.velocity.x);
     if (vx > this.cfg.stats.speed * 0.75) return 'run';
     if (vx > 40) return 'walk';
-    return 'idle';
+
+    // 아이템을 들고 있으면 손에 쥔 대기 자세로 서 있는다
+    return this.item ? 'itemHold' : 'idle';
   }
 
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */

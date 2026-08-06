@@ -410,6 +410,16 @@ export class CombatSystem {
       Math.max(1, baseDamage),
     );
 
+    /*
+     * 방어 파괴 — 마무리 타를 방어로 받으면 가드가 깨진다.
+     * 방어로 버티기만 하는 플레이에 대가를 붙이고,
+     * 연속기 마무리에 "뚫는다"는 역할을 하나 더 준다.
+     */
+    if (guarded && atk.finisher) {
+      target.breakGuard();
+      this.floatText(target.x, hitY - 76, 'GUARD BREAK!', '#f97316');
+    }
+
     /* 7) 데미지 플로팅 */
     if (guarded) this.floatText(target.x, hitY - 54, 'GUARD!', '#93c5fd');
     this.floatText(hitX, hitY - 30, `-${result.damage}%`, '#ff5a5a');

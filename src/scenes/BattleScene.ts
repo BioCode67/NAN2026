@@ -397,6 +397,7 @@ export class BattleScene extends Phaser.Scene {
       light: Phaser.Input.Keyboard.KeyCodes.J,
       heavy: Phaser.Input.Keyboard.KeyCodes.K,
       skill: Phaser.Input.Keyboard.KeyCodes.L,
+      taunt: Phaser.Input.Keyboard.KeyCodes.T,
     }) as Record<string, Phaser.Input.Keyboard.Key>;
 
     // 스페이스바로 페이지가 스크롤되지 않도록 캡처
@@ -442,6 +443,7 @@ export class BattleScene extends Phaser.Scene {
     if (JustDown(this.keys.light!)) p.attack('light', dir);
     if (JustDown(this.keys.heavy!)) p.attack('heavy', dir);
     if (JustDown(this.keys.skill!)) this.castSkill(p);
+    if (JustDown(this.keys.taunt!)) p.taunt();
 
     /*
      * S — 지상에서는 방어, 공중에서는 급강하.
@@ -648,6 +650,7 @@ export class BattleScene extends Phaser.Scene {
     this.prompting = true;
 
     const accent = `#${breaker.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+    breaker.playPromptCast();
     let text: string;
 
     if (breaker.side === 'player') {
@@ -826,7 +829,7 @@ export class BattleScene extends Phaser.Scene {
         .text(
           GAME.WIDTH / 2,
           16,
-          'A/D 이동 · SPACE(↑) 점프(2단) · S 방어 · AA/DD 대시 · P 일시정지 · R 재시작',
+          'A/D 이동 · SPACE(↑) 점프(2단) · S 방어 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
           { fontFamily: GAME.FONT, fontSize: '13px', color: '#5d739f' },
         )
         .setOrigin(0.5),
@@ -837,7 +840,7 @@ export class BattleScene extends Phaser.Scene {
         .text(
           GAME.WIDTH / 2,
           34,
-          'J 약공격 · K 강공격 · L 스킬  ｜  W+J·W+K 상단기(띄우기) · S+J·S+K 하단기(광역) · 공중 S+J/K 급강하 찍기',
+          'J 약공격(JJJ 연속기) · K 강공격(KK) · L 스킬  ｜  W+J·W+K 상단기 · S+J·S+K 하단기 · 대시 중 J/K 돌진 · 공중 S+J/K 급강하',
           { fontFamily: GAME.FONT, fontSize: '13px', color: '#7f93bd' },
         )
         .setOrigin(0.5),

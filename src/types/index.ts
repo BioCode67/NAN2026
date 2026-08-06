@@ -125,6 +125,8 @@ export type MoveSlot =
   | 'light3'
   /** K 2타 — 마무리. 멀리 날린다 */
   | 'heavy2'
+  /** 대시 중 J/K — 달리던 기세를 실어 부딪친다 */
+  | 'dashAttack'
   /** W + J */
   | 'lightUp'
   /** S + J */

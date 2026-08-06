@@ -452,6 +452,32 @@ export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
     shake: 0.022,
   },
 
+  /**
+   * 대시 중 J/K — 돌진 공격.
+   *
+   * 대시에 공격을 붙이면 "거리를 좁히는 행동"과 "때리는 행동"이 하나가 된다.
+   * 대신 후딜이 길어 헛치면 크게 손해다.
+   */
+  dashAttack: {
+    type: 'heavy',
+    slot: 'dashAttack',
+    name: '돌진 공격',
+    damage: 16,
+    startup: 105,
+    active: 150,
+    recovery: 340,
+    range: 96,
+    hitHeight: 84,
+    hitAnchor: 'front',
+    fx: 'thrust',
+    lunge: 620,
+    knockbackX: 640,
+    knockbackY: -330,
+    hitstun: 400,
+    hitstop: 125,
+    shake: 0.018,
+  },
+
   /* --- 공중 --------------------------------------------------------- */
 
   /** 공중 J — 빠른 견제. 착지 전에 한 번 더 끼워 넣는 용도 */
@@ -555,6 +581,7 @@ export const MOVE_COMMANDS: Array<{ slot: MoveSlot; keys: string }> = [
   { slot: 'lightUp', keys: 'W+J' },
   { slot: 'lightDown', keys: 'S+J' },
   { slot: 'heavy', keys: 'K' },
+  { slot: 'dashAttack', keys: '대시 중 J/K' },
   { slot: 'heavyUp', keys: 'W+K' },
   { slot: 'heavyDown', keys: 'S+K' },
   { slot: 'airLight', keys: '공중 J' },
@@ -624,11 +651,19 @@ export function resolveMoveSlot(
   intent: 'light' | 'heavy',
   dir: AttackDir,
   onGround: boolean,
+  dashing = false,
 ): MoveSlot {
   if (!onGround) {
     if (dir === 'down') return 'airDive';
     return intent === 'light' ? 'airLight' : 'airHeavy';
   }
+  /*
+   * 대시 중에는 방향과 무관하게 돌진 공격이 나간다.
+   * 대시하면서 방향키를 함께 잡고 있는 일이 잦은데, 그때마다 상단기가 나가면
+   * "달려가서 쳤는데 엉뚱한 게 나온다"가 된다.
+   */
+  if (dashing) return 'dashAttack';
+
   if (dir === 'up') return intent === 'light' ? 'lightUp' : 'heavyUp';
   if (dir === 'down') return intent === 'light' ? 'lightDown' : 'heavyDown';
   return intent;

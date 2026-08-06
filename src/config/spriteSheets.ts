@@ -5,27 +5,44 @@ import type { CharacterId, MoveSlot } from '../types';
  * BaseCharacter가 매 프레임 자신의 상태에서 이 값을 계산해 뷰에 넘긴다.
  */
 export type Pose =
+  /* 이동 */
   | 'idle'
   | 'walk'
   | 'run'
   | 'dash'
+  /* 공중 */
   | 'jump'
   | 'fall'
   | 'land'
   | 'airJ'
   | 'airK'
   | 'dive'
+  /* 지상 연속기 */
   | 'attackJ'
   | 'attackJ2'
   | 'attackJ3'
   | 'attackK'
   | 'attackK2'
+  | 'dashAttack'
+  /* 방향 커맨드 */
   | 'attackJUp'
   | 'attackJDown'
   | 'attackKUp'
   | 'attackKDown'
+  /* 스킬 · 프롬프트 */
+  | 'skillCharge'
   | 'skill'
+  | 'promptCast'
+  /* 아이템 */
+  | 'itemGet'
+  | 'itemHold'
+  | 'itemThrow'
+  | 'itemSwing'
+  /* 상태 · 결과 */
   | 'guard'
+  | 'dizzy'
+  | 'taunt'
+  | 'down'
   | 'hit'
   | 'hitAir'
   | 'knockback'
@@ -39,6 +56,7 @@ export const MOVE_POSE: Record<MoveSlot, Pose> = {
   light3: 'attackJ3',
   heavy: 'attackK',
   heavy2: 'attackK2',
+  dashAttack: 'dashAttack',
   lightUp: 'attackJUp',
   lightDown: 'attackJDown',
   heavyUp: 'attackKUp',
@@ -70,9 +88,21 @@ export const POSE_FALLBACK: Partial<Record<Pose, Pose>> = {
   attackKDown: 'attackK',
   airK: 'attackK',
   dive: 'attackK',
-  // 이동/피격
+  dashAttack: 'attackK',
+  // 스킬 · 프롬프트
+  skillCharge: 'skill',
+  promptCast: 'win',
+  // 아이템 — 없으면 그냥 서 있는 그림으로 떨어진다
+  itemGet: 'idle',
+  itemHold: 'idle',
+  itemThrow: 'attackJ',
+  itemSwing: 'attackK',
+  // 상태 · 이동
   fall: 'jump',
   land: 'idle',
+  taunt: 'win',
+  dizzy: 'hit',
+  down: 'lose',
   hitAir: 'knockback',
 };
 
@@ -125,6 +155,10 @@ export interface SpriteSheetDef {
    * 로켓 드롭 착지 폭발처럼 캐릭터와 분리해 쓰는 연출에 사용한다.
    */
   explosionFrame?: number;
+  /** 프롬프트 오브를 깬 순간에 띄우는 이펙트 프레임 */
+  promptFrame?: number;
+  /** 얼굴만 그린 초상 프레임 — HUD·선택 화면에 쓴다 */
+  portraitFrame?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -213,6 +247,89 @@ export const LAYOUT_V2: Partial<Record<Pose, PoseFrames>> = {
 
 /** V2에서 캐릭터 없이 이펙트만 그려진 프레임 (충격파·투사체용) */
 export const LAYOUT_V2_FX_FRAME = 24;
+
+/**
+ * V3 — 7행 x 6열, 42프레임. **지금 뽑는 시트는 전부 이 규격이다.**
+ *
+ * 커맨드·연속기에 더해 아이템을 쥔 손, 프롬프트 시전, 도발, 기절까지 담는다.
+ * tools/gen-prompts.mjs 가 이 순서 그대로 6장씩 7묶음의 프롬프트를 만들고,
+ * tools/merge-sheets.mjs 가 받은 묶음들을 이 격자로 합친다.
+ *
+ * 한 장에 42칸을 그리게 하면 뒤로 갈수록 그림이 무너지므로,
+ * **묶음이 곧 행**이 되도록 배치했다. 묶음 하나를 다시 뽑으면 그 행만 갈린다.
+ *
+ *   1행 이동: IDLE, WALK, RUN_A, RUN_B, RUN_C, DASH
+ *   2행 공중: JUMP, FALL, LAND, AIR_J, AIR_K, AIR_DIVE
+ *   3행 연속기: ATTACK_J, ATTACK_J2, ATTACK_J3, ATTACK_K, ATTACK_K2, DASH_ATTACK
+ *   4행 방향기: ATTACK_J_UP, ATTACK_J_DOWN, ATTACK_K_UP, ATTACK_K_DOWN, GUARD, DIZZY
+ *   5행 스킬: SKILL_CHARGE, SKILL_L, SKILL_L2, SKILL_FX, PROMPT_CAST, PROMPT_FX
+ *   6행 아이템: ITEM_GET, ITEM_HOLD, ITEM_THROW, ITEM_SWING, TAUNT, DOWN
+ *   7행 결과: HIT, HIT_AIR, KNOCKBACK, WIN, LOSE, PORTRAIT
+ */
+export const LAYOUT_V3: Partial<Record<Pose, PoseFrames>> = {
+  /* 1행 — 이동 */
+  idle: 0,
+  walk: 1,
+  run: [2, 3, 4],
+  dash: 5,
+
+  /* 2행 — 공중 */
+  jump: 6,
+  fall: 7,
+  land: 8,
+  airJ: 9,
+  airK: 10,
+  dive: 11,
+
+  /* 3행 — 지상 연속기 */
+  attackJ: 12,
+  attackJ2: 13,
+  attackJ3: 14,
+  attackK: 15,
+  attackK2: 16,
+  dashAttack: 17,
+
+  /* 4행 — 방향 커맨드 · 방어 */
+  attackJUp: 18,
+  attackJDown: 19,
+  attackKUp: 20,
+  attackKDown: 21,
+  guard: 22,
+  dizzy: 23,
+
+  /* 5행 — 스킬 (24 기 모으기 → 25 시전 → 26 방출, 27은 이펙트 단독) */
+  skillCharge: 24,
+  skill: [25, 26],
+  promptCast: 28,
+
+  /* 6행 — 아이템 · 도발 */
+  itemGet: 30,
+  itemHold: 31,
+  itemThrow: 32,
+  itemSwing: 33,
+  taunt: 34,
+  down: 35,
+
+  /* 7행 — 피격 · 결과 (41은 초상화라 포즈로 쓰지 않는다) */
+  hit: 36,
+  hitAir: 37,
+  knockback: 38,
+  win: 39,
+  lose: 40,
+};
+
+/**
+ * V3에서 캐릭터가 그려지지 않은 특수 프레임들.
+ * 포즈가 아니라 이펙트·UI로 쓰므로 LAYOUT_V3 에 넣지 않는다.
+ */
+export const LAYOUT_V3_FX = {
+  /** 스킬 이펙트 단독 — 투사체·충격파 */
+  skill: 27,
+  /** 프롬프트 이펙트 단독 — 오브를 깬 순간의 명령창 */
+  prompt: 29,
+  /** 얼굴 초상 — HUD·선택 화면 */
+  portrait: 41,
+} as const;
 
 /**
  * 스프라이트 시트가 준비된 캐릭터만 등록한다.

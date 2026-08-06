@@ -77,6 +77,9 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         startup: 195,
         range: 94,
       },
+      // 대시 중 J/K — 달리던 기세로 밀어붙인다
+      dashAttack: { name: '시장 진입', damage: 17, startup: 112, lunge: 560 },
+
       heavy2: {
         name: '인수 합병',
         damage: 24,
@@ -233,6 +236,9 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         recovery: 300,
         range: 78,
       },
+      // 대시 중 J/K — 가장 빠르게 파고든다
+      dashAttack: { name: '기습 발표', damage: 15, startup: 92, lunge: 680 },
+
       heavy2: {
         name: '단종 선언',
         damage: 26,
@@ -388,6 +394,9 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         // 부스터를 점화해 앞으로 치고 나간다
         lunge: 520,
       },
+      // 대시 중 J/K — 부스터를 그대로 실어 가장 멀리 밀고 나간다
+      dashAttack: { name: '하이퍼루프', damage: 15, startup: 88, lunge: 820 },
+
       heavy2: {
         name: '단수 분리',
         damage: 25,
@@ -549,6 +558,9 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         range: 102,
         hitstop: 135,
       },
+      // 대시 중 J/K — 느리지만 대검 리치가 그대로 실린다
+      dashAttack: { name: '강제 푸시', damage: 18, startup: 130, range: 112, lunge: 480 },
+
       heavy2: {
         name: '메인라인 병합',
         damage: 26,
@@ -710,6 +722,9 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
         range: 80,
         hitstop: 140,
       },
+      // 대시 중 J/K — 물살을 타고 미끄러져 들어간다
+      dashAttack: { name: '하수구 질주', damage: 17, startup: 84, lunge: 760 },
+
       heavy2: {
         name: '광대의 초대',
         damage: 30,

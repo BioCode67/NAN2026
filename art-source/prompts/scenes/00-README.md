@@ -63,3 +63,12 @@ cp .env.example .env.local       # GEMINI_API_KEY 를 채운다
 npm run art                      # 이 폴더의 프롬프트로 11장을 만들어 제자리에 저장
 npm run art -- exchange --force  # 마음에 안 드는 한 장만 다시
 ```
+
+키를 안 쓰겠다면, 받는 것까지만 손으로 하고 나머지는 넘길 수 있다.
+
+```bash
+npm run art:in                   # 남은 자리를 하나씩 물어보며 채운다
+```
+
+내려받은 `Gemini_Generated_Image_xxx.png` 를 찾아 정해진 이름으로
+정해진 자리에 옮겨 준다. 이름 바꾸기·폴더 찾기가 사라진다.

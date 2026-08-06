@@ -254,6 +254,66 @@ if (!hasAlpha) {
 }
 
 /*
+ * 칸 구분선(격자선) 제거.
+ *
+ * 시트에 따라 프레임 사이에 얇은 선이 그려져 있다. 이 선은 배경색이 아니라
+ * 별도 색이라 flood fill이 지우지 못하고, 그대로 두면 선이 모든 칸을 잇는
+ * 하나의 거대한 연결 요소가 되어 프레임을 전혀 나눌 수 없다.
+ *
+ * 격자선은 "이미지 폭(또는 높이) 전체를 가로지르는 얇은 띠"라는 점으로 찾는다.
+ * 캐릭터는 그렇게 길고 얇게 뻗지 않으므로 오검출 위험이 낮다.
+ */
+{
+  const MAX_LINE_THICK = 14;
+  /** 격자선은 끝에서 끝까지 이어진다 — 거의 빈틈이 없어야 한다 */
+  const FILL_RATIO = 0.97;
+  /** 선이 이만큼은 있어야 "격자"로 인정한다 (한두 줄은 캐릭터 오검출) */
+  const MIN_LINES = 3;
+  let cleared = 0;
+
+  /** 한 축에서 "끝까지 꽉 찬" 얇은 띠들을 찾아 배경으로 만든다 */
+  const stripLines = (sizeA, sizeB, idx) => {
+    const dense = [];
+    for (let a = 0; a < sizeA; a++) {
+      let n = 0;
+      for (let b = 0; b < sizeB; b++) if (!bg[idx(a, b)]) n++;
+      dense.push(n / sizeB >= FILL_RATIO);
+    }
+
+    // 얇은 띠만 후보로 모은다
+    const bands = [];
+    let run = -1;
+    for (let a = 0; a <= sizeA; a++) {
+      if (dense[a]) {
+        if (run < 0) run = a;
+      } else if (run >= 0) {
+        if (a - run <= MAX_LINE_THICK) bands.push([run, a - 1]);
+        run = -1;
+      }
+    }
+
+    // 규칙적인 격자가 아니면 손대지 않는다
+    if (bands.length < MIN_LINES) return;
+
+    for (const [s, e] of bands) {
+      for (let k = s; k <= e; k++) {
+        for (let b = 0; b < sizeB; b++) {
+          const p = idx(k, b);
+          if (!bg[p]) {
+            bg[p] = 1;
+            cleared++;
+          }
+        }
+      }
+    }
+  };
+
+  stripLines(H, W, (y, x) => y * W + x);
+  stripLines(W, H, (x, y) => y * W + x);
+  if (cleared) console.log(`격자선 제거: ${cleared}px`);
+}
+
+/*
  * 캐릭터에 둘러싸여 flood fill이 닿지 못한 체크무늬 조각 제거.
  * (겨드랑이·팔과 몸통 사이 등에 갇힌 배경)
  * 체크무늬는 두 톤이 번갈아 나타나므로, 한 덩어리 안에 두 톤이 모두

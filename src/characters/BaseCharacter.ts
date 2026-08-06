@@ -173,6 +173,20 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private tauntUntil = 0;
   /** 방어가 깨져 기절한 시각까지 */
   private dizzyUntil = 0;
+
+  /* --- 캐릭터 고유 메커니즘 --------------------------------------- */
+  /**
+   * 고유 자원 스택.
+   * 게이츠=지분, 머스크=부스터, 페니와이즈=풍선. 의미는 다르지만
+   * "쌓였다가 쓰인다"는 형태가 같아 한 칸으로 다룬다.
+   */
+  private sigStacks = 0;
+  /** 후속 입력 창이 열려 있는 시각까지 (잡스 — 원 모어 씽) */
+  private sigWindowUntil = 0;
+  /** 훔친 기술 (리누스 — 포크) */
+  private forked: AttackConfig | null = null;
+  /** 다음 자원 자동 충전 시각 (머스크 — 부스터) */
+  private sigRegenAt = 0;
   /** 착지 스쿼시 판정을 위한 최대 낙하속도 기록 */
   private fallSpeed = 0;
   private lastSayAt = 0;
@@ -296,15 +310,27 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.setFacing(dir);
   }
 
-  /** 점프 (2단 점프 지원) */
+  /**
+   * 점프 (2단 점프 지원).
+   *
+   * 패니 와이즈맨은 쌓인 풍선 수만큼 더 뛴다 — 때려서 번 기동력을
+   * 공중에서 쓰는 구조라, 맞는 순간 전부 사라진다.
+   */
   jump(): void {
     if (!this.canAct()) return;
-    if (this.jumpsLeft <= 0) return;
 
-    const first = this.jumpsLeft === FIGHTER.MAX_JUMPS;
+    let balloonJump = false;
+    if (this.jumpsLeft <= 0) {
+      if (this.cfg.signature.id !== 'balloon' || this.sigStacks <= 0) return;
+      this.sigStacks--;
+      balloonJump = true;
+      this.spawnBalloonPop();
+    }
+
+    const first = !balloonJump && this.jumpsLeft === FIGHTER.MAX_JUMPS;
     const power = first ? this.cfg.stats.jump : this.cfg.stats.doubleJump;
     this.body.setVelocityY(power);
-    this.jumpsLeft--;
+    if (!balloonJump) this.jumpsLeft--;
 
     // 도약 시 위로 늘어나는 스트레치
     this.pulseSquash(0.82, 1.22, 110);
@@ -408,6 +434,56 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     return this.scene.time.now < this.dizzyUntil;
   }
 
+  /* ================================================================ */
+  /* 캐릭터 고유 메커니즘                                             */
+  /* ================================================================ */
+
+  /** HUD가 읽어가는 현재 자원량 */
+  getSignatureStacks(): number {
+    return this.sigStacks;
+  }
+
+  /** 후속 입력 창이 열려 있는가 (잡스) */
+  isSignatureWindowOpen(): boolean {
+    return this.scene.time.now < this.sigWindowUntil;
+  }
+
+  /** 훔쳐둔 기술 이름 (리누스 HUD용) */
+  getForkedName(): string | null {
+    return this.forked?.name ?? null;
+  }
+
+  /**
+   * 타격에 성공했다 — CombatSystem이 호출한다.
+   * 때리는 행위로 자원이 쌓이는 캐릭터가 여기서 이득을 본다.
+   */
+  onDealtHit(): void {
+    const sig = this.cfg.signature;
+    if (sig.id === 'shares' || sig.id === 'balloon') {
+      this.sigStacks = Math.min(sig.max, this.sigStacks + 1);
+    }
+  }
+
+  /** 스킬이 적중했다 — 잡스의 후속 입력 창이 여기서 열린다 */
+  onSkillLanded(): void {
+    if (this.cfg.signature.id !== 'oneMoreThing') return;
+    this.sigWindowUntil = this.scene.time.now + 1600;
+    this.say('One more thing!', this.cfg.colors.accent);
+  }
+
+  /**
+   * 방어로 막아냈다 — 리누스가 그 기술을 훔친다.
+   * 스킬·투사체는 훔치지 않는다 (되돌려줄 때 연출이 꼬인다).
+   */
+  onGuarded(atk: AttackConfig): void {
+    if (this.cfg.signature.id !== 'fork') return;
+    if (atk.type === 'skill' || atk.projectile) return;
+
+    this.forked = atk;
+    this.sigStacks = 1;
+    this.say(`포크: ${atk.name}`, this.cfg.colors.accent);
+  }
+
   /** 전투 승리 — 승리 포즈로 고정한다 */
   showVictory(): void {
     if (!this.alive) return;
@@ -417,12 +493,29 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.pulseSquash(0.85, 1.2, 260);
   }
 
-  /** 대시 — 짧게 치고 나간다 */
+  /**
+   * 대시 — 짧게 치고 나간다.
+   *
+   * 기본은 지상 전용이다. 머스크맨만 부스터를 태워 공중에서도 대시하며,
+   * 그게 이 캐릭터가 유일하게 가진 복귀·이탈 수단이 된다.
+   */
   dash(dir: -1 | 1): boolean {
     if (!this.canAct()) return false;
 
     const now = this.scene.time.now;
     if (now < this.dashReadyAt) return false;
+
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    const booster = this.cfg.signature.id === 'booster';
+
+    if (!onGround) {
+      // 공중 대시는 부스터를 가진 캐릭터가 자원을 쓸 때만
+      if (!booster || this.sigStacks <= 0) return false;
+    }
+    if (booster) {
+      if (this.sigStacks <= 0) return false;
+      this.sigStacks--;
+    }
 
     this.dashReadyAt = now + FIGHTER.DASH_COOLDOWN;
     this.dashUntil = now + FIGHTER.DASH_MS;
@@ -515,15 +608,68 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     return slot ? this.cfg.moves[slot].name : null;
   }
 
-  /** 시그니처 스킬(L) */
+  /**
+   * 시그니처 스킬(L).
+   *
+   * 캐릭터 고유 메커니즘이 가장 크게 갈리는 지점이다.
+   *  - 게이츠: 쌓인 지분을 태워 위력이 오른다
+   *  - 잡스: 방금 맞혔다면 쿨다운 없이 한 번 더
+   *  - 리누스: 훔쳐둔 기술이 있으면 스킬 대신 그것이 나간다
+   */
   useSkill(): boolean {
     if (!this.canAct()) return false;
-    if (!this.isSkillReady()) return false;
 
-    const skill = this.cfg.moves.skill;
-    const cooldown =
-      (skill.cooldown ?? 10000) * this.cooldownMul * (this.mods.cooldownMul ?? 1);
-    this.skillReadyAt = this.scene.time.now + cooldown;
+    const sig = this.cfg.signature;
+    const now = this.scene.time.now;
+
+    /* 잡스 — 후속 입력 창이 열려 있으면 쿨다운을 무시한다 */
+    const freeCast =
+      sig.id === 'oneMoreThing' && now < this.sigWindowUntil;
+
+    if (!freeCast && !this.isSkillReady()) return false;
+
+    /* 리누스 — 훔쳐둔 기술이 있으면 그것을 되돌려준다 */
+    if (sig.id === 'fork' && this.forked) {
+      const stolen: AttackConfig = {
+        ...this.forked,
+        name: `포크: ${this.forked.name}`,
+        // 남의 기술이라 원본보다 약간 세다 — 막아낸 보상이 있어야 노릴 이유가 생긴다
+        damage: this.forked.damage * 1.3,
+        hitstop: this.forked.hitstop + 30,
+      };
+      this.forked = null;
+      this.sigStacks = 0;
+
+      this.skillReadyAt = now + 3000;
+      this.beginAttack(stolen);
+      this.say(stolen.name, this.cfg.colors.accent);
+      return true;
+    }
+
+    let skill = this.cfg.moves.skill;
+
+    /* 게이츠 — 지분을 태워 위력과 경직을 늘린다 */
+    if (sig.id === 'shares' && this.sigStacks > 0) {
+      const n = this.sigStacks;
+      skill = {
+        ...skill,
+        name: `${skill.name} (지분 ${n})`,
+        damage: skill.damage * (1 + n * 0.3),
+        effectDuration: (skill.effectDuration ?? 0) + n * 220,
+        hitstop: skill.hitstop + n * 14,
+        shake: skill.shake * (1 + n * 0.15),
+      };
+      this.sigStacks = 0;
+    }
+
+    if (freeCast) {
+      // 창을 소모한다 — 한 번뿐이라야 "지금이다"가 성립한다
+      this.sigWindowUntil = 0;
+    } else {
+      const cooldown =
+        (skill.cooldown ?? 10000) * this.cooldownMul * (this.mods.cooldownMul ?? 1);
+      this.skillReadyAt = now + cooldown;
+    }
 
     this.beginAttack(skill);
     this.say(this.pickQuote('skill'), this.cfg.colors.accent);
@@ -729,6 +875,17 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     // 연출 포즈도 끊는다 — 맞는 중에 도발 자세로 서 있으면 안 된다
     this.tauntUntil = 0;
     this.promptUntil = 0;
+
+    /*
+     * 풍선은 맞으면 전부 터진다.
+     * 때려서 번 기동력을 잃는 것이 이 캐릭터가 감수하는 위험이다.
+     */
+    if (this.cfg.signature.id === 'balloon' && this.sigStacks > 0) {
+      this.sigStacks = 0;
+      this.spawnBalloonPop();
+    }
+    // 후속 입력 창도 닫힌다 — 맞고도 공짜 스킬이 남으면 너무 관대하다
+    this.sigWindowUntil = 0;
 
     this.flash();
     this.pulseSquash(IMPACT.SQUASH_X, IMPACT.SQUASH_Y, IMPACT.SQUASH_MS);
@@ -1008,6 +1165,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (!this.alive) return;
 
     this.tickItem(time);
+    this.tickSignature(time);
 
     /* 공격 상태 머신 진행 */
     if (this.attackPhase !== 'none' && this.currentAttack) {
@@ -1314,6 +1472,49 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       ease: 'Quad.easeOut',
       onComplete: () => ring.destroy(),
     });
+  }
+
+  /**
+   * 고유 자원 갱신.
+   * 지금은 부스터만 시간이 지나면 차오른다 — 나머지는 행동으로만 쌓인다.
+   */
+  private tickSignature(time: number): void {
+    if (this.cfg.signature.id !== 'booster') return;
+    if (this.sigStacks >= this.cfg.signature.max) {
+      this.sigRegenAt = time + 2200;
+      return;
+    }
+    if (time >= this.sigRegenAt) {
+      this.sigStacks++;
+      this.sigRegenAt = time + 2200;
+    }
+  }
+
+  /** 풍선이 터지는 연출 */
+  private spawnBalloonPop(): void {
+    for (let i = 0; i < 4; i++) {
+      const bit = this.scene.add
+        .circle(
+          this.x + Phaser.Math.Between(-20, 20),
+          this.y - 10,
+          Phaser.Math.Between(4, 8),
+          0xef4444,
+          0.95,
+        )
+        .setDepth(DEPTH.IMPACT);
+
+      this.scene.tweens.add({
+        targets: bit,
+        x: bit.x + Phaser.Math.Between(-70, 70),
+        y: bit.y - Phaser.Math.Between(30, 90),
+        alpha: 0,
+        scale: 0.3,
+        duration: 420,
+        ease: 'Quad.easeOut',
+        onComplete: () => bit.destroy(),
+      });
+    }
+    sound.play('doubleJump');
   }
 
   /** 2단 점프 시 발밑 링 이펙트 */

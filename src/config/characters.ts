@@ -41,6 +41,16 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
       absorbRatio: 1.5,
     },
 
+    signature: {
+      id: 'shares',
+      name: '지분 확보',
+      desc: '타격마다 지분이 1씩 쌓인다(최대 5). 스킬을 쓰면 쌓인 지분을 전부 태워 그만큼 강해진다',
+      how: '오래 참았다 터뜨리는 캐릭터. 5지분 블루스크린은 화면을 멈춰 세운다',
+      max: 5,
+      icon: '📈',
+      color: 0x7dd3fc,
+    },
+
     /*
      * 견제형 — 리치가 길고 묵직하지만 발동이 느리다.
      * 기술은 전부 "윈도우 / 독점 / 기부"에서 따왔다.
@@ -190,6 +200,16 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
       desc: '30% 확률로 피해량의 200%를 주가로 흡수한다. (기본 10% → 20%)',
       chance: 0.3,
       absorbRatio: 2.0,
+    },
+
+    signature: {
+      id: 'oneMoreThing',
+      name: '원 모어 씽',
+      desc: '스킬이 적중하면 1.6초 안에 L을 한 번 더 눌러 쿨다운 없이 다시 쓸 수 있다',
+      how: '스킬을 맞히는 순간이 곧 다음 기회다. 맞혔으면 바로 L을 한 번 더',
+      max: 0,
+      icon: '💡',
+      color: 0xe5e7eb,
     },
 
     /*
@@ -342,6 +362,16 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
       desc: '주가가 200% 이상일 때 공격력이 2배가 된다.',
       threshold: 200,
       powerMul: 2.0,
+    },
+
+    signature: {
+      id: 'booster',
+      name: '부스터',
+      desc: '대시가 부스터를 1칸 쓴다(최대 3, 자동 충전). 남아 있으면 **공중에서도 대시**할 수 있다',
+      how: '이 게임에서 유일하게 공중 대시를 쓴다. 장외에서 돌아오는 수단이자 도망 수단',
+      max: 3,
+      icon: '🔥',
+      color: 0xfbbf24,
     },
 
     /*
@@ -512,6 +542,16 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
       powerMul: 1.5,
     },
 
+    signature: {
+      id: 'fork',
+      name: '포크',
+      desc: '방어로 막아낸 기술을 훔쳐 저장한다. 다음 L은 커널 패닉 대신 그 기술로 나간다',
+      how: '막는 것이 곧 습득이다. 상대의 강한 기술을 일부러 받아내고 되돌려준다',
+      max: 1,
+      icon: '🍴',
+      color: 0x38bdf8,
+    },
+
     /*
      * 리치형 — 가장 멀리 닿지만 가장 느리다. 거리 유지 싸움에 강하다.
      * 기술은 전부 "git / 커널 / 코드 리뷰 독설"에서 따왔다.
@@ -668,6 +708,16 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
       desc: '타격에 성공할 때마다 피해량의 100~300%를 랜덤하게 흡수한다. (10~30%)',
       minRatio: 1.0,
       maxRatio: 3.0,
+    },
+
+    signature: {
+      id: 'balloon',
+      name: '붉은 풍선',
+      desc: '타격마다 풍선이 1개 늘어난다(최대 3). 풍선 하나당 공중 점프가 한 번 늘어난다',
+      how: '때려서 기동력을 번다. 대신 **한 대라도 맞으면 전부 터진다**',
+      max: 3,
+      icon: '🎈',
+      color: 0xef4444,
     },
 
     /*

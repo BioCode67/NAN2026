@@ -5,8 +5,9 @@
  * 나노바나나(또는 다른 이미지 생성기) 웹 화면에 **그대로 붙여넣을** 텍스트를
  * 캐릭터별·배치별로 만들어 파일로 떨군다. API 키가 필요 없다.
  *
- *   npm run prompts              # 5명 전부
+ *   npm run prompts              # 캐릭터 5명 + 스테이지·UI 전부
  *   npm run prompts -- gates     # 한 명만
+ *   npm run prompts -- scenes    # 스테이지·UI만
  *   npm run prompts -- --print   # 파일 대신 화면에 출력
  *
  * 결과물: art-source/prompts/<key>/00-README.md
@@ -27,6 +28,7 @@ import {
   TOTAL_FRAMES,
   describeFrame,
 } from './art-characters.mjs';
+import { BG_RULES, STAGES, UI_ARTS, WORLD, WORLD_FLAVOR } from './art-scenes.mjs';
 
 const OUT_ROOT = 'art-source/prompts';
 
@@ -131,6 +133,93 @@ ${reference}
 }
 
 /* ------------------------------------------------------------------ */
+/* 스테이지 · UI 프롬프트                                              */
+/* ------------------------------------------------------------------ */
+
+function buildStagePrompt(stage) {
+  return `2D 대난투 게임의 스테이지 배경을 그려줘.
+"${stage.name}" — ${stage.when}
+
+${WORLD_FLAVOR}
+
+[장면]
+${stage.desc}
+
+[색]
+${stage.palette}
+
+${BG_RULES}
+
+[크기] ${WORLD.width}x${WORLD.height} 픽셀 (가로로 매우 긴 그림)
+`;
+}
+
+function buildUiPrompt(art) {
+  return `2D 대난투 게임의 ${art.name}을 그려줘.
+
+${WORLD_FLAVOR}
+
+[내용]
+${art.desc}
+
+[크기] ${art.size}
+
+[필수 규칙]
+${art.rules}
+- 두껍고 진한 검은 외곽선, 채도 높은 색
+- 사진 같은 사실주의 금지. 픽셀아트풍 또는 만화풍
+`;
+}
+
+/** 스테이지·UI 전체 안내문 */
+function buildSceneReadme() {
+  const stageRows = STAGES.map(
+    (st) => `| \`${st.id}-${st.name}.txt\` | \`public/bg/${st.key}.png\` | ${st.when} |`,
+  ).join('\n');
+
+  const uiRows = UI_ARTS.map(
+    (a) => `| \`${a.id}-${a.name}.txt\` | \`public/ui/${a.key}.png\` | ${a.name} |`,
+  ).join('\n');
+
+  return `# 스테이지 · UI 프롬프트
+
+캐릭터가 아닌 그림들이다. 캐릭터 시트와 달리 **한 장씩 독립**이라
+아무 순서로 뽑아도 되고, 마음에 안 드는 것만 다시 돌리면 된다.
+
+## 스테이지 배경
+
+맵 기믹과 짝지어 두었다. "달로 보내줘"를 입력하면 물리만 바뀌는 게 아니라
+배경까지 달 표면으로 갈린다 — 말과 그림이 따로 놀지 않게 하기 위해서다.
+
+| 프롬프트 | 저장 위치 | 언제 보이나 |
+|---|---|---|
+${stageRows}
+
+## UI
+
+| 프롬프트 | 저장 위치 | 용도 |
+|---|---|---|
+${uiRows}
+
+## 공통 주의
+
+- 배경에는 **캐릭터를 그리지 말 것.** 캐릭터는 게임이 위에 올린다
+- 배경 가운데와 아래는 비워 둘 것 — 전투가 벌어지는 자리다
+- 전체적으로 어둡게. 밝은 캐릭터가 위에 올라가야 대비로 살아난다
+- 아이콘·오브는 **투명 배경**이 필요하다. 안 되면 순수 마젠타(#FF00FF)로
+
+## 받은 뒤
+
+배경은 전처리가 필요 없다. 위 표의 경로에 그대로 저장하면 게임이 읽는다.
+아이콘·오브처럼 여러 칸이 든 그림만 전처리를 거친다.
+
+\`\`\`bash
+npm run sheet -- art-source/ui_item_icons.png public/ui/ui_item_icons.png
+\`\`\`
+`;
+}
+
+/* ------------------------------------------------------------------ */
 /* 캐릭터별 안내문                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -191,7 +280,10 @@ ${list}
 const args = process.argv.slice(2);
 const printOnly = args.includes('--print');
 const ids = args.filter((a) => !a.startsWith('--'));
-const targets = ids.length ? ids : Object.keys(CHARACTERS);
+// 'scenes' 는 캐릭터가 아니라 스테이지·UI 묶음을 가리키는 이름이다
+const targets = (ids.length ? ids : Object.keys(CHARACTERS)).filter(
+  (t) => t !== 'scenes',
+);
 
 if (!printOnly) rmSync(OUT_ROOT, { recursive: true, force: true });
 
@@ -229,9 +321,42 @@ for (const id of targets) {
   console.log(`${c.inGameName.padEnd(12)} → ${dir}/ (${BATCHES.length}묶음)`);
 }
 
+/* --- 스테이지 · UI ------------------------------------------------- */
+
+if (!ids.length || ids.includes('scenes')) {
+  if (printOnly) {
+    for (const st of STAGES) {
+      console.log(`\n${'='.repeat(64)}\n스테이지 — ${st.name}\n${'='.repeat(64)}`);
+      console.log(buildStagePrompt(st));
+    }
+    for (const a of UI_ARTS) {
+      console.log(`\n${'='.repeat(64)}\nUI — ${a.name}\n${'='.repeat(64)}`);
+      console.log(buildUiPrompt(a));
+    }
+  } else {
+    const dir = `${OUT_ROOT}/scenes`;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/00-README.md`, buildSceneReadme(), 'utf8');
+
+    for (const st of STAGES) {
+      writeFileSync(`${dir}/${st.id}-${st.name}.txt`, buildStagePrompt(st), 'utf8');
+      written++;
+    }
+    for (const a of UI_ARTS) {
+      writeFileSync(`${dir}/${a.id}-${a.name}.txt`, buildUiPrompt(a), 'utf8');
+      written++;
+    }
+    console.log(
+      `스테이지·UI      → ${dir}/ (${STAGES.length + UI_ARTS.length}장)`,
+    );
+  }
+}
+
 if (!printOnly && written) {
   console.log(
-    `\n프롬프트 ${written}개 생성. 캐릭터당 ${TOTAL_FRAMES}장 / ${BATCHES.length}묶음.\n` +
-      `각 폴더의 00-README.md 에 순서가 적혀 있습니다.`,
+    `\n프롬프트 ${written}개 생성.\n` +
+      `  캐릭터: ${TOTAL_FRAMES}장 / ${BATCHES.length}묶음씩\n` +
+      `  스테이지·UI: ${STAGES.length + UI_ARTS.length}장 (한 장씩 독립)\n` +
+      `각 폴더의 00-README.md 에 순서와 저장 위치가 적혀 있습니다.`,
   );
 }

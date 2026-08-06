@@ -411,6 +411,15 @@ export class CombatSystem {
     );
 
     /*
+     * 캐릭터 고유 메커니즘 통지.
+     * 때린 쪽은 자원을 벌고(지분·풍선), 막은 쪽은 그 기술을 훔친다(포크).
+     * 전투 계산이 캐릭터별 규칙을 알 필요는 없으므로 알림만 보낸다.
+     */
+    attacker.onDealtHit();
+    if (atk.type === 'skill') attacker.onSkillLanded();
+    if (guarded) target.onGuarded(atk);
+
+    /*
      * 방어 파괴 — 마무리 타를 방어로 받으면 가드가 깨진다.
      * 방어로 버티기만 하는 플레이에 대가를 붙이고,
      * 연속기 마무리에 "뚫는다"는 역할을 하나 더 준다.

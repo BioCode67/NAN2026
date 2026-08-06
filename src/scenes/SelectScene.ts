@@ -35,6 +35,7 @@ export class SelectScene extends Phaser.Scene {
   private nameText!: Phaser.GameObjects.Text;
   private taglineText!: Phaser.GameObjects.Text;
   private passiveText!: Phaser.GameObjects.Text;
+  private signatureText!: Phaser.GameObjects.Text;
   private skillText!: Phaser.GameObjects.Text;
   private movesText!: Phaser.GameObjects.Text;
   private quoteText!: Phaser.GameObjects.Text;
@@ -185,11 +186,11 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private buildInfoPanel(): void {
-    // 연속기 + 커맨드 목록이 들어가면서 패널을 위로 올리고 키웠다
-    const panelY = 470;
+    // 고유 메커니즘 줄이 늘면서 패널을 한 번 더 키웠다
+    const panelY = 452;
 
     this.add
-      .rectangle(GAME.WIDTH / 2, panelY + 78, 980, 200, 0x141c33, 0.85)
+      .rectangle(GAME.WIDTH / 2, panelY + 92, 980, 226, 0x141c33, 0.85)
       .setStrokeStyle(2, 0x2f3f6b)
       .setDepth(DEPTH.HUD - 1);
 
@@ -219,8 +220,25 @@ export class SelectScene extends Phaser.Scene {
       })
       .setDepth(DEPTH.HUD);
 
-    this.skillText = this.add
+    /*
+     * 고유 메커니즘.
+     *
+     * 이 게임에서 캐릭터를 고르는 진짜 이유가 여기 있다 —
+     * 패시브는 숫자만 다르지만, 이건 조작 방식 자체가 다르다.
+     * 그래서 패시브보다 눈에 띄게 강조색으로 둔다.
+     */
+    this.signatureText = this.add
       .text(GAME.WIDTH / 2 - 460, panelY + 86, '', {
+        fontFamily: GAME.FONT,
+        fontSize: '14px',
+        color: '#facc15',
+        wordWrap: { width: 900 },
+        fontStyle: 'bold',
+      })
+      .setDepth(DEPTH.HUD);
+
+    this.skillText = this.add
+      .text(GAME.WIDTH / 2 - 460, panelY + 112, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#cbd5e1',
@@ -234,7 +252,7 @@ export class SelectScene extends Phaser.Scene {
      * 플레이어가 W+K / S+K 같은 입력이 있다는 사실 자체를 모른 채 끝난다.
      */
     this.movesText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 112, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 138, '', {
         fontFamily: GAME.FONT,
         fontSize: '13px',
         color: '#8fa6d8',
@@ -335,6 +353,11 @@ export class SelectScene extends Phaser.Scene {
     this.nameText.setText(cfg.name);
     this.taglineText.setText(`"${cfg.tagline}"`);
     this.passiveText.setText(`[패시브] ${cfg.passive.name} — ${cfg.passive.desc}`);
+    const sig = cfg.signature;
+    this.signatureText.setText(
+      `[고유] ${sig.icon} ${sig.name} — ${sig.desc}\n         ${sig.how}`,
+    );
+
     const skill = cfg.moves.skill;
     this.skillText.setText(
       `[스킬 L] ${skill.name} — 피해 ${skill.damage}% · 쿨다운 ${(

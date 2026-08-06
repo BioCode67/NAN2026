@@ -548,6 +548,83 @@ if (!(gravityAfter < gravityBefore)) {
 }
 await shot('orb-moon');
 
+/*
+ * 캐릭터 고유 메커니즘.
+ *
+ * 다섯 캐릭터가 각자 다른 조작 규칙을 갖는 것이 이 게임에서 캐릭터를
+ * 고르는 이유다. 규칙이 조용히 죽어도 화면상으로는 티가 안 나므로
+ * 상태값으로 직접 확인한다. (스모크는 한 캐릭터만 돌리므로 자기 것만 본다)
+ */
+console.log('고유 메커니즘');
+await restartRound();
+await waitGrounded();
+
+const sig = await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  const me = s.player;
+  const foe = s.fighters.find((f) => f !== me);
+  const id = me.cfg.signature.id;
+
+  switch (id) {
+    case 'shares': {
+      for (let i = 0; i < 5; i++) me.onDealtHit();
+      const stacked = me.getSignatureStacks();
+      me.skillReadyAt = 0;
+      me.useSkill();
+      const name = me.getCurrentAttack()?.name ?? '';
+      // 지분을 태워 이름이 바뀌고 스택이 비워져야 한다
+      return { id, ok: stacked === 5 && me.getSignatureStacks() === 0 && name.includes('지분'), detail: name };
+    }
+    case 'oneMoreThing': {
+      me.skillReadyAt = 0;
+      me.useSkill();
+      me.onSkillLanded();
+      return { id, ok: me.isSignatureWindowOpen(), detail: '후속 입력 창' };
+    }
+    case 'booster': {
+      const full = me.getSignatureStacks();
+      me.body.blocked.down = false;
+      me.body.touching.down = false;
+      const airDash = me.dash(1);
+      // 공중 대시가 되고 부스터가 한 칸 줄어야 한다
+      return { id, ok: full > 0 && airDash && me.getSignatureStacks() === full - 1, detail: `공중 대시 ${airDash}` };
+    }
+    case 'fork': {
+      me.onGuarded(foe.cfg.moves.heavy);
+      const stolen = me.getForkedName();
+      me.skillReadyAt = 0;
+      me.useSkill();
+      const cast = me.getCurrentAttack()?.name ?? '';
+      return { id, ok: !!stolen && cast.startsWith('포크:'), detail: cast };
+    }
+    case 'balloon': {
+      for (let i = 0; i < 3; i++) me.onDealtHit();
+      const stacked = me.getSignatureStacks();
+      me.jumpsLeft = 0;
+      me.body.blocked.down = false;
+      me.body.touching.down = false;
+      me.jump();
+      const afterJump = me.getSignatureStacks();
+      me.receiveHit(me.cfg.moves.light, me.x - 50);
+      // 풍선으로 한 번 더 뛰고, 맞으면 전부 터져야 한다
+      return {
+        id,
+        ok: stacked === 3 && afterJump === 2 && me.getSignatureStacks() === 0,
+        detail: `${stacked} → ${afterJump} → 0`,
+      };
+    }
+    default:
+      return { id, ok: false, detail: '알 수 없는 메커니즘' };
+  }
+});
+
+if (!sig.ok) {
+  errors.push(`[고유] ${sig.id} 메커니즘이 동작하지 않습니다: ${sig.detail}`);
+} else {
+  console.log(`  ✓ 고유 메커니즘 ${sig.id} (${sig.detail})`);
+}
+await shot('signature');
+
 console.log('스킬');
 await page.keyboard.press('l');
 await page.waitForTimeout(340);

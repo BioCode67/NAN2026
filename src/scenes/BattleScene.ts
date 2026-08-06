@@ -34,6 +34,8 @@ interface FighterHud {
   skillBar: Phaser.GameObjects.Rectangle;
   skillLabel: Phaser.GameObjects.Text;
   itemIcon: Phaser.GameObjects.Text;
+  /** 캐릭터 고유 자원 표시 (지분·부스터·풍선…) */
+  sigLabel: Phaser.GameObjects.Text;
 }
 
 /** HUD 패널 규격 — 4명이 한 줄에 들어가야 한다 */
@@ -966,13 +968,13 @@ export class BattleScene extends Phaser.Scene {
       );
 
       // 스킬 쿨다운
-      ui(this.add.rectangle(x + 58, y + 64, HUD_BAR_W, 5, 0x1a2440).setOrigin(0));
+      ui(this.add.rectangle(x + 58, y + 62, HUD_BAR_W, 5, 0x1a2440).setOrigin(0));
       const skillBar = ui(
-        this.add.rectangle(x + 58, y + 64, HUD_BAR_W, 5, accent).setOrigin(0),
+        this.add.rectangle(x + 58, y + 62, HUD_BAR_W, 5, accent).setOrigin(0),
       );
 
       const skillLabel = ui(
-        this.add.text(x + 58 + HUD_BAR_W + 6, y + 60, 'L', {
+        this.add.text(x + 58 + HUD_BAR_W + 6, y + 58, 'L', {
           fontFamily: GAME.FONT,
           fontSize: '11px',
           color: '#4ade80',
@@ -987,6 +989,21 @@ export class BattleScene extends Phaser.Scene {
           .setOrigin(1, 0),
       );
 
+      /*
+       * 캐릭터 고유 자원.
+       *
+       * 지분이 몇 개 쌓였는지, 부스터가 남았는지 보이지 않으면
+       * "그때그때 다르게 동작하는 캐릭터"로만 느껴진다. 눈에 보여야 탐구가 된다.
+       */
+      const sigLabel = ui(
+        this.add.text(x + 58, y + 62, '', {
+          fontFamily: GAME.FONT,
+          fontSize: '12px',
+          color: `#${fighter.cfg.signature.color.toString(16).padStart(6, '0')}`,
+          fontStyle: 'bold',
+        }),
+      );
+
       this.huds.push({
         fighter,
         percent,
@@ -995,6 +1012,7 @@ export class BattleScene extends Phaser.Scene {
         skillBar,
         skillLabel,
         itemIcon,
+        sigLabel,
       });
     });
   }
@@ -1024,6 +1042,9 @@ export class BattleScene extends Phaser.Scene {
 
       // 장착 아이템
       hud.itemIcon.setText(hud.fighter.getItem()?.cfg.icon ?? '');
+
+      // 캐릭터 고유 자원
+      hud.sigLabel.setText(this.describeSignature(hud.fighter));
 
       // 상장폐지된 파이터는 패널 전체를 어둡게
       hud.percent.setAlpha(hud.fighter.alive ? 1 : 0.4);
@@ -1060,6 +1081,29 @@ export class BattleScene extends Phaser.Scene {
       });
     }
     this.chainHint.setAlpha(1);
+  }
+
+  /**
+   * 고유 자원을 한 줄로 표현한다.
+   *
+   * 자원이 있는 캐릭터는 채워진 칸으로, 상태로만 존재하는 캐릭터
+   * (잡스의 후속 입력 창, 리누스의 훔친 기술)는 그 순간에만 글자로 알린다.
+   */
+  private describeSignature(f: BaseCharacter): string {
+    const sig = f.cfg.signature;
+
+    if (sig.id === 'oneMoreThing') {
+      return f.isSignatureWindowOpen() ? `${sig.icon} 지금! L 한 번 더` : '';
+    }
+    if (sig.id === 'fork') {
+      const name = f.getForkedName();
+      return name ? `${sig.icon} ${name}` : '';
+    }
+
+    const n = f.getSignatureStacks();
+    if (sig.max <= 0) return '';
+    // 채워진 칸과 빈 칸을 함께 보여줘야 "몇 개 더 남았는지"가 읽힌다
+    return `${sig.icon} ${'◆'.repeat(n)}${'◇'.repeat(Math.max(0, sig.max - n))}`;
   }
 
   /** 진행 중인 기믹과 남은 시간을 상단에 띄운다 */

@@ -206,7 +206,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.body.setOffset(-FIGHTER.BODY_W / 2, -FIGHTER.BODY_H / 2);
     this.body.setCollideWorldBounds(false);
     this.body.setDragX(1400);
-    this.body.setMaxVelocity(900, 1400);
+    // 대시 속도가 잘리지 않도록 상한을 넉넉히 잡는다
+    this.body.setMaxVelocity(1400, 1700);
 
     this.updateGauge(STOCK.START, StockTier.NORMAL);
   }
@@ -311,7 +312,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.dashReadyAt = now + FIGHTER.DASH_COOLDOWN;
     this.dashUntil = now + FIGHTER.DASH_MS;
     this.setFacing(dir);
-    this.body.setVelocityX(this.cfg.stats.speed * this.speedMul * 2.1 * dir);
+    this.body.setVelocityX(
+      this.cfg.stats.speed * this.speedMul * FIGHTER.DASH_SPEED_MUL * dir,
+    );
     this.pulseSquash(1.28, 0.84, 150);
     sound.play('doubleJump');
     return true;

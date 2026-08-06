@@ -65,6 +65,8 @@ export class BattleScene extends Phaser.Scene {
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
+  /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
+  private hudLayer!: Phaser.GameObjects.Container;
   /** 더블탭 대시 판정용 */
   private lastTapDir: -1 | 0 | 1 = 0;
   private lastTapAt = 0;
@@ -105,6 +107,10 @@ export class BattleScene extends Phaser.Scene {
 
     sound.startBgm();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
+
+    // 월드가 화면보다 넓다 — 카메라가 월드 밖을 비추지 않도록 경계를 준다
+    this.cameras.main.setBounds(0, 0, GAME.WORLD_WIDTH, GAME.HEIGHT);
+    this.physics.world.setBounds(0, 0, GAME.WORLD_WIDTH, GAME.HEIGHT);
     this.cameras.main.fadeIn(280, 0, 0, 0);
   }
 
@@ -123,18 +129,19 @@ export class BattleScene extends Phaser.Scene {
     const KEY = 'battle-bg';
 
     if (!this.textures.exists(KEY)) {
+      const W = GAME.WORLD_WIDTH;
       const g = this.make.graphics({ x: 0, y: 0 }, false);
 
       // 하늘 — 아래로 갈수록 밝아지는 4단 그라데이션
       const bands = [0x070b18, 0x0b1020, 0x131c36, 0x1b2748];
       bands.forEach((color, i) => {
         g.fillStyle(color, 1);
-        g.fillRect(0, i * (GAME.HEIGHT / 4), GAME.WIDTH, GAME.HEIGHT / 4);
+        g.fillRect(0, i * (GAME.HEIGHT / 4), W, GAME.HEIGHT / 4);
       });
 
       // 캔들스틱 실루엣
       g.setAlpha(0.1);
-      for (let x = 30; x < GAME.WIDTH; x += 46) {
+      for (let x = 30; x < W; x += 46) {
         const h = Phaser.Math.Between(30, 150);
         const cy = Phaser.Math.Between(240, 470);
         const up = Phaser.Math.Between(0, 1) === 1;
@@ -149,13 +156,13 @@ export class BattleScene extends Phaser.Scene {
       let y = 420;
       g.beginPath();
       g.moveTo(0, y);
-      for (let x = 0; x <= GAME.WIDTH; x += 48) {
+      for (let x = 0; x <= W; x += 48) {
         y = Phaser.Math.Clamp(y + Phaser.Math.Between(-42, 30), 120, 520);
         g.lineTo(x, y);
       }
       g.strokePath();
 
-      g.generateTexture(KEY, GAME.WIDTH, GAME.HEIGHT);
+      g.generateTexture(KEY, W, GAME.HEIGHT);
       g.destroy();
     }
 
@@ -431,12 +438,39 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /*
-   * 참고: 전황에 따라 카메라를 줌/추적시키면 대난투 느낌이 살지만,
-   * HUD 대부분이 월드 좌표에 있어 함께 확대·이동해 깨진다.
-   * 제대로 하려면 UI 전용 카메라를 두고 월드/UI 객체를 나눠 ignore해야 한다.
-   * 지금은 스테이지가 화면에 다 들어오므로 고정 카메라로 둔다.
+  /**
+   * 카메라 — 살아있는 파이터들의 중앙을 따라간다.
+   *
+   * 줌은 하지 않는다. 스크롤만 하면 HUD에 scrollFactor(0)만 주면 되지만,
+   * 줌까지 넣으면 HUD가 함께 확대돼 UI 전용 카메라가 필요해진다.
+   * 넓어진 맵을 보여주는 목적에는 스크롤만으로 충분하다.
    */
+  private updateCamera(delta: number): void {
+    const alive = this.fighters.filter((f) => f.alive);
+    if (alive.length === 0) return;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const f of alive) {
+      minX = Math.min(minX, f.x);
+      maxX = Math.max(maxX, f.x);
+    }
+
+    // 플레이어가 살아있으면 조금 더 플레이어 쪽에 무게를 둔다
+    const mid = (minX + maxX) / 2;
+    const targetX = this.player.alive ? (mid + this.player.x) / 2 : mid;
+
+    const cam = this.cameras.main;
+    const desired = Phaser.Math.Clamp(
+      targetX - GAME.WIDTH / 2,
+      0,
+      GAME.WORLD_WIDTH - GAME.WIDTH,
+    );
+
+    // delta 기반 보간 — 프레임률이 달라도 같은 속도로 따라간다
+    const t = 1 - Math.pow(0.0015, delta / 1000);
+    cam.setScroll(Phaser.Math.Linear(cam.scrollX, desired, t), 0);
+  }
 
   /** 스킬 시전 — 시전 시 부가 효과(도박 등)까지 처리한다 */
   private castSkill(fighter: BaseCharacter): boolean {
@@ -650,29 +684,43 @@ export class BattleScene extends Phaser.Scene {
   /* ================================================================ */
 
   private buildHud(): void {
-    // 조작키 안내는 상단에 둔다 — 하단은 HUD 패널이 가득 차 겹친다
-    this.add
-      .text(
-        GAME.WIDTH / 2,
-        20,
-        'WASD 이동 · SPACE 점프(2단) · S 방어 · AA/DD 대시 · J 약공격 · K 강공격 · L 스킬 · P 일시정지 · R 재시작',
-        {
-          fontFamily: GAME.FONT,
-          fontSize: '13px',
-          color: '#5d739f',
-        },
-      )
-      .setOrigin(0.5)
-      .setDepth(DEPTH.HUD);
+    /*
+     * HUD는 카메라를 따라 움직이면 안 된다.
+     * 하나의 레이어 컨테이너에 담고 scrollFactor 0을 주면
+     * 자식 전부가 화면에 고정된다. (월드가 화면보다 넓어졌기 때문)
+     */
+    this.hudLayer = this.add
+      .container(0, 0)
+      .setDepth(DEPTH.HUD)
+      .setScrollFactor(0);
 
-    this.muteLabel = this.add
-      .text(GAME.WIDTH - 20, 14, sound.isMuted ? '🔇 M' : '🔊 M', {
-        fontFamily: GAME.FONT,
-        fontSize: '14px',
-        color: '#5d739f',
-      })
-      .setOrigin(1, 0)
-      .setDepth(DEPTH.HUD);
+    /** 만든 객체를 HUD 레이어로 옮긴다 */
+    const ui = <T extends Phaser.GameObjects.GameObject>(obj: T): T => {
+      this.hudLayer.add(obj);
+      return obj;
+    };
+
+    // 조작키 안내는 상단에 둔다 — 하단은 HUD 패널이 가득 차 겹친다
+    ui(
+      this.add
+        .text(
+          GAME.WIDTH / 2,
+          20,
+          'WASD 이동 · SPACE 점프(2단) · S 방어 · AA/DD 대시 · J 약공격 · K 강공격 · L 스킬 · P 일시정지 · R 재시작',
+          { fontFamily: GAME.FONT, fontSize: '13px', color: '#5d739f' },
+        )
+        .setOrigin(0.5),
+    );
+
+    this.muteLabel = ui(
+      this.add
+        .text(GAME.WIDTH - 20, 14, sound.isMuted ? '🔇 M' : '🔊 M', {
+          fontFamily: GAME.FONT,
+          fontSize: '14px',
+          color: '#5d739f',
+        })
+        .setOrigin(1, 0),
+    );
 
     /* 인원수만큼 패널을 가로로 고르게 배치한다 (1P는 항상 맨 왼쪽) */
     const n = this.fighters.length;
@@ -683,89 +731,89 @@ export class BattleScene extends Phaser.Scene {
       const isPlayer = fighter.side === 'player';
       const x = startX + i * (HUD_PANEL_W + HUD_GAP);
       const y = HUD_Y;
+      const accent = fighter.cfg.colors.accent;
 
-      this.add
-        .rectangle(x, y, HUD_PANEL_W, HUD_PANEL_H, 0x0b1020, 0.8)
-        .setOrigin(0)
-        // 플레이어 패널만 테두리를 밝게 해 눈에 띄게 한다
-        .setStrokeStyle(isPlayer ? 3 : 2, fighter.cfg.colors.accent, isPlayer ? 0.95 : 0.45)
-        .setDepth(DEPTH.HUD);
+      // 플레이어 패널만 테두리를 밝게 해 눈에 띄게 한다
+      ui(
+        this.add
+          .rectangle(x, y, HUD_PANEL_W, HUD_PANEL_H, 0x0b1020, 0.8)
+          .setOrigin(0)
+          .setStrokeStyle(isPlayer ? 3 : 2, accent, isPlayer ? 0.95 : 0.45),
+      );
 
-      this.add
-        .circle(x + 30, y + 39, 21, fighter.cfg.colors.body)
-        .setStrokeStyle(3, fighter.cfg.colors.accent)
-        .setDepth(DEPTH.HUD + 1);
+      ui(
+        this.add
+          .circle(x + 30, y + 39, 21, fighter.cfg.colors.body)
+          .setStrokeStyle(3, accent),
+      );
 
-      this.add
-        .text(x + 58, y + 8, fighter.cfg.name, {
+      ui(
+        this.add.text(x + 58, y + 8, fighter.cfg.name, {
           fontFamily: GAME.FONT,
           fontSize: '14px',
           color: '#ffffff',
           fontStyle: 'bold',
-        })
-        .setDepth(DEPTH.HUD + 1);
+        }),
+      );
 
-      this.add
-        .text(x + 58, y + 27, isPlayer ? '1P' : `CPU (${AI_MEDIUM.label})`, {
+      ui(
+        this.add.text(x + 58, y + 27, isPlayer ? '1P' : `CPU (${AI_MEDIUM.label})`, {
           fontFamily: GAME.FONT,
           fontSize: '10px',
           color: isPlayer ? '#4ade80' : '#7f93bd',
-        })
-        .setDepth(DEPTH.HUD + 1);
+        }),
+      );
 
-      const percent = this.add
-        .text(x + HUD_PANEL_W - 12, y + 5, '100%', {
-          fontFamily: GAME.FONT,
-          fontSize: '22px',
-          color: '#ffffff',
-          fontStyle: 'bold',
-        })
-        .setOrigin(1, 0)
-        .setDepth(DEPTH.HUD + 1);
+      const percent = ui(
+        this.add
+          .text(x + HUD_PANEL_W - 12, y + 5, '100%', {
+            fontFamily: GAME.FONT,
+            fontSize: '22px',
+            color: '#ffffff',
+            fontStyle: 'bold',
+          })
+          .setOrigin(1, 0),
+      );
 
-      const tierLabel = this.add
-        .text(x + HUD_PANEL_W - 12, y + 30, '보통', {
-          fontFamily: GAME.FONT,
-          fontSize: '10px',
-          color: '#cbd5e1',
-        })
-        .setOrigin(1, 0)
-        .setDepth(DEPTH.HUD + 1);
+      const tierLabel = ui(
+        this.add
+          .text(x + HUD_PANEL_W - 12, y + 30, '보통', {
+            fontFamily: GAME.FONT,
+            fontSize: '10px',
+            color: '#cbd5e1',
+          })
+          .setOrigin(1, 0),
+      );
 
       // 주가 진행바
-      this.add
-        .rectangle(x + 58, y + 48, HUD_BAR_W, 12, 0x1a2440)
-        .setOrigin(0)
-        .setDepth(DEPTH.HUD + 1);
-      const bar = this.add
-        .rectangle(x + 58, y + 48, HUD_BAR_W / 3, 12, TIERS[StockTier.NORMAL].color)
-        .setOrigin(0)
-        .setDepth(DEPTH.HUD + 2);
+      ui(this.add.rectangle(x + 58, y + 48, HUD_BAR_W, 12, 0x1a2440).setOrigin(0));
+      const bar = ui(
+        this.add
+          .rectangle(x + 58, y + 48, HUD_BAR_W / 3, 12, TIERS[StockTier.NORMAL].color)
+          .setOrigin(0),
+      );
 
       // 스킬 쿨다운
-      this.add
-        .rectangle(x + 58, y + 64, HUD_BAR_W, 5, 0x1a2440)
-        .setOrigin(0)
-        .setDepth(DEPTH.HUD + 1);
-      const skillBar = this.add
-        .rectangle(x + 58, y + 64, HUD_BAR_W, 5, fighter.cfg.colors.accent)
-        .setOrigin(0)
-        .setDepth(DEPTH.HUD + 2);
+      ui(this.add.rectangle(x + 58, y + 64, HUD_BAR_W, 5, 0x1a2440).setOrigin(0));
+      const skillBar = ui(
+        this.add.rectangle(x + 58, y + 64, HUD_BAR_W, 5, accent).setOrigin(0),
+      );
 
-      const skillLabel = this.add
-        .text(x + 58 + HUD_BAR_W + 6, y + 60, 'L', {
+      const skillLabel = ui(
+        this.add.text(x + 58 + HUD_BAR_W + 6, y + 60, 'L', {
           fontFamily: GAME.FONT,
           fontSize: '11px',
           color: '#4ade80',
           fontStyle: 'bold',
-        })
-        .setDepth(DEPTH.HUD + 2);
+        }),
+      );
 
       // 장착 아이템 아이콘
-      const itemIcon = this.add
-        .text(x + HUD_PANEL_W - 12, y + 46, '', { fontSize: '18px' })
-        .setOrigin(1, 0)
-        .setDepth(DEPTH.HUD + 2);
+      const itemIcon = ui(
+        this.add
+          .text(x + HUD_PANEL_W - 12, y + 46, '', { fontSize: '18px' })
+          .setOrigin(1, 0),
+      );
 
       this.huds.push({
         fighter,
@@ -778,6 +826,7 @@ export class BattleScene extends Phaser.Scene {
       });
     });
   }
+
 
   private updateHud(): void {
     for (const hud of this.huds) {
@@ -838,6 +887,8 @@ export class BattleScene extends Phaser.Scene {
       this.updateHud();
       return;
     }
+
+    this.updateCamera(delta);
 
     if (this.battleActive) {
       this.handleInput();

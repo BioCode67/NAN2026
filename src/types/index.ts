@@ -172,6 +172,18 @@ export interface AttackConfig {
   effectDuration?: number;
   /** 스킬 전용 — 시전 시 자신이 튀어오르는 속도 (음수 = 위로) */
   selfLaunch?: number;
+  /**
+   * 스킬 전용 — 솟구친 뒤 내리꽂는 낙하 공격.
+   * 착지 순간 지면에 광역 충격파가 생긴다. (로켓 드롭)
+   */
+  divePlunge?: {
+    /** 하강 속도 */
+    speed: number;
+    /** 착지 충격파 가로 범위 */
+    shockRange: number;
+    /** 충격파 피해 */
+    shockDamage: number;
+  };
   /** 있으면 근접 히트박스 대신 투사체를 발사한다 */
   projectile?: ProjectileConfig;
 }

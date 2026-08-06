@@ -9,7 +9,7 @@ import {
   STOCK,
   TIERS,
 } from '../config/gameConfig';
-import { BaseCharacter } from '../characters/BaseCharacter';
+import { BaseCharacter, resetQuoteThrottle } from '../characters/BaseCharacter';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
@@ -69,6 +69,9 @@ export class BattleScene extends Phaser.Scene {
   private lastTapDir: -1 | 0 | 1 = 0;
   private lastTapAt = 0;
 
+  private paused = false;
+  private pauseOverlay?: Phaser.GameObjects.Container;
+
   /** 전투 진행 중인가 (인트로/결과 화면에서는 false) */
   private battleActive = false;
   /** EventBus 구독 해제 함수들 */
@@ -89,6 +92,7 @@ export class BattleScene extends Phaser.Scene {
     this.disposers = [];
     this.koOrder = [];
     this.battleActive = false;
+    resetQuoteThrottle();
 
     this.buildBackground();
     this.buildStage();
@@ -276,6 +280,8 @@ export class BattleScene extends Phaser.Scene {
       this.stock.register(f);
       // 투사체 스킬(빌 게이츠맨의 블루스크린 등) 발사 연결
       f.onSpawnProjectile = (owner, atk) => this.projectiles.spawn(owner, atk);
+      // 로켓 드롭 착지 충격파
+      f.onShockwave = (owner, atk) => this.combat.triggerShockwave(owner, atk);
     });
     this.combat.setFighters(this.fighters);
     this.combat.setProjectiles(this.projectiles);
@@ -342,6 +348,7 @@ export class BattleScene extends Phaser.Scene {
 
     kb.on('keydown-R', () => this.scene.start('Battle', this.battleData));
     kb.on('keydown-ESC', () => this.scene.start('Select'));
+    kb.on('keydown-P', () => this.togglePause());
     kb.on('keydown-M', () => {
       const muted = sound.toggleMute();
       this.muteLabel.setText(muted ? '🔇 M' : '🔊 M');
@@ -385,6 +392,51 @@ export class BattleScene extends Phaser.Scene {
     if (isDouble) this.lastTapDir = 0;
     return isDouble;
   }
+
+  /** 일시정지 토글 (P) */
+  private togglePause(): void {
+    if (!this.battleActive && !this.paused) return;
+
+    this.paused = !this.paused;
+
+    if (this.paused) {
+      this.physics.world.pause();
+      this.pauseOverlay = this.add
+        .container(0, 0, [
+          this.add
+            .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT, 0x000000, 0.6)
+            .setOrigin(0),
+          this.add
+            .text(GAME.WIDTH / 2, GAME.HEIGHT / 2 - 20, '일시정지', {
+              fontFamily: GAME.FONT,
+              fontSize: '52px',
+              color: '#ffffff',
+              fontStyle: 'bold',
+            })
+            .setOrigin(0.5),
+          this.add
+            .text(GAME.WIDTH / 2, GAME.HEIGHT / 2 + 40, 'P : 계속      R : 재시작      ESC : 캐릭터 선택', {
+              fontFamily: GAME.FONT,
+              fontSize: '17px',
+              color: '#8fa6d8',
+            })
+            .setOrigin(0.5),
+        ])
+        .setDepth(DEPTH.OVERLAY + 5)
+        .setScrollFactor(0);
+    } else {
+      this.physics.world.resume();
+      this.pauseOverlay?.destroy();
+      this.pauseOverlay = undefined;
+    }
+  }
+
+  /*
+   * 참고: 전황에 따라 카메라를 줌/추적시키면 대난투 느낌이 살지만,
+   * HUD 대부분이 월드 좌표에 있어 함께 확대·이동해 깨진다.
+   * 제대로 하려면 UI 전용 카메라를 두고 월드/UI 객체를 나눠 ignore해야 한다.
+   * 지금은 스테이지가 화면에 다 들어오므로 고정 카메라로 둔다.
+   */
 
   /** 스킬 시전 — 시전 시 부가 효과(도박 등)까지 처리한다 */
   private castSkill(fighter: BaseCharacter): boolean {
@@ -431,13 +483,14 @@ export class BattleScene extends Phaser.Scene {
         const target = this.findFighter(p.targetId);
 
         // 위기 상태에서 반격에 성공하면 역전 대사
+        // 4명이 동시에 떠들지 않도록 확률을 낮춰 잡았다
         if (
           attacker &&
           this.stock.getTier(p.attackerId) <= StockTier.CRISIS &&
-          Phaser.Math.FloatBetween(0, 1) < 0.4
+          Phaser.Math.FloatBetween(0, 1) < 0.22
         ) {
           attacker.say(attacker.pickQuote('comeback'), 0xef4444);
-        } else if (target && Phaser.Math.FloatBetween(0, 1) < 0.18) {
+        } else if (target && Phaser.Math.FloatBetween(0, 1) < 0.08) {
           target.say(target.pickQuote('hurt'), 0xcbd5e1);
         }
       }),
@@ -602,7 +655,7 @@ export class BattleScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         20,
-        'WASD 이동 · SPACE 점프(2단) · S 방어 · AA/DD 대시 · J 약공격 · K 강공격 · L 시그니처 · R 재시작',
+        'WASD 이동 · SPACE 점프(2단) · S 방어 · AA/DD 대시 · J 약공격 · K 강공격 · L 스킬 · P 일시정지 · R 재시작',
         {
           fontFamily: GAME.FONT,
           fontSize: '13px',
@@ -778,6 +831,8 @@ export class BattleScene extends Phaser.Scene {
   /* ================================================================ */
 
   override update(time: number, delta: number): void {
+    if (this.paused) return;
+
     // 히트스탑 중이면 모든 갱신을 멈춘다 (타격감의 핵심)
     if (this.combat.tickHitstop(time)) {
       this.updateHud();

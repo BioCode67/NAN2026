@@ -27,6 +27,21 @@ const GAUGE_W = 82;
 const GAUGE_H = 14;
 
 /**
+ * 마지막으로 대사가 뜬 시각 (전 캐릭터 공용).
+ *
+ * 4인 난투에서는 각자 캐릭터별 쿨다운만 두면 네 명이 동시에 떠들어
+ * 말풍선이 서로 겹쳐 읽을 수 없다. 전역으로 간격을 강제한다.
+ */
+let lastGlobalSayAt = 0;
+/** 대사 사이 최소 간격 (ms) */
+const GLOBAL_SAY_GAP = 700;
+
+/** 씬을 다시 시작할 때 호출 — 모듈 전역 상태가 남아 대사가 막히는 것을 막는다 */
+export function resetQuoteThrottle(): void {
+  lastGlobalSayAt = 0;
+}
+
+/**
  * 모든 파이터의 기반 클래스.
  *
  * 캐릭터 고유 성능은 CharacterConfig(데이터)로 주입받으므로
@@ -96,6 +111,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private item: { cfg: ItemConfig; until: number } | null = null;
   private itemAura?: Phaser.GameObjects.Arc;
   private itemIcon?: Phaser.GameObjects.Text;
+  /** 낙하 공격(로켓 드롭) 진행 상태 */
+  private diving: { atk: AttackConfig; phase: 'rising' | 'falling' } | null = null;
+  /** 착지 충격파 발생 요청 — BattleScene이 연결한다 */
+  onShockwave?: (owner: BaseCharacter, atk: AttackConfig) => void;
+
   /** 대시 포즈가 유지되는 시각 */
   private dashUntil = 0;
   /** 다음 대시가 가능한 시각 */
@@ -320,6 +340,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (skill.selfLaunch) {
       this.body.setVelocityY(skill.selfLaunch);
       this.jumpsLeft = 0;
+
+      // 솟구친 뒤 내리꽂는 스킬이면 정점에서 하강으로 전환한다
+      if (skill.divePlunge) this.diving = { atk: skill, phase: 'rising' };
     }
 
     this.say(this.pickQuote('skill'), this.cfg.colors.accent);
@@ -660,9 +683,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 머리 위 말풍선. 짧은 간격의 연속 호출은 무시된다. */
   say(text: string, color = 0xffffff): void {
     if (!text || !this.alive) return;
+
     const now = this.scene.time.now;
-    if (now - this.lastSayAt < 500) return;
+    if (now - this.lastSayAt < 900) return;
+    // 다른 캐릭터가 방금 말했으면 양보한다
+    if (now - lastGlobalSayAt < GLOBAL_SAY_GAP) return;
+
     this.lastSayAt = now;
+    lastGlobalSayAt = now;
 
     const hex = `#${color.toString(16).padStart(6, '0')}`;
     const bubble = this.scene.add
@@ -730,6 +758,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       }
     }
 
+    /* 낙하 공격 — 정점에서 내리꽂고, 착지하면 충격파 */
+    this.tickDive();
+
     /* 착지 판정 — 점프 횟수 복구 + 착지 스쿼시 */
     const onGround = this.body.blocked.down || this.body.touching.down;
     if (onGround) {
@@ -773,6 +804,36 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   private setFacing(dir: -1 | 1): void {
     this.facing = dir;
+  }
+
+  /**
+   * 로켓 드롭 진행.
+   *
+   * 솟구쳐 올라가다 정점(상승 속도가 0에 가까워지는 순간)에서
+   * 강제로 내리꽂고, 지면에 닿으면 광역 충격파를 낸다.
+   */
+  private tickDive(): void {
+    if (!this.diving) return;
+
+    if (this.diving.phase === 'rising') {
+      // 정점 도달 → 하강 전환
+      if (this.body.velocity.y > -60) {
+        this.diving.phase = 'falling';
+        this.body.setVelocityY(this.diving.atk.divePlunge!.speed);
+        this.pulseSquash(0.7, 1.4, 160);
+        sound.play('skill');
+      }
+      return;
+    }
+
+    // 하강 중 — 착지하면 충격파
+    const landed = this.body.blocked.down || this.body.touching.down;
+    if (!landed) return;
+
+    const atk = this.diving.atk;
+    this.diving = null;
+    this.pulseSquash(1.6, 0.55, 200);
+    this.onShockwave?.(this, atk);
   }
 
   /**

@@ -231,8 +231,13 @@ export const CHARACTERS: Record<CharacterId, CharacterConfig> = {
       shake: 0.022,
       cooldown: 11000,
       effect: 'none',
-      // 시전과 동시에 로켓처럼 솟구친다
-      selfLaunch: -520,
+      // 로켓처럼 솟구쳤다가 내리꽂고, 착지 지점에 충격파가 퍼진다
+      selfLaunch: -760,
+      divePlunge: {
+        speed: 1500,
+        shockRange: 420,
+        shockDamage: 22,
+      },
     },
 
     quotes: {

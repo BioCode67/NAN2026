@@ -318,6 +318,68 @@ export class CombatSystem {
   /* ================================================================ */
 
   /**
+   * 착지 충격파 — 로켓 드롭이 지면에 꽂힌 순간.
+   * 시전자 좌우로 넓게 퍼지며, 멀수록 피해가 줄어든다.
+   */
+  triggerShockwave(owner: BaseCharacter, atk: AttackConfig): void {
+    const dive = atk.divePlunge;
+    if (!dive) return;
+
+    sound.play('hitHeavy');
+    this.applyHitstop(150);
+    this.scene.cameras.main.shake(280, 0.03);
+
+    const groundY = owner.y + FIGHTER.BODY_H / 2;
+
+    /* 좌우로 퍼지는 충격파 링 */
+    for (const dir of [-1, 1]) {
+      const wave = this.scene.add
+        .ellipse(owner.x, groundY, 40, 30, owner.cfg.colors.accent, 0.55)
+        .setDepth(DEPTH.IMPACT);
+      this.scene.tweens.add({
+        targets: wave,
+        x: owner.x + dir * dive.shockRange,
+        scaleX: 6,
+        scaleY: 2.4,
+        alpha: 0,
+        duration: 420,
+        ease: 'Quad.easeOut',
+        onComplete: () => wave.destroy(),
+      });
+    }
+    this.impactEmitter.setParticleTint(owner.cfg.colors.accent);
+    this.impactEmitter.emitParticleAt(owner.x, groundY, 30);
+
+    /* 지면에 있는 상대에게만 맞는다 — 공중으로 피할 수 있게 */
+    for (const target of this.fighters) {
+      if (target === owner || !target.alive || target.isInvulnerable()) continue;
+
+      const dx = Math.abs(target.x - owner.x);
+      if (dx > dive.shockRange) continue;
+      if (Math.abs(target.y - owner.y) > 90) continue;
+
+      // 중심에서 멀수록 약해진다 (최소 40%)
+      const falloff = Math.max(0.4, 1 - dx / dive.shockRange);
+      const shockAtk: AttackConfig = {
+        ...atk,
+        damage: dive.shockDamage * falloff,
+        knockbackX: 520,
+        knockbackY: -620,
+        hitstun: 460,
+      };
+
+      target.receiveHit(shockAtk, owner.x);
+      const result = this.stock.applyHit(
+        owner,
+        target,
+        Math.max(1, shockAtk.damage * target.getDamageTakenMultiplier()),
+      );
+      this.floatText(target.x, target.y - 40, `-${result.damage}%`, '#ff5a5a');
+      this.floatText(owner.x, owner.y - 80, `+${result.absorbed}%`, '#5affa0');
+    }
+  }
+
+  /**
    * 스킬 시전 순간에 발동하는 효과 (적중 여부와 무관).
    * BattleScene이 스킬 사용 직후 호출한다.
    */

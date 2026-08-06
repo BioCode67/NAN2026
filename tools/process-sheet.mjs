@@ -269,7 +269,7 @@ for (let sy = 0; sy < H; sy++) {
     if (bg[start] || comp[start] >= 0) continue;
 
     const id = comps.length;
-    const box = { x0: sx, x1: sx, y0: sy, y1: sy, area: 0, colored: 0 };
+    const box = { x0: sx, x1: sx, y0: sy, y1: sy, area: 0, colored: 0, bw: 0 };
     const q = [start];
     comp[start] = id;
 
@@ -280,6 +280,11 @@ for (let sy = 0; sy < H; sy++) {
       box.area++;
       // 채도 있는 픽셀 비율 — 라벨 텍스트(흑백)와 손·로고(유채색)를 가른다
       if (!isGray(p * 4)) box.colored++;
+      // 순백/순흑 비율 — 라벨은 흰 글자 + 검은 외곽선이라 이 비율이 매우 높다
+      else {
+        const l = lum(p * 4);
+        if (l > 200 || l < 60) box.bw++;
+      }
       if (x < box.x0) box.x0 = x;
       if (x > box.x1) box.x1 = x;
       if (y < box.y0) box.y0 = y;
@@ -312,44 +317,124 @@ console.log(`연결 요소 ${comps.length}개`);
  * 묶은 뒤에 지우려 하면 라벨이 캐릭터와 한 덩어리가 되어 분리할 수 없다.
  */
 const LETTER_MAX_H = 100;
-const LETTER_MAX_COLOR_RATIO = 0.12;
+/** 라벨로 보려면 흑백 픽셀이 이 비율 이상이어야 한다 */
+const LETTER_MIN_BW_RATIO = 0.5;
 
-const alive = comps.filter((c) => {
-  if (c.area < 150) return false;
-  const h = c.y1 - c.y0 + 1;
-  const colorRatio = c.colored / c.area;
-  const isLetter = h <= LETTER_MAX_H && colorRatio < LETTER_MAX_COLOR_RATIO;
-  return !isLetter;
-});
+/*
+ * "채도가 낮으면 라벨"로 판정하면 안 된다.
+ * 흰 글자와 마젠타 배경 사이의 안티에일리어싱이 분홍색이라
+ * 글자 면적의 상당 부분이 유채색으로 세어져 판정이 뒤집힌다.
+ * 순백/순흑 비율로 보면 이 문제를 피할 수 있다 —
+ * 캐릭터는 살색·옷색이 대부분이라 이 비율이 낮다.
+ */
+const isLetter = (c) =>
+  c.y1 - c.y0 + 1 <= LETTER_MAX_H && c.bw / c.area >= LETTER_MIN_BW_RATIO;
+
+const big = comps.filter((c) => c.area >= 150);
+const letters = big.filter(isLetter);
+const alive = big.filter((c) => !isLetter(c));
+
+/** 라벨로 판정된 연결 요소의 id — 복사 단계에서 걸러낸다 */
+const letterPixels = new Set(
+  comps.map((c, i) => (c.area >= 150 && isLetter(c) ? i : -1)).filter((i) => i >= 0),
+);
 console.log(`요소 ${comps.length}개 → 라벨 글자 제외 후 ${alive.length}개`);
 
-/* 남은 것끼리 근접 병합 (캐릭터 + 이펙트) */
-const MERGE_PAD = 26;
+/** 상자 목록을 여백 안에서 서로 겹치면 하나로 묶는다 */
+function mergeBoxes(list, padX, padY, canMerge = () => true) {
+  const out = list.map((c) => ({ ...c }));
+  let merged = true;
 
-const clusters = alive.map((c) => ({ ...c }));
-let merged = true;
-while (merged) {
-  merged = false;
-  outer: for (let i = 0; i < clusters.length; i++) {
-    for (let j = i + 1; j < clusters.length; j++) {
-      const a = clusters[i];
-      const b = clusters[j];
-      const overlap =
-        a.x0 - MERGE_PAD <= b.x1 &&
-        b.x0 - MERGE_PAD <= a.x1 &&
-        a.y0 - MERGE_PAD <= b.y1 &&
-        b.y0 - MERGE_PAD <= a.y1;
-      if (!overlap) continue;
-      a.x0 = Math.min(a.x0, b.x0);
-      a.x1 = Math.max(a.x1, b.x1);
-      a.y0 = Math.min(a.y0, b.y0);
-      a.y1 = Math.max(a.y1, b.y1);
-      a.area += b.area;
-      clusters.splice(j, 1);
-      merged = true;
-      break outer;
+  while (merged) {
+    merged = false;
+    outer: for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const a = out[i];
+        const b = out[j];
+        const touch =
+          a.x0 - padX <= b.x1 &&
+          b.x0 - padX <= a.x1 &&
+          a.y0 - padY <= b.y1 &&
+          b.y0 - padY <= a.y1;
+        if (!touch || !canMerge(a, b)) continue;
+
+        a.x0 = Math.min(a.x0, b.x0);
+        a.x1 = Math.max(a.x1, b.x1);
+        a.y0 = Math.min(a.y0, b.y0);
+        a.y1 = Math.max(a.y1, b.y1);
+        a.area += b.area;
+        out.splice(j, 1);
+        merged = true;
+        break outer;
+      }
     }
   }
+  return out;
+}
+
+/*
+ * 라벨을 격자 앵커로 쓴다.
+ *
+ * 근접 병합만으로는 이펙트가 큰 시트에서 무너진다 — 로켓 화염이나 폭발이
+ * 옆 프레임까지 뻗으면 인접 프레임이 통째로 한 덩어리가 되어버린다.
+ * 라벨이 있으면 프레임마다 정확히 하나씩, 아래에 붙어 있으므로
+ * 그 x 중심이 곧 프레임의 열 위치다. 이걸 경계로 삼으면 화염이 아무리
+ * 번져도 프레임이 섞이지 않는다.
+ */
+const words = mergeBoxes(letters, 46, 14).filter(
+  (w) => w.x1 - w.x0 > 30, // 글자 하나짜리 노이즈 제외
+);
+
+let clusters;
+
+if (words.length >= 4) {
+  console.log(`라벨 ${words.length}개를 격자 앵커로 사용`);
+
+  // 라벨을 y로 묶어 행을 만든다
+  const rows = [];
+  for (const w of words.slice().sort((a, b) => a.y0 - b.y0)) {
+    const cy = (w.y0 + w.y1) / 2;
+    const row = rows.find((r) => Math.abs(r.cy - cy) < 120);
+    if (row) {
+      row.items.push(w);
+      row.cy = (row.cy * (row.items.length - 1) + cy) / row.items.length;
+    } else {
+      rows.push({ cy, items: [w] });
+    }
+  }
+  rows.forEach((r) => r.items.sort((a, b) => a.x0 - b.x0));
+
+  /** 이 요소가 속한 (행, 열) — 라벨은 스프라이트 아래에 있다 */
+  const anchorOf = (c) => {
+    const cx = (c.x0 + c.x1) / 2;
+    // 요소의 아래쪽 끝보다 아래에 있는 가장 가까운 행
+    let best = null;
+    for (let ri = 0; ri < rows.length; ri++) {
+      const d = rows[ri].cy - c.y1;
+      if (d < -60) continue; // 이 행보다 훨씬 아래에 있는 요소
+      if (!best || d < best.d) best = { ri, d };
+    }
+    const ri = best ? best.ri : rows.length - 1;
+
+    // 그 행에서 x가 가장 가까운 라벨
+    let ci = 0;
+    let bd = Infinity;
+    rows[ri].items.forEach((w, k) => {
+      const d = Math.abs((w.x0 + w.x1) / 2 - cx);
+      if (d < bd) {
+        bd = d;
+        ci = k;
+      }
+    });
+    return `${ri}:${ci}`;
+  };
+
+  alive.forEach((c) => (c.anchor = anchorOf(c)));
+  // 같은 칸에 배정된 것끼리만 병합한다
+  clusters = mergeBoxes(alive, 26, 26, (a, b) => a.anchor === b.anchor);
+} else {
+  // 라벨이 없는 시트(권장 형식) — 순수 근접 병합
+  clusters = mergeBoxes(alive, 26, 26);
 }
 
 /* 라벨 텍스트 제거 — 캐릭터에 비해 낮고 납작하다 */
@@ -403,6 +488,12 @@ frames.forEach((f, n) => {
     for (let x = 0; x < fw; x++) {
       const src = (f.y0 + y) * W + (f.x0 + x);
       if (bg[src]) continue;
+      /*
+       * 경계상자 안이라고 전부 복사하면 안 된다 —
+       * 프레임 아래 라벨이 상자에 걸치면 글자가 그대로 딸려 들어간다.
+       * 라벨로 판정된 연결 요소의 픽셀은 건너뛴다.
+       */
+      if (letterPixels.has(comp[src])) continue;
       const si = src * 4;
       const di = ((oy + y) * out.width + (ox + x)) * 4;
       out.data[di] = data[si];

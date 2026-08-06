@@ -42,6 +42,11 @@ export interface SpriteSheetDef {
    * (스티브 잡스 시트는 오른쪽을 보고 있어 false)
    */
   facesLeft?: boolean;
+  /**
+   * 캐릭터 없이 이펙트만 그려진 프레임.
+   * 로켓 드롭 착지 폭발처럼 캐릭터와 분리해 쓰는 연출에 사용한다.
+   */
+  explosionFrame?: number;
 }
 
 /**
@@ -69,6 +74,29 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
       // 7 = 에너지볼 발사 자세. 8은 캐릭터가 아니라 투사체 단독 스프라이트라
       // 포즈가 아니라 skill.projectile.frame 으로 쓴다.
       skill: 7,
+      hit: 9,
+      knockback: 10,
+      guard: 11,
+      dash: 12,
+      win: 13,
+      lose: 14,
+    },
+  },
+
+  musk: {
+    key: 'elonmusk',
+    displayHeight: 116,
+    frameRate: 10,
+    explosionFrame: 8,
+    poses: {
+      idle: 0,
+      walk: 1,
+      run: [2, 3],
+      jump: 4,
+      attackJ: 5,
+      attackK: 6,
+      skill: 7,
+      // 8 = 캐릭터 없이 폭발만 있는 프레임 → 로켓 드롭 착지 충격파로 쓴다
       hit: 9,
       knockback: 10,
       guard: 11,

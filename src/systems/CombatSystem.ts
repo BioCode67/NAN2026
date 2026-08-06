@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { DEPTH, FIGHTER, GAME, IMPACT } from '../config/gameConfig';
+import { SPRITE_SHEETS } from '../config/spriteSheets';
 import type { AttackConfig } from '../types';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
@@ -331,19 +332,51 @@ export class CombatSystem {
 
     const groundY = owner.y + FIGHTER.BODY_H / 2;
 
-    /* 좌우로 퍼지는 충격파 링 */
+    /*
+     * 시트에 폭발 전용 프레임이 있으면 그것으로 터뜨린다.
+     * (머스크 시트의 8번 프레임이 캐릭터 없는 폭발이라 여기에 딱 맞는다)
+     */
+    const sheet = SPRITE_SHEETS[owner.cfg.id];
+    const boomFrame = sheet?.explosionFrame;
+    if (boomFrame !== undefined && this.scene.textures.exists(sheet!.key)) {
+      for (const dir of [-1, 1]) {
+        const boom = this.scene.add
+          .sprite(owner.x, groundY - 20, sheet!.key, boomFrame)
+          .setDepth(DEPTH.IMPACT)
+          .setScale(dir * 0.3, 0.3);
+        this.scene.tweens.add({
+          targets: boom,
+          x: owner.x + dir * dive.shockRange * 0.5,
+          scaleX: dir * 0.75,
+          scaleY: 0.6,
+          alpha: 0,
+          duration: 440,
+          ease: 'Quad.easeOut',
+          onComplete: () => boom.destroy(),
+        });
+      }
+    }
+
+    /*
+     * 지면을 따라 퍼지는 충격파.
+     * 채워진 타원으로 그리면 화면을 덮는 색 덩어리로 보인다 —
+     * 테두리만 남긴 납작한 링이라야 "퍼져 나간다"로 읽힌다.
+     */
     for (const dir of [-1, 1]) {
       const wave = this.scene.add
-        .ellipse(owner.x, groundY, 40, 30, owner.cfg.colors.accent, 0.55)
+        .ellipse(owner.x, groundY - 6, 60, 22)
         .setDepth(DEPTH.IMPACT);
+      wave.isFilled = false;
+      wave.setStrokeStyle(5, owner.cfg.colors.accent, 0.95);
+
       this.scene.tweens.add({
         targets: wave,
-        x: owner.x + dir * dive.shockRange,
-        scaleX: 6,
-        scaleY: 2.4,
+        x: owner.x + dir * dive.shockRange * 0.7,
+        scaleX: 4.5,
+        scaleY: 1.6,
         alpha: 0,
-        duration: 420,
-        ease: 'Quad.easeOut',
+        duration: 400,
+        ease: 'Cubic.easeOut',
         onComplete: () => wave.destroy(),
       });
     }

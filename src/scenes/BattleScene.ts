@@ -35,7 +35,7 @@ import {
 } from '../config/gameConfig';
 import { BaseCharacter, resetQuoteThrottle } from '../characters/BaseCharacter';
 import { buildPortrait } from '../characters/CharacterArt';
-import { AI_PROMPTS, readPrompt } from '../config/gimmicks';
+import { AI_PROMPTS, gimmickById, readPrompt } from '../config/gimmicks';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
@@ -179,6 +179,8 @@ export class BattleScene extends Phaser.Scene {
   private netHits: number[][] = [];
   /** 회선이 끊겼을 때 한 번만 알린다 */
   private netEnded = false;
+  /** 참가자가 보낸 문장을 기다리는 중인 약속 (호스트) */
+  private remoteSaid?: (text: string) => void;
   /**
    * 회선이 실제로 오가고 있는가 (검사·디버그용).
    *
@@ -844,6 +846,34 @@ export class BattleScene extends Phaser.Scene {
 
     net.onSnapshot = (snap) => this.applySnapshot(snap);
 
+    /*
+     * 오브를 깬 사람이 문장을 입력할 차례다.
+     *
+     * 넷이 붙는 판에서 이 순간은 전원이 멈춰 지켜보는 시간이다 —
+     * 한 사람만 멈추면 나머지는 그동안 계속 싸워서 불공평하다.
+     */
+    net.onAsk = (slot, who, accent) => {
+      const mine = slot === (this.battleData.netSlot ?? 0);
+      void this.awaitPrompt(mine, who, accent);
+    };
+
+    /* 참가자가 보낸 문장 — 호스트가 받아 판에 건다 */
+    net.onSaid = (text) => this.remoteSaid?.(text);
+
+    /* 무엇이 걸렸는지 — 참가자는 이걸 받아 같은 화면을 그린다 */
+    net.onGimmick = (ids, text, who, note) => {
+      this.resumeAll();
+      ids.forEach((id, i) => {
+        const spec = gimmickById(id);
+        if (!spec) return;
+        this.time.delayedCall(i * 650, () => {
+          if (!this.scene.isActive()) return;
+          this.gimmicks.activate(spec, text, this.time.now, note);
+        });
+      });
+      if (who) this.announce(`${who}의 명령`, '#f472b6', 900);
+    };
+
     net.onClose = (reason) => {
       if (this.netEnded) return;
       this.netEnded = true;
@@ -935,6 +965,8 @@ export class BattleScene extends Phaser.Scene {
       snap.hit = this.netHits.slice(0, 8);
       this.netHits.length = 0;
     }
+    // 오브는 이 게임의 중심 장치다 — 안 보이면 판이 왜 멈추는지 알 수가 없다
+    snap.orb = this.orbs.snapshot();
     if (!this.battleActive) {
       const alive = this.fighters.findIndex((f) => f.alive);
       snap.over = alive;
@@ -967,6 +999,7 @@ export class BattleScene extends Phaser.Scene {
     for (const h of snap.hit ?? []) {
       this.combat.playRemoteHit(h[0]!, h[1]!, h[2]!, h[3] === 1);
     }
+    this.orbs.applyRemote(snap.orb, this.time.now);
 
     if (snap.over !== undefined && this.battleActive) {
       this.battleActive = false;
@@ -1685,6 +1718,28 @@ export class BattleScene extends Phaser.Scene {
     breaker.playPromptCast();
     let text: string;
 
+    /*
+     * 온라인에서는 오브를 깬 사람이 누구인지부터 가린다.
+     *
+     * 호스트가 판을 계산하므로 오브도 호스트에서 깨지는데, 정작 깬 사람은
+     * 다른 기계에 앉아 있을 수 있다. 그 사람에게 입력창을 띄우고 문장이
+     * 돌아올 때까지 기다려야 한다 — 안 그러면 남이 깬 오브를 호스트가
+     * 대신 입력하게 된다.
+     */
+    if (this.netRole === 'host') {
+      const slot = this.humans.findIndex((h) => h.fighter === breaker);
+      if (slot >= 0) {
+        net.sendAsk(slot, breaker.cfg.name, breaker.cfg.colors.accent);
+        text = await this.awaitPrompt(slot === 0, breaker.cfg.name, breaker.cfg.colors.accent);
+      } else {
+        text = Phaser.Utils.Array.GetRandom(AI_PROMPTS);
+        breaker.say(text, breaker.cfg.colors.accent);
+      }
+      this.applyPrompt(text, breaker.cfg.name);
+      this.prompting = false;
+      return;
+    }
+
     if (breaker.side === 'player') {
       /* 입력하는 동안 전투를 멈춘다 — 타이핑 중에 맞으면 억울하다 */
       this.physics.world.pause();
@@ -1712,6 +1767,19 @@ export class BattleScene extends Phaser.Scene {
      * 하나만 골라 버리면 플레이어가 쓴 말의 절반을 흘린 것이고,
      * 그러면 다음부터는 짧게만 쓰게 된다 — 길게 쓸 이유가 없어지므로.
      */
+    this.applyPrompt(text, breaker.cfg.name);
+    this.prompting = false;
+  }
+
+  /**
+   * 문장을 읽어 판에 건다.
+   *
+   * 한 문장에 두 가지가 들어 있으면 둘 다 건다. "달에서 한방에 끝내자"는
+   * 장소와 규칙을 동시에 말하고 있다. 하나만 골라 버리면 플레이어가 쓴 말의
+   * 절반을 흘린 것이고, 그러면 다음부터는 짧게만 쓰게 된다 —
+   * 길게 쓸 이유가 없어지므로.
+   */
+  private applyPrompt(text: string, who: string): void {
     const reading = readPrompt(text);
     const note =
       `AI 해석: ${reading.reason} · 확신 ${Math.round(reading.confidence * 100)}%`;
@@ -1727,7 +1795,52 @@ export class BattleScene extends Phaser.Scene {
       });
     }
 
+    /* 참가자들에게도 같은 것을 걸어 화면을 맞춘다 */
+    if (this.netRole === 'host') {
+      const ids = [reading.primary.id];
+      if (reading.secondary) ids.push(reading.secondary.id);
+      net.sendGimmick(ids, text, who, note);
+    }
+  }
+
+  /**
+   * 문장이 들어올 때까지 판을 멈추고 기다린다.
+   *
+   * 내 차례면 입력창을 띄우고, 남의 차례면 누가 쓰는 중인지 알린다.
+   * 넷이 붙는 판에서 한 사람만 멈추면 나머지는 그동안 계속 싸워서 불공평하다 —
+   * 전원이 같이 멈춰 지켜본다.
+   */
+  private async awaitPrompt(mine: boolean, who: string, accent: number): Promise<string> {
+    const hex = `#${accent.toString(16).padStart(6, '0')}`;
+    this.prompting = true;
+    this.physics.world.pause();
+
+    if (!mine) {
+      this.announce(`${who}가 명령을 입력 중…`, hex, 2400);
+      const text = await new Promise<string>((resolve) => {
+        this.remoteSaid = resolve;
+        // 상대가 창을 닫거나 회선이 끊겨도 판이 영영 멈춰 있으면 안 된다
+        this.time.delayedCall(15000, () => resolve(''));
+      });
+      this.remoteSaid = undefined;
+      this.resumeAll();
+      return text;
+    }
+
+    if (this.input.keyboard) this.input.keyboard.enabled = false;
+    const result = await openPromptOverlay(who, hex);
+    if (this.input.keyboard) this.input.keyboard.enabled = true;
+
+    this.resumeAll();
+    // 참가자면 호스트가 판에 걸어야 하므로 보내 준다
+    if (this.netRole === 'guest') net.sendSaid(result.text);
+    return result.text;
+  }
+
+  /** 멈춰 둔 판을 되돌린다 (입력이 끝났거나 회선이 끊겼거나) */
+  private resumeAll(): void {
     this.prompting = false;
+    if (this.scene.isActive()) this.physics.world.resume();
   }
 
   private checkBattleEnd(): void {

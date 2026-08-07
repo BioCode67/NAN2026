@@ -370,6 +370,86 @@ try {
   }
 
   await shot(host, 'after-input');
+
+  /* --- 프롬프트 오브가 회선을 건너가는가 ----------------------------- */
+  {
+    /*
+     * 이 게임의 정체성이 프롬프트다. 온라인에서만 그게 빠져 있으면
+     * 심사위원이 온라인으로 보는 순간 이 게임의 핵심을 못 본다.
+     *
+     * 확인하는 것은 셋이다 — 오브가 참가자 화면에도 보이는가,
+     * 참가자가 깨면 **그 사람에게** 입력창이 뜨는가,
+     * 그 문장으로 걸린 규칙이 모두의 화면에 반영되는가.
+     */
+    const guest = guests[0];
+
+    // 참가자 캐릭터 바로 앞에 오브를 세우고 참가자가 마지막 타를 넣게 한다
+    await host.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.orbs.start(false);
+      s.orbs.nextSpawnAt = 0;
+    });
+
+    const seen = await guest
+      .waitForFunction(() => window.game.scene.getScene('Battle').orbs.isActive(), null, {
+        timeout: 20000,
+      })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!seen) {
+      errors.push('[온라인] 참가자 화면에 오브가 안 보입니다');
+    } else {
+      console.log('  ✓ 오브가 참가자 화면에도 뜬다');
+      await shot(guest, 'orb-guest');
+
+      /* 참가자가 깬다 — 호스트에서 그 자리 파이터로 마지막 타를 넣는다 */
+      await host.evaluate(() => {
+        const s = window.game.scene.getScene('Battle');
+        const me = s.fighters[1];
+        s.orbs.onBreak?.(me);
+      });
+
+      const asked = await guest
+        .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 12000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!asked) {
+        errors.push('[온라인] 참가자가 깼는데 참가자에게 입력창이 안 뜹니다');
+      } else {
+        console.log('  ✓ 깬 사람에게 입력창이 뜬다 (호스트가 대신 치지 않는다)');
+        await shot(guest, 'orb-prompt-guest');
+
+        await guest.fill('[data-testid="prompt-input"]', '달로 보내줘');
+        await guest.keyboard.press('Enter');
+
+        /* 호스트 화면에도 같은 규칙이 걸려야 한다 */
+        const applied = await host
+          .waitForFunction(
+            () => window.game.scene.getScene('Battle').gimmicks.getActive().length > 0,
+            null,
+            { timeout: 12000 },
+          )
+          .then(() => true)
+          .catch(() => false);
+
+        if (!applied) {
+          errors.push('[온라인] 참가자가 쓴 문장이 판에 걸리지 않았습니다');
+        } else {
+          const what = await host.evaluate(() =>
+            window.game.scene
+              .getScene('Battle')
+              .gimmicks.getActive()
+              .map((a) => a.spec.name)
+              .join(', '),
+          );
+          console.log(`  ✓ 참가자의 문장이 호스트 판에 걸린다 — ${what}`);
+        }
+        await shot(host, 'orb-applied-host');
+      }
+    }
+  }
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg !== '__skip__') errors.push(`[중단] ${msg}`);

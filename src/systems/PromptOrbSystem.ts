@@ -101,6 +101,39 @@ export class PromptOrbSystem {
     return this.orb !== null && !this.orb.dead;
   }
 
+  /**
+   * 오브의 현재 모습 — 온라인에서 회선으로 보낸다.
+   * [x, y, 남은 체력 0~100]. 오브가 없으면 undefined.
+   */
+  snapshot(): number[] | undefined {
+    const o = this.orb;
+    if (!o || o.dead) return undefined;
+    return [Math.round(o.root.x), Math.round(o.root.y), Math.round((o.hp / ORB_HP) * 100)];
+  }
+
+  /**
+   * 회선으로 받은 오브를 그린다 (참가자 쪽).
+   *
+   * 참가자는 판을 계산하지 않으므로 오브도 스스로 못 만든다. 그런데 오브는
+   * 이 게임의 중심 장치라, 안 보이면 **왜 갑자기 판이 멈추고 규칙이 바뀌는지**
+   * 알 수가 없다. 위치와 남은 체력만 받아 같은 그림을 세운다.
+   */
+  applyRemote(state: number[] | undefined, time: number): void {
+    if (!state) {
+      // 호스트 쪽에서 사라졌다 — 여기서도 치운다
+      if (this.orb && !this.orb.dead) this.escape(time);
+      return;
+    }
+    if (!this.orb || this.orb.dead) {
+      this.spawn(time, state[0], state[1]);
+    }
+    const o = this.orb;
+    if (!o) return;
+    o.root.setPosition(state[0]!, state[1]!);
+    o.hp = Math.max(1, Math.round((state[2]! / 100) * ORB_HP));
+    this.refreshLook();
+  }
+
   update(time: number, delta: number): void {
     if (!this.orb && time >= this.nextSpawnAt) this.spawn(time);
     if (!this.orb) return;
@@ -116,9 +149,10 @@ export class PromptOrbSystem {
   /* 등장                                                             */
   /* ================================================================ */
 
-  private spawn(time: number): void {
-    const cx = Phaser.Math.Between(STAGE.LEFT + 320, STAGE.RIGHT - 320);
-    const cy = Phaser.Math.Between(240, 390);
+  private spawn(time: number, atX?: number, atY?: number): void {
+    // 온라인 참가자는 호스트가 정한 자리에 세운다 (각자 뽑으면 딴 데 뜬다)
+    const cx = atX ?? Phaser.Math.Between(STAGE.LEFT + 320, STAGE.RIGHT - 320);
+    const cy = atY ?? Phaser.Math.Between(240, 390);
 
     /*
      * 생성한 오브 그림이 있으면 그걸 쓴다.
@@ -270,16 +304,7 @@ export class PromptOrbSystem {
     this.scene.cameras.main.shake(90, 0.006);
 
     /* 맞을수록 갈라지고 붉어진다 — 남은 체력이 눈으로 보인다 */
-    const left = Phaser.Math.Clamp(o.hp / ORB_HP, 0, 1);
-    if (o.sprite) {
-      o.sprite.setFrame(
-        left > 0.66 ? ORB_FRAME.INTACT : left > 0.33 ? ORB_FRAME.CRACKED : ORB_FRAME.CRITICAL,
-      );
-    }
-    o.core?.setFillStyle(
-      Phaser.Display.Color.GetColor(255, Math.round(70 + 130 * left), Math.round(150 * left)),
-      0.95,
-    );
+    this.refreshLook();
 
     this.scene.tweens.killTweensOf(o.root);
     o.root.setScale(1.3);
@@ -349,6 +374,28 @@ export class PromptOrbSystem {
     this.orb = null;
     this.nextSpawnAt = time + SPAWN_INTERVAL;
     this.announce('오브가 달아났다…', '#7f93bd');
+  }
+
+  /**
+   * 남은 체력을 그림에 반영한다.
+   *
+   * 맞는 순간과 회선으로 상태를 받은 순간이 같은 그림을 그려야 한다 —
+   * 따로 쓰면 참가자 화면의 오브만 끝까지 멀쩡해 보인다.
+   */
+  private refreshLook(): void {
+    const o = this.orb;
+    if (!o) return;
+
+    const left = Phaser.Math.Clamp(o.hp / ORB_HP, 0, 1);
+    if (o.sprite) {
+      o.sprite.setFrame(
+        left > 0.66 ? ORB_FRAME.INTACT : left > 0.33 ? ORB_FRAME.CRACKED : ORB_FRAME.CRITICAL,
+      );
+    }
+    o.core?.setFillStyle(
+      Phaser.Display.Color.GetColor(255, Math.round(70 + 130 * left), Math.round(150 * left)),
+      0.95,
+    );
   }
 
   /* ================================================================ */

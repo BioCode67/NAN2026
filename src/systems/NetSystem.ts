@@ -58,6 +58,8 @@ export interface NetSnapshot {
   f: number[][];
   /** 이번 구간에 일어난 타격 [x, y, 색, 마무리인가] */
   hit?: number[][];
+  /** 프롬프트 오브 [x, y, 남은체력 0~100]. 없으면 오브가 없다 */
+  orb?: number[];
   /** 판이 끝났으면 이긴 자리 번호 (-1 = 전원 탈락) */
   over?: number;
 }
@@ -70,6 +72,12 @@ export interface NetLobby {
 
 type Message =
   | { t: 'hello' }
+  /** 오브를 깬 사람이 문장을 입력할 차례다 — 전원이 멈추고 지켜본다 */
+  | { t: 'ask'; slot: number; who: string; accent: number }
+  /** 입력한 문장 (참가자 → 호스트) */
+  | { t: 'said'; text: string }
+  /** 걸린 기믹 — 참가자는 이걸 받아 같은 화면을 그린다 */
+  | { t: 'gimmick'; ids: string[]; text: string; who: string; note: string }
   | { t: 'welcome'; slot: number }
   | { t: 'full' }
   | { t: 'pick'; slot: number; c: CharacterId }
@@ -218,6 +226,12 @@ export class NetSystem {
   onLobby?: (lobby: NetLobby) => void;
   onStart?: (d: NetStart) => void;
   onInput?: (slot: number, held: number, taps: number) => void;
+  /** 누군가 문장을 입력할 차례가 됐다 */
+  onAsk?: (slot: number, who: string, accent: number) => void;
+  /** 참가자가 문장을 보냈다 (호스트에서만) */
+  onSaid?: (text: string) => void;
+  /** 기믹이 걸렸다 — 화면을 맞춘다 */
+  onGimmick?: (ids: string[], text: string, who: string, note: string) => void;
   onSnapshot?: (d: NetSnapshot) => void;
   onClose?: (reason: string) => void;
 
@@ -413,6 +427,21 @@ export class NetSystem {
     this.transportSend({ t: 'snap', d });
   }
 
+  /** 호스트 → 전원. 이 자리 사람이 문장을 입력할 차례다 */
+  sendAsk(slot: number, who: string, accent: number): void {
+    this.transportSend({ t: 'ask', slot, who, accent });
+  }
+
+  /** 참가자 → 호스트. 입력한 문장 */
+  sendSaid(text: string): void {
+    this.transportSend({ t: 'said', text });
+  }
+
+  /** 호스트 → 전원. 무엇이 걸렸는지 */
+  sendGimmick(ids: string[], text: string, who: string, note: string): void {
+    this.transportSend({ t: 'gimmick', ids, text, who, note });
+  }
+
   close(): void {
     try {
       this.transportSend({ t: 'bye', slot: this.slot });
@@ -528,6 +557,15 @@ export class NetSystem {
         break;
       case 'snap':
         this.onSnapshot?.(msg.d);
+        break;
+      case 'ask':
+        this.onAsk?.(msg.slot, msg.who, msg.accent);
+        break;
+      case 'said':
+        if (this.role === 'host') this.onSaid?.(msg.text);
+        break;
+      case 'gimmick':
+        this.onGimmick?.(msg.ids, msg.text, msg.who, msg.note);
         break;
       case 'bye':
         this.dropGuest(from, '상대가 나갔습니다.');

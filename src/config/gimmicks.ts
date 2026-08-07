@@ -15,6 +15,16 @@ import type { GimmickKind, GimmickSpec } from '../types';
  * 효과의 실제 구현은 GimmickSystem이 id로 분기해 수행한다.
  * 새 기믹을 넣을 때는 여기 항목 하나 + 거기 분기 하나면 끝난다.
  */
+/**
+ * id 로 기믹을 찾는다.
+ *
+ * 온라인에서는 "무엇이 걸렸는가"를 id 하나로 보낸다 — 사양을 통째로 보내면
+ * 회선에 실을 것이 커지고, 양쪽이 같은 표를 갖고 있으므로 그럴 필요도 없다.
+ */
+export function gimmickById(id: string): GimmickSpec | undefined {
+  return GIMMICKS.find((g) => g.id === id);
+}
+
 export const GIMMICKS: GimmickSpec[] = [
   /* ================================================================ */
   /* 아이템 — 즉시 발동. 판을 흔드는 물건이 쏟아진다                    */

@@ -5,6 +5,16 @@ import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
 import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
+import { net } from '../systems/NetSystem';
+import {
+  closeNetOverlay,
+  isNetOverlayOpen,
+  openLobby,
+  showError,
+  showStatus,
+  showWaiting,
+} from '../ui/NetOverlay';
+import { pickStage } from '../config/stages';
 import type { BattleSceneData, CharacterConfig, CharacterId, MoveSlot } from '../types';
 
 /** AI 봇 수 — 명세의 1P vs 3AI */
@@ -94,6 +104,14 @@ export class SelectScene extends Phaser.Scene {
   /** 2인 대전에서 1P가 이미 고른 캐릭터 (null이면 아직 1P 차례) */
   private p1Id: CharacterId | null = null;
 
+  /* --- 온라인 1:1 ------------------------------------------------- */
+  /** 회선이 연결된 상태인가 */
+  private online = false;
+  /** 내가 고른 캐릭터 (보냈다) */
+  private myPick: CharacterId | null = null;
+  /** 상대가 고른 캐릭터 */
+  private foePick: CharacterId | null = null;
+
   constructor() {
     super({ key: 'Select' });
   }
@@ -104,6 +122,10 @@ export class SelectScene extends Phaser.Scene {
     this.detail = undefined;
     this.twoPlayer = false;
     this.p1Id = null;
+    this.online = false;
+    this.myPick = null;
+    this.foePick = null;
+    closeNetOverlay();
 
     /*
      * 화면이 뜨자마자 들어오는 입력은 무시한다.
@@ -211,6 +233,14 @@ export class SelectScene extends Phaser.Scene {
    * 않으면 옆 사람이 남의 캐릭터를 정해 버린다 — 실제로 그렇게 된다.
    */
   private refreshPrompt(): void {
+    if (this.online) {
+      const waiting = this.myPick && !this.foePick;
+      this.prompt.setText(
+        waiting ? '상대가 고르는 중…' : '온라인 대전 — 파이터를 선택하세요',
+      );
+      this.prompt.setColor(waiting ? '#facc15' : '#4ade80');
+      return;
+    }
     if (!this.twoPlayer) {
       this.prompt.setText('파이터를 선택하세요');
       this.prompt.setColor('#cbd5e1');
@@ -229,7 +259,9 @@ export class SelectScene extends Phaser.Scene {
    * 카드가 그대로 1P 차례로 바뀌니 설명도 필요 없다.
    */
   private toggleTwoPlayer(): void {
-    if (this.confirmed || this.detail) return;
+    if (this.confirmed || this.detail || isNetOverlayOpen()) return;
+    // 온라인 중에는 로컬 모드를 못 바꾼다 (상대와 판이 달라진다)
+    if (this.online) return;
 
     this.twoPlayer = !this.twoPlayer;
     this.p1Id = null;
@@ -240,9 +272,122 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private modeText(): string {
+    if (this.online) return '🌐 온라인 1:1  ·  연결됨';
     return this.twoPlayer
-      ? '👥 2인 대전  ·  사람 둘 + 봇 둘   (F2 : 1인으로)'
-      : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전)';
+      ? '👥 2인 대전  ·  사람 둘 + 봇 둘   (F2 : 1인으로 · F3 : 온라인)'
+      : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전 · F3 : 온라인 1:1)';
+  }
+
+  /* ================================================================ */
+  /* 온라인 1:1                                                        */
+  /* ================================================================ */
+
+  /**
+   * 온라인 대전을 연다.
+   *
+   * 연결이 맺어지면 **양쪽이 동시에** 자기 캐릭터를 고른다. 번갈아 고르게
+   * 하면 먼저 고른 쪽이 상대를 보고 맞춰 고를 수 있어 불공평하고,
+   * 기다리는 시간도 두 배가 된다.
+   */
+  private async startOnline(): Promise<void> {
+    if (this.confirmed || this.detail || this.online) return;
+
+    const choice = await openLobby();
+    if (choice.kind === 'cancel') return;
+
+    try {
+      if (choice.kind === 'localHost') {
+        showStatus('다른 탭을 기다리는 중…', '새 탭에서 같은 주소를 열고 "참가"를 누르세요.');
+        await net.connectLocal('host');
+      } else if (choice.kind === 'localGuest') {
+        showStatus('방을 연 탭을 찾는 중…');
+        await net.connectLocal('guest');
+      } else if (choice.kind === 'host') {
+        showStatus('방을 여는 중…');
+        const code = await net.host();
+        showWaiting(code, () => {
+          net.close();
+        });
+        await net.waitForGuest();
+      } else {
+        showStatus('연결하는 중…', choice.code);
+        await net.join(choice.code);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '연결에 실패했습니다.';
+      net.close();
+      showError(msg, () => {
+        /* 로컬 플레이는 그대로 할 수 있다 — 온라인만 못 켠 것이다 */
+      });
+      return;
+    }
+
+    closeNetOverlay();
+    this.online = true;
+    this.twoPlayer = false;
+    this.p1Id = null;
+    sound.play('uiConfirm');
+    this.refreshPrompt();
+    this.modeLabel.setText(this.modeText());
+    this.modeLabel.setColor('#4ade80');
+
+    net.onPick = (c) => {
+      this.foePick = c;
+      this.refreshPrompt();
+      this.tryStartOnline();
+    };
+    net.onStart = (d) => {
+      // 게스트는 호스트가 정한 대로 따라 들어간다
+      this.launch({
+        playerId: d.hostChar,
+        player2Id: d.guestChar,
+        aiIds: [],
+        stageId: d.stageId,
+        duel: true,
+        netRole: 'guest',
+      });
+    };
+    net.onClose = (reason) => {
+      if (this.confirmed) return;
+      this.online = false;
+      this.myPick = null;
+      this.foePick = null;
+      showError(reason, () => this.scene.restart());
+    };
+  }
+
+  /** 둘 다 골랐으면 호스트가 판을 연다 */
+  private tryStartOnline(): void {
+    if (!this.online || this.confirmed) return;
+    if (!this.myPick || !this.foePick) return;
+    if (net.role !== 'host') return;
+
+    const stage = pickStage();
+    const d = {
+      hostChar: this.myPick,
+      guestChar: this.foePick,
+      stageId: stage.id,
+    };
+    net.sendStart(d);
+    this.launch({
+      playerId: d.hostChar,
+      player2Id: d.guestChar,
+      aiIds: [],
+      stageId: d.stageId,
+      duel: true,
+      netRole: 'host',
+    });
+  }
+
+  /** 화면을 넘긴다 (한 곳에서만 전환하도록 모아 둔다) */
+  private launch(data: BattleSceneData): void {
+    if (this.confirmed) return;
+    this.confirmed = true;
+    closeNetOverlay();
+    this.cameras.main.fadeOut(280, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start('Battle', data);
+    });
   }
 
   private buildCards(): void {
@@ -446,7 +591,7 @@ export class SelectScene extends Phaser.Scene {
         GAME.WIDTH / 2,
         680,
         `← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      ` +
-          `TAB · I : 커맨드 14개 자세히      (총 ${CHARACTER_ORDER.length}명 — 고유 메커니즘이 서로 다른 ${AI_COUNT}명이 AI로 참전)`,
+          `TAB · I : 커맨드 14개 자세히      F2 : 2인 대전      F3 : 온라인 1:1      (총 ${CHARACTER_ORDER.length}명)`,
         {
           fontFamily: GAME.FONT,
           fontSize: '15px',
@@ -487,6 +632,7 @@ export class SelectScene extends Phaser.Scene {
      */
     kb.addCapture('TAB');
     kb.on('keydown-F2', () => this.toggleTwoPlayer());
+    kb.on('keydown-F3', () => void this.startOnline());
     kb.on('keydown-TAB', () => this.toggleDetail());
     kb.on('keydown-I', () => this.toggleDetail());
     kb.on('keydown-ESC', () => this.closeDetail());
@@ -666,7 +812,8 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private move(delta: number): void {
-    if (this.confirmed || this.detail) return;
+    // 로비가 떠 있으면 뒤에서 카드가 같이 움직이면 안 된다
+    if (this.confirmed || this.detail || isNetOverlayOpen()) return;
     const next = Phaser.Math.Wrap(
       this.selectedIndex + delta,
       0,
@@ -754,6 +901,7 @@ export class SelectScene extends Phaser.Scene {
       return;
     }
     if (this.confirmed || this.time.now < this.readyAt) return;
+    if (isNetOverlayOpen()) return;
 
     const picked = CHARACTER_ORDER[this.selectedIndex]!;
     const card = this.cards[this.selectedIndex]!;
@@ -765,6 +913,18 @@ export class SelectScene extends Phaser.Scene {
       ease: 'Quad.easeOut',
     });
     sound.play('uiConfirm');
+
+    /*
+     * 온라인은 양쪽이 동시에 고른다 — 내 선택을 보내고 상대를 기다린다.
+     */
+    if (this.online) {
+      if (this.myPick) return;
+      this.myPick = picked;
+      net.sendPick(picked);
+      this.refreshPrompt();
+      this.tryStartOnline();
+      return;
+    }
 
     /*
      * 2인 대전은 한 번 더 고른다.

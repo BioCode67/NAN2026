@@ -1,6 +1,25 @@
 import Phaser from 'phaser';
 import { addBackdrop, hasArt } from '../config/artAssets';
 import { STAGES, STAGE_BY_ID, pickStage } from '../config/stages';
+import {
+  emptyFrame,
+  mergeTaps,
+  packFrame,
+  readKeyFrame,
+  unpackFrame,
+} from '../systems/InputFrame';
+import type { InputFrame } from '../systems/InputFrame';
+import { net } from '../systems/NetSystem';
+import type { NetSnapshot } from '../systems/NetSystem';
+import { POSE_ORDER } from '../config/spriteSheets';
+
+/**
+ * 호스트가 판 상태를 보내는 간격 (ms).
+ *
+ * 매 프레임 보내면 회선이 좁을 때 밀려 오히려 늦게 도착한다. 33ms(초당 30번)면
+ * 눈으로는 부드럽고, 그 사이는 받은 속도로 각자 이어 움직여 메운다.
+ */
+const NET_SEND_MS = 33;
 import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
@@ -125,6 +144,8 @@ export class BattleScene extends Phaser.Scene {
     fighter: BaseCharacter;
     keys: Record<string, Phaser.Input.Keyboard.Key>;
     tap: { dir: -1 | 0 | 1; at: number };
+    /** 회선에서 오는 입력 (온라인 대전에서 상대 쪽). 없으면 키보드를 읽는다 */
+    remote?: () => InputFrame;
   }> = [];
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
@@ -143,6 +164,29 @@ export class BattleScene extends Phaser.Scene {
   private announceLabel?: Phaser.GameObjects.Text;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
   private hudLayer!: Phaser.GameObjects.Container;
+  /* --- 온라인 1:1 결투 ------------------------------------------- */
+  /** 이 판에서 내 역할 (없으면 이 기계 안에서만 도는 판) */
+  private netRole?: 'host' | 'guest';
+  /** 호스트가 보낸 상태를 몇 번째까지 받았는가 — 늦게 온 옛 상태를 버린다 */
+  private netSeq = 0;
+  /** 마지막으로 상태를 보낸 시각 */
+  private lastSnapAt = 0;
+  /** 게스트에게서 받은 최신 입력 (호스트) */
+  private remoteFrame: InputFrame = emptyFrame();
+  /** 전송 사이에 스쳐 간 내 눌림을 모아 둔다 (게스트) */
+  private outTaps: InputFrame = emptyFrame();
+  /** 이번 구간에 일어난 타격 — 게스트 화면에도 같은 연출을 보낸다 */
+  private netHits: number[][] = [];
+  /** 회선이 끊겼을 때 한 번만 알린다 */
+  private netEnded = false;
+  /**
+   * 회선이 실제로 오가고 있는가 (검사·디버그용).
+   *
+   * "연결됐다"와 "입력이 도착한다"는 다른 문제다. 연결만 보고 넘어가면
+   * 조용히 아무것도 안 오는 상태를 못 잡는다.
+   */
+  netStats = { sent: 0, recv: 0 };
+
   /** 화면 밖으로 나간 사람을 가리키는 가장자리 표시 */
   private offscreenMarks: Array<{
     fighter: BaseCharacter;
@@ -190,6 +234,13 @@ export class BattleScene extends Phaser.Scene {
     // 중력은 무대가 정한다. 맵 기믹이 잠시 덮어써도 끝나면 이 값으로 돌아온다
     this.physics.world.gravity.y = GAME.GRAVITY * this.stage.gravityMul;
 
+    this.netRole = data.netRole;
+    this.netEnded = false;
+    this.netSeq = 0;
+    this.remoteFrame = emptyFrame();
+    this.outTaps = emptyFrame();
+    this.netHits = [];
+
     this.buildBackground();
     this.buildStage();
     /*
@@ -200,6 +251,7 @@ export class BattleScene extends Phaser.Scene {
     this.spawnFighters();
     this.setupSystems();
     this.buildHud();
+    this.bindNet();
     this.bindEvents();
     this.playIntro();
 
@@ -562,6 +614,11 @@ export class BattleScene extends Phaser.Scene {
   /* ================================================================ */
 
   private spawnFighters(): void {
+    if (this.battleData.duel) {
+      this.spawnDuel();
+      return;
+    }
+
     const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
     const p2Id = this.battleData.player2Id;
     const total = 1 + (p2Id ? 1 : 0) + this.battleData.aiIds.length;
@@ -647,6 +704,245 @@ export class BattleScene extends Phaser.Scene {
       this.platforms.forEach((p) => this.physics.add.collider(f, p));
     });
     this.physics.add.collider(this.fighters, this.fighters);
+  }
+
+  /**
+   * 1:1 결투 — 둘만 선다.
+   *
+   * 목록 순서를 **호스트 먼저, 게스트 나중**으로 양쪽 기계에서 똑같이 맞춘다.
+   * 상태를 번호로 주고받으므로 순서가 어긋나면 상대 화면에서 두 캐릭터가
+   * 서로의 자리로 순간이동한다. "내 것"이 몇 번인지는 역할에 따라 갈린다.
+   */
+  private spawnDuel(): void {
+    const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
+    const hostId = this.battleData.playerId;
+    const guestId = this.battleData.player2Id ?? this.battleData.playerId;
+
+    const hostFighter = new BaseCharacter(
+      this,
+      STAGE.LEFT + 130,
+      spawnY,
+      CHARACTERS[hostId],
+      'player',
+      'P1',
+    );
+    hostFighter.facing = 1;
+
+    const guestFighter = new BaseCharacter(
+      this,
+      STAGE.RIGHT - 130,
+      spawnY,
+      CHARACTERS[guestId],
+      'player',
+      'P2',
+    );
+    guestFighter.facing = -1;
+
+    this.fighters.push(hostFighter, guestFighter);
+
+    /* 화면마다 "내 것"이 1P 자리에 온다 — 카메라와 HUD가 나를 따라야 한다 */
+    const iAmGuest = this.netRole === 'guest';
+    this.player = iAmGuest ? guestFighter : hostFighter;
+    this.player2 = iAmGuest ? hostFighter : guestFighter;
+
+    this.fighters.forEach((f) => {
+      this.physics.add.collider(f, this.ground);
+      this.platforms.forEach((p) => this.physics.add.collider(f, p));
+    });
+    this.physics.add.collider(this.fighters, this.fighters);
+
+    /*
+     * 누가 무엇을 조종하는가.
+     *
+     * 호스트 — 자기 것은 키보드로, 상대 것은 회선으로 들어온 입력으로.
+     * 게스트 — 아무것도 직접 조종하지 않는다. 입력은 보내기만 하고,
+     *          화면에 보이는 것은 전부 호스트가 계산해 돌려준 결과다.
+     *          그래야 두 화면이 절대 어긋나지 않는다.
+     */
+    if (this.netRole === 'host') {
+      this.humans = [
+        { fighter: hostFighter, keys: this.keys, tap: { dir: 0, at: 0 } },
+        {
+          fighter: guestFighter,
+          keys: {},
+          tap: { dir: 0, at: 0 },
+          remote: () => this.takeRemoteFrame(),
+        },
+      ];
+    } else if (this.netRole === 'guest') {
+      /*
+       * 게스트는 아무것도 직접 조종하지 않지만, **자기 캐릭터가 누구인지는**
+       * 씬이 알아야 한다. 카메라가 따라갈 대상과 화면 밖 표시가 이 목록에서
+       * 나오기 때문이다. 비워 두면 카메라가 전원의 한가운데만 보게 되는데,
+       * 1:1에서 둘이 양 끝에 서 있으면 **둘 다 화면 밖**이 된다.
+       *
+       * 입력은 빈 프레임을 돌려준다 — 조종은 회선 너머 호스트가 한다.
+       */
+      this.humans = [
+        {
+          fighter: this.player,
+          keys: {},
+          tap: { dir: 0, at: 0 },
+          remote: () => emptyFrame(),
+        },
+      ];
+    } else {
+      // 온라인이 아닌 1:1 — 한 키보드로 둘이 (연습용)
+      this.humans = [
+        { fighter: hostFighter, keys: this.keys, tap: { dir: 0, at: 0 } },
+        { fighter: guestFighter, keys: this.keys2, tap: { dir: 0, at: 0 } },
+      ];
+    }
+  }
+
+  /* ================================================================ */
+  /* 온라인 — 호스트가 계산하고 게스트는 그린다                        */
+  /* ================================================================ */
+
+  /** 회선을 이 판에 연결한다 */
+  private bindNet(): void {
+    if (!this.netRole) return;
+
+    net.onInput = (held, taps) => {
+      this.netStats.recv++;
+      const f = unpackFrame(held, taps);
+      // 눌림은 덮어쓰지 않고 쌓는다 — 전송 사이에 스쳐 간 탭이 사라지지 않게
+      mergeTaps(f, this.remoteFrame);
+      this.remoteFrame = f;
+    };
+
+    net.onSnapshot = (snap) => this.applySnapshot(snap);
+
+    net.onClose = (reason) => {
+      if (this.netEnded) return;
+      this.netEnded = true;
+      this.battleActive = false;
+      this.announce(reason, '#ef4444', 2200);
+      this.time.delayedCall(2200, () => this.scene.start('Select'));
+    };
+
+    /* 타격이 일어날 때마다 게스트 화면에도 같은 연출을 보내려고 모아 둔다 */
+    if (this.netRole === 'host') {
+      this.disposers.push(
+        eventBus.on('combat:hit', (e) => {
+          const attacker = this.fighters.find((f) => f.fighterId === e.attackerId);
+          this.netHits.push([
+            Math.round(e.x),
+            Math.round(e.y),
+            attacker?.cfg.colors.accent ?? 0xffffff,
+            e.damage >= 18 ? 1 : 0,
+          ]);
+        }),
+      );
+    }
+  }
+
+  /**
+   * 호스트가 쓰는 "게스트의 이번 프레임 입력".
+   *
+   * 읽고 나면 눌림은 비운다 — 안 비우면 한 번 누른 점프가 회선이 잠깐
+   * 멎을 때까지 매 프레임 다시 발동한다.
+   */
+  private takeRemoteFrame(): InputFrame {
+    const f = this.remoteFrame;
+    this.remoteFrame = {
+      ...emptyFrame(),
+      left: f.left,
+      right: f.right,
+      up: f.up,
+      down: f.down,
+      jumpHeld: f.jumpHeld,
+      heavyHeld: f.heavyHeld,
+    };
+    return f;
+  }
+
+  /**
+   * 게스트 → 호스트. 내 입력만 보낸다.
+   *
+   * 매 프레임 읽되 보내는 것은 전송 주기마다다. 그 사이에 스쳐 간 눌림은
+   * 모아 두었다가 함께 보낸다 — 빠른 탭 하나가 전송 주기 사이에 통째로
+   * 들어가면 그 입력은 아무 데도 안 남기 때문이다.
+   */
+  private sendMyInput(): void {
+    const frame = readKeyFrame(this.keys);
+    mergeTaps(this.outTaps, frame);
+
+    const now = this.time.now;
+    if (now - this.lastSnapAt < NET_SEND_MS) return;
+    this.lastSnapAt = now;
+
+    const merged: InputFrame = { ...frame };
+    mergeTaps(merged, this.outTaps);
+    this.outTaps = emptyFrame();
+
+    const [held, taps] = packFrame(merged);
+    this.netStats.sent++;
+    net.sendInput(held, taps);
+  }
+
+  /** 호스트 → 게스트. 판의 현재 모습을 통째로 보낸다 */
+  private sendSnapshot(time: number): void {
+    if (this.netRole !== 'host' || !net.connected) return;
+    if (time - this.lastSnapAt < NET_SEND_MS) return;
+    this.lastSnapAt = time;
+
+    const snap: NetSnapshot = {
+      n: ++this.netSeq,
+      f: this.fighters.map((f) => [
+        Math.round(f.x),
+        Math.round(f.y),
+        Math.round(f.body.velocity.x),
+        Math.round(f.body.velocity.y),
+        f.facing,
+        f.alive ? 1 : 0,
+        this.stock.get(f.fighterId),
+        Math.max(0, POSE_ORDER.indexOf(f.getPose())),
+      ]),
+    };
+    if (this.netHits.length) {
+      snap.hit = this.netHits.slice(0, 8);
+      this.netHits.length = 0;
+    }
+    if (!this.battleActive) {
+      const alive = this.fighters.findIndex((f) => f.alive);
+      snap.over = alive;
+    }
+
+    net.sendSnapshot(snap);
+  }
+
+  /** 게스트 — 받은 모습을 그대로 그린다 */
+  private applySnapshot(snap: NetSnapshot): void {
+    // 늦게 도착한 옛 상태는 버린다 (되감기면 캐릭터가 뒤로 튄다)
+    if (snap.n <= this.netSeq) return;
+    this.netSeq = snap.n;
+
+    snap.f.forEach((row, i) => {
+      const f = this.fighters[i];
+      if (!f || !f.body) return;
+
+      const [x, y, vx, vy, facing, alive, stock, pose] = row;
+      f.setPosition(x!, y!);
+      // 속도까지 받아야 다음 상태가 올 때까지 이 자리에 얼어붙지 않는다
+      f.body.setVelocity(vx!, vy!);
+      f.facing = facing === -1 ? -1 : 1;
+      this.stock.setExact(f.fighterId, stock!);
+      const p = POSE_ORDER[pose!];
+      if (p) f.setRemotePose(p);
+      if (!alive && f.alive) f.kill();
+    });
+
+    for (const h of snap.hit ?? []) {
+      this.combat.playRemoteHit(h[0]!, h[1]!, h[2]!, h[3] === 1);
+    }
+
+    if (snap.over !== undefined && this.battleActive) {
+      this.battleActive = false;
+      const winner = snap.over >= 0 ? (this.fighters[snap.over] ?? null) : null;
+      winner?.showVictory();
+      this.showResult(winner);
+    }
   }
 
   private setupSystems(): void {
@@ -821,57 +1117,46 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** 사람이 조종하는 파이터 하나 — 파이터 · 키 · 더블탭 기록 */
+  /** 사람이 조종하는 파이터 전부 — 각자 자기 입력원에서 한 프레임을 읽는다 */
   private handleAllInput(): void {
-    for (const h of this.humans) this.handleInput(h.fighter, h.keys, h.tap);
+    for (const h of this.humans) {
+      /*
+       * 입력을 "키보드를 읽는 일"과 "그 입력으로 무엇을 하는가"로 갈랐다.
+       *
+       * 온라인 대전에서 상대의 입력은 키보드가 아니라 회선으로 온다.
+       * handleInput 이 키 객체를 직접 읽으면 그 경로가 통째로 막히므로,
+       * 한 프레임분 입력을 값으로 만들어 넘긴다 — 키보드에서 오든
+       * 회선에서 오든 이 아래는 같은 코드를 탄다.
+       */
+      const frame = h.remote ? h.remote() : readKeyFrame(h.keys);
+      this.handleInput(h.fighter, frame, h.tap);
+    }
   }
 
   private handleInput(
     p: BaseCharacter,
-    keys: Record<string, Phaser.Input.Keyboard.Key>,
+    input: InputFrame,
     tap: { dir: -1 | 0 | 1; at: number },
   ): void {
     if (!p.alive) return;
 
-    /*
-     * JustDown 은 한 번 읽으면 그 프레임의 "방금 눌림"을 소비한다.
-     * 같은 키를 두 곳에서 각각 읽으면 뒤쪽은 언제나 false 가 된다 —
-     * 실제로 회피가 통째로 죽어 있었다. 프레임 시작에 한 번만 읽어 나눠 쓴다.
-     *
-     * 2P는 한 동작에 키가 둘씩 묶여 있다(숫자패드 / , . / 계열).
-     * 그래서 "이 동작에 묶인 키를 전부 한 번씩 읽고 하나라도 눌렸으면 참"으로
-     * 본다 — 짧게 끊는 || 로 쓰면 앞엣것이 참일 때 뒤엣것을 안 읽어
-     * 그 키의 눌림이 다음 프레임까지 남아 한 박자 늦게 발동한다.
-     */
-    const JustDown = Phaser.Input.Keyboard.JustDown;
-    const JustUp = Phaser.Input.Keyboard.JustUp;
-    const anyOf = (
-      names: string[],
-      read: (k: Phaser.Input.Keyboard.Key) => boolean,
-    ) => {
-      let hit = false;
-      for (const n of names) {
-        const k = keys[n];
-        if (k && read(k)) hit = true;
-      }
-      return hit;
-    };
-    const held = (name: string) => keys[name]?.isDown ?? false;
-
-    const tapLeft = anyOf(['left'], JustDown);
-    const tapRight = anyOf(['right'], JustDown);
-    const tapJump = anyOf(['jump', 'jumpAlt'], JustDown);
-    const releaseJump = anyOf(['jump', 'jumpAlt'], JustUp);
-    const tapLight = anyOf(['light', 'lightAlt'], JustDown);
-    const tapHeavy = anyOf(['heavy', 'heavyAlt'], JustDown);
-    const tapSkill = anyOf(['skill', 'skillAlt'], JustDown);
-    const tapGrab = anyOf(['grab', 'grabAlt'], JustDown);
-    const tapTaunt = anyOf(['taunt'], JustDown);
-
-    const left = held('left');
-    const right = held('right');
-    const up = held('up');
-    const down = held('down');
+    const {
+      tapLeft,
+      tapRight,
+      tapJump,
+      releaseJump,
+      tapLight,
+      tapHeavy,
+      tapSkill,
+      tapGrab,
+      tapTaunt,
+      left,
+      right,
+      up,
+      down,
+      jumpHeld,
+      heavyHeld,
+    } = input;
     const onGround = p.body.blocked.down || p.body.touching.down;
     const reversed = this.gimmicks.isReversed();
 
@@ -943,7 +1228,7 @@ export class BattleScene extends Phaser.Scene {
      * 드문 환경에서는 누르고 떼는 것이 통째로 프레임 사이에 들어가
      * JustUp 을 놓치기 때문이다.
      */
-    p.setJumpHeld(held('jump') || held('jumpAlt'));
+    p.setJumpHeld(jumpHeld);
     // 뗀 순간을 잡을 수 있으면 즉시 잘라 반응을 더 또렷하게 한다
     if (releaseJump) p.releaseJump();
 
@@ -956,7 +1241,7 @@ export class BattleScene extends Phaser.Scene {
     if (tapLight) p.attack('light', dir);
     if (tapHeavy) p.attack('heavy', dir);
     // 누르고 있으면 선딜 구간에서 힘을 모은다 (차지 강공격)
-    p.setHeavyHeld(held('heavy') || held('heavyAlt'));
+    p.setHeavyHeld(heavyHeld);
     if (tapSkill) this.castSkill(p);
     if (tapTaunt) p.taunt();
 
@@ -2253,6 +2538,21 @@ export class BattleScene extends Phaser.Scene {
     // 카메라가 정해진 뒤라야 "화면 밖"을 판단할 수 있다
     this.updateOffscreenMarkers();
 
+    /*
+     * 게스트는 판을 계산하지 않는다.
+     *
+     * 자기 입력은 회선으로 보내고, 화면에 보이는 것은 전부 호스트가 계산해
+     * 돌려준 결과다. 여기서 전투를 함께 계산하면 두 화면이 조금씩 어긋나기
+     * 시작하고, 한번 어긋나면 되돌릴 방법이 없다.
+     */
+    if (this.netRole === 'guest') {
+      this.sendMyInput();
+      for (const f of this.fighters) f.update(time, scaled);
+      this.projectiles.update(time, scaled);
+      this.updateHud();
+      return;
+    }
+
     if (this.battleActive) {
       this.handleAllInput();
       for (const ai of this.ais) ai.update(time, scaled);
@@ -2271,6 +2571,8 @@ export class BattleScene extends Phaser.Scene {
       this.checkBlastZones();
     }
 
+    // 판이 끝난 뒤에도 몇 번 더 보낸다 — 결과가 상대에게 닿아야 한다
+    this.sendSnapshot(time);
     this.updateHud();
   }
 

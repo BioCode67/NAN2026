@@ -1266,6 +1266,36 @@ console.log('조작감');
  */
 console.log('잡기');
 {
+  /*
+   * 검사하는 동안 봇을 멈춰 세운다.
+   *
+   * 잡기와 공중 연속기는 **상대를 코앞에 세워 두고** 확인해야 하는 규칙이다.
+   * 그런데 그 자리는 넷이 뒤엉켜 싸우는 한복판이라, 확인하는 도중에 다른 봇이
+   * 끼어들어 잡기를 풀어 버리거나(그것이 규칙이다) 상대가 격추된다.
+   *
+   * 그건 기능이 고장난 것이 아니라 **검사할 상황이 아닌 것**이다.
+   * 판단만 멈추면 봇은 그 자리에 서 있고, 전투 코드는 그대로 돈다 —
+   * 확인하려는 규칙은 조금도 우회하지 않는다.
+   */
+  const freezeBots = () =>
+    page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      window.__savedAis ??= [];
+      window.__savedAis.push(...s.ais.splice(0));
+      s.fighters.filter((f) => f.side === 'ai').forEach((f) => f.moveHorizontal(0));
+    });
+  const thawBots = () =>
+    page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      // 판이 새로 열렸으면 봇도 새로 만들어졌다 — 옛것을 되돌리면 안 된다
+      if (window.__savedAis?.length && s.ais.length === 0) {
+        s.ais.push(...window.__savedAis);
+      }
+      window.__savedAis = [];
+    });
+
+  await freezeBots();
+
   /* --- U 키가 잡기로 이어지는가 ---------------------------------- */
   let keyReached = false;
   for (let i = 0; i < 6 && !keyReached; i++) {
@@ -1300,6 +1330,8 @@ console.log('잡기');
     if (await hasFoe()) return true;
     await restartRound();
     await waitGrounded();
+    // 판이 새로 열렸으면 봇도 다시 움직인다 — 검사 동안에는 다시 멈춘다
+    await freezeBots();
     return hasFoe();
   };
   await ensureFoe();
@@ -1370,16 +1402,22 @@ console.log('잡기');
 
       const afterPummel = s.stock.get(victim.fighterId);
 
-      /* 위로 던지기 — 높이 떠야 쫓아 올라가 이어칠 수 있다 */
-      p.throwGrabbed('up');
-      await wait(100);
+      /*
+       * 위로 던지기 — 높이 떠야 쫓아 올라가 이어칠 수 있다.
+       *
+       * 속도는 **던진 직후에** 잰다. 한 프레임만 지나도 중력이 깎아
+       * 내리므로(프레임이 드문 환경에서는 100ms에 220이나 준다),
+       * 나중에 재면 "안 떴다"는 엉뚱한 결론이 난다.
+       */
+      const threw = p.throwGrabbed('up');
+      const vy = victim.body.velocity.y;
+      const released = !p.isGrabbing() && !victim.isGrabbed();
+      await wait(80);
 
+      if (!threw) continue;
       combo = {
         pummel: { before, after: afterPummel },
-        thrown: {
-          vy: victim.body.velocity.y,
-          released: !p.isGrabbing() && !victim.isGrabbed(),
-        },
+        thrown: { vy, released },
       };
     }
     if (!combo) return { why: '잡기가 붙지 않았습니다', guardedFoe };
@@ -1505,6 +1543,8 @@ console.log('잡기');
   } else {
     console.log('  ✓ 공중 히트 — 점프를 한 번 돌려받는다 (띄우고 쫓아간다)');
   }
+
+  await thawBots();
 }
 
 /*

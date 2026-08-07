@@ -153,6 +153,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private guarding = false;
   /** 승리 포즈 고정 */
   private victorious = false;
+  /**
+   * 마지막으로 계산한 포즈.
+   *
+   * 온라인 대전에서 게스트는 상태를 직접 계산하지 않으므로 포즈도 못 정한다.
+   * 호스트가 정한 것을 그대로 받아 쓰도록 값으로 꺼내 둔다.
+   */
+  private lastPose: Pose = 'idle';
 
   /** 장착 중인 아이템 (지속형만) */
   private item: { cfg: ItemConfig; until: number } | null = null;
@@ -533,6 +540,17 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.spawnDodgeTrail(dir);
     sound.play('whiff', 0.3);
     return true;
+  }
+
+  /** 지금 재생 중인 포즈 (온라인 대전에서 상대 화면에 그대로 보낸다) */
+  getPose(): Pose {
+    return this.lastPose;
+  }
+
+  /** 회선으로 받은 포즈를 그대로 쓴다 — 상태 계산 없이 그림만 맞춘다 */
+  setRemotePose(pose: Pose): void {
+    this.lastPose = pose;
+    this.view.setPose(pose);
   }
 
   /** 회피 중인가 — 이동·공격을 막는 데 쓴다 */
@@ -1811,7 +1829,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.wasOnGround = onGround;
 
     /* 상태에 맞는 포즈 + 시간 기반 모션 */
-    this.view.setPose(this.computePose(onGround));
+    this.lastPose = this.computePose(onGround);
+    this.view.setPose(this.lastPose);
     this.view.update(time, onGround);
 
     /* 시각 갱신 — 스쿼시와 몸 크기를 함께 곱한다 */

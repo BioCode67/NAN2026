@@ -357,6 +357,20 @@ export class CombatSystem {
     this.resolveHit(thrower, victim, atk, this.targetRect, fromX);
   }
 
+  /**
+   * 회선으로 받은 타격을 연출만 재생한다 (온라인 대전 게스트).
+   *
+   * 게스트는 전투를 계산하지 않으므로 파티클·소리·화면 흔들림도 안 생긴다.
+   * 그대로 두면 상대 화면만 밋밋해진다 — 계산은 안 해도 **본 것은 같아야** 한다.
+   */
+  playRemoteHit(x: number, y: number, color: number, finisher: boolean): void {
+    sound.play(finisher ? 'finisher' : 'hitHeavy', finisher ? 1 : 0.6);
+    this.scene.cameras.main.shake(IMPACT.SHAKE_MS, finisher ? 0.018 : 0.01);
+    this.impactEmitter.setParticleTint(color);
+    this.impactEmitter.emitParticleAt(x, y, finisher ? 22 : 12);
+    if (finisher) this.flashScreen(color);
+  }
+
   /** 잡은 채 툭툭 치기 — 넉백 없이 피해만 넣는다 (잡기가 안 풀려야 한다) */
   applyPummel(thrower: BaseCharacter, victim: BaseCharacter): void {
     if (!thrower.alive || !victim.alive) return;

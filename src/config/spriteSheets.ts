@@ -54,6 +54,26 @@ export type Pose =
   | 'win'
   | 'lose';
 
+/**
+ * 포즈를 번호로 주고받기 위한 고정 순서.
+ *
+ * 온라인 대전에서 게스트는 상태를 계산하지 않으므로 포즈도 못 정한다.
+ * 호스트가 정한 것을 번호 하나로 보내면 되는데, 그러려면 양쪽이 같은
+ * 순서표를 봐야 한다. **뒤에만 덧붙이고 중간을 건드리지 말 것** —
+ * 순서가 밀리면 상대 화면에서 걷는 사람이 갑자기 쓰러진다.
+ */
+export const POSE_ORDER: Pose[] = [
+  'idle', 'walk', 'run', 'dash',
+  'jump', 'fall', 'land', 'airJ', 'airK', 'dive',
+  'attackJ', 'attackJ2', 'attackJ3', 'attackK', 'attackK2', 'dashAttack',
+  'attackJUp', 'attackJDown', 'attackKUp', 'attackKDown',
+  'skillCharge', 'skill', 'promptCast',
+  'itemGet', 'itemHold', 'itemThrow', 'itemSwing',
+  'grab', 'grabHold', 'grabbed', 'throw',
+  'guard', 'dizzy', 'taunt', 'down',
+  'hit', 'hitAir', 'knockback', 'win', 'lose',
+];
+
 /** 커맨드 무브 → 재생할 포즈 */
 export const MOVE_POSE: Record<MoveSlot, Pose> = {
   light: 'attackJ',

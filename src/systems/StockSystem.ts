@@ -90,6 +90,17 @@ export class StockSystem {
     return { damage, absorbed, passiveTriggered: ratio > 1 };
   }
 
+  /**
+   * 주가를 그 값으로 맞춘다 (온라인 대전에서 게스트가 호스트 값을 따라간다).
+   *
+   * 게스트는 전투를 계산하지 않으므로 주가도 스스로 못 구한다.
+   * 증감이 아니라 **확정값**을 받아야 왕복 지연 동안 어긋난 것이 함께 교정된다.
+   */
+  setExact(fighterId: string, value: number): void {
+    if (this.get(fighterId) === value) return;
+    this.setValue(fighterId, value, null);
+  }
+
   /** 주가 직접 증감 (지속 피해, 도박 스킬 등) */
   add(fighterId: string, delta: number, sourceId: string | null = null): void {
     this.setValue(fighterId, this.get(fighterId) + delta, sourceId);

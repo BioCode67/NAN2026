@@ -138,6 +138,9 @@ export class SelectScene extends Phaser.Scene {
      */
     this.readyAt = this.time.now + 260;
 
+    // 제목 화면과 같은 곡 — 이미 돌고 있으면 그대로 이어진다
+    sound.startBgm('menu');
+
     this.buildBackground();
     this.buildHeader();
     this.buildCards();

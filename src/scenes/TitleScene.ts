@@ -40,6 +40,13 @@ export class TitleScene extends Phaser.Scene {
     this.buildFooter();
     this.bindInput();
 
+    /*
+     * 제목 화면은 첫 입력보다 먼저 뜨므로 이 시점에는 아직 소리를 켤 수 없다.
+     * SoundSystem이 요청을 기억했다가 unlock 되는 순간 틀어 준다.
+     * 선택 화면도 같은 menu 곡이라, 넘어가도 곡이 끊기지 않고 이어진다.
+     */
+    sound.startBgm('menu');
+
     this.cameras.main.fadeIn(420, 0, 0, 0);
   }
 

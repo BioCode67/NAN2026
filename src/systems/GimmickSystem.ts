@@ -170,7 +170,14 @@ export class GimmickSystem {
         return { cleanup: () => this.ctx.rhythm.stop() };
       case 'rule_sudden':
         this.damageMul = 3;
-        return { cleanup: () => (this.damageMul = 1) };
+        // 한 대가 승부인 동안은 곡도 몰아친다 — 규칙이 바뀐 것을 귀로도 알린다
+        sound.setRuleIntensity(2);
+        return {
+          cleanup: () => {
+            this.damageMul = 1;
+            sound.setRuleIntensity(0);
+          },
+        };
       case 'rule_reverse':
         this.reversed = true;
         return { cleanup: () => (this.reversed = false) };

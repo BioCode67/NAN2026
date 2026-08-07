@@ -48,14 +48,112 @@ interface NoiseOpts {
   delay?: number;
 }
 
-/** BGM 한 스텝(16분음표) 길이 계산용 BPM */
-const BGM_BPM = 132;
 /** 스케줄러 선행 시간 (초) */
 const BGM_LOOKAHEAD = 0.25;
 
-/** 마이너 펜타토닉 (A) — 어둡고 긴장감 있는 분위기 */
-const BASS_PATTERN = [55, 55, 0, 55, 0, 73.42, 0, 55, 65.41, 0, 55, 0, 49, 0, 55, 0];
-const LEAD_PATTERN = [440, 0, 523.25, 0, 587.33, 0, 523.25, 0, 440, 0, 392, 0, 440, 493.88, 0, 0];
+/* ------------------------------------------------------------------ */
+/* 곡 구조                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ── 왜 다시 짰는가 ────────────────────────────────────────────────
+ * 처음에는 16스텝 한 마디를 무한히 반복했다. 30초쯤 들으면 같은 마디가
+ * 60번 돌았다는 것을 귀가 알아채고, 그때부터는 음악이 아니라 소음이 된다.
+ * 게임이 3분이면 360번이다.
+ *
+ * 음악이 음악으로 들리려면 두 가지가 필요하다.
+ *   1. 화음이 움직인다 — 마디마다 코드가 바뀌어야 "진행"이 생긴다
+ *   2. 구간이 나뉜다   — A → B → 브레이크 → A' 처럼 밀도가 오르내려야 한다
+ * 여기에 하나 더, 격투 게임이므로
+ *   3. 판이 뜨거워지면 곡도 뜨거워진다 (setIntensity)
+ */
+
+/** 미디 노트 번호 → 주파수 */
+const mtof = (m: number): number => 440 * Math.pow(2, (m - 69) / 12);
+
+/** 화음 — 베이스 음과 그 위에 쌓는 3화음 */
+interface Chord {
+  bass: number;
+  tri: [number, number, number];
+}
+
+const CHORDS: Record<string, Chord> = {
+  Am: { bass: 45, tri: [57, 60, 64] },
+  F: { bass: 41, tri: [53, 57, 60] },
+  C: { bass: 48, tri: [55, 60, 64] },
+  G: { bass: 43, tri: [55, 59, 62] },
+  Em: { bass: 40, tri: [55, 59, 64] },
+  Dm: { bass: 38, tri: [57, 62, 65] },
+};
+
+/** 드럼 밀도 */
+type DrumKit = 'none' | 'soft' | 'full' | 'break';
+
+interface Section {
+  /** 코드 진행 — 한 칸이 한 마디다 */
+  chords: (keyof typeof CHORDS)[];
+  drums: DrumKit;
+  /** 멜로디를 얹을 것인가 */
+  lead: boolean;
+  /** 아르페지오를 깔 것인가 */
+  arp: boolean;
+}
+
+interface Track {
+  bpm: number;
+  sections: Section[];
+  /** 리드가 쓸 멜로디 — 마디(16스텝) 단위. 0은 쉼표 */
+  melody: number[][];
+}
+
+/**
+ * 멜로디는 A단조 펜타토닉(A C D E G)에서 고른다.
+ * 아래 코드 진행(Am–F–C–G) 어디에 얹어도 어긋나지 않는 음들이라,
+ * 마디마다 멜로디를 옮겨 적을 필요가 없다.
+ */
+const MELODY_A = [
+  [69, 0, 72, 0, 76, 0, 74, 0, 72, 0, 0, 69, 0, 0, 0, 0],
+  [67, 0, 72, 0, 74, 0, 76, 0, 79, 0, 76, 0, 74, 0, 0, 0],
+  [69, 0, 72, 0, 76, 0, 79, 0, 81, 0, 79, 0, 76, 74, 0, 0],
+  [72, 0, 71, 0, 69, 0, 67, 0, 69, 0, 0, 0, 0, 0, 0, 0],
+];
+
+const MELODY_MENU = [
+  [69, 0, 0, 0, 72, 0, 0, 0, 76, 0, 0, 0, 0, 0, 74, 0],
+  [72, 0, 0, 0, 69, 0, 0, 0, 67, 0, 0, 0, 0, 0, 0, 0],
+];
+
+/**
+ * 전투 곡 — 네 구간 64마디 한 바퀴.
+ * A(주제) → B(리드 등장) → 브레이크(비운다) → C(가장 두껍다)
+ * 브레이크를 넣는 이유는 그 다음 구간이 세게 들리게 하기 위해서다.
+ * 계속 세면 아무것도 세지 않다.
+ */
+const TRACKS: Record<BgmTrack, Track> = {
+  battle: {
+    bpm: 138,
+    melody: MELODY_A,
+    sections: [
+      { chords: ['Am', 'Am', 'F', 'F'], drums: 'full', lead: false, arp: false },
+      { chords: ['C', 'G', 'Am', 'Am'], drums: 'full', lead: true, arp: true },
+      { chords: ['Dm', 'Dm', 'Em', 'Em'], drums: 'break', lead: false, arp: true },
+      { chords: ['F', 'G', 'Am', 'G'], drums: 'full', lead: true, arp: true },
+    ],
+  },
+  menu: {
+    bpm: 96,
+    melody: MELODY_MENU,
+    sections: [
+      { chords: ['Am', 'F'], drums: 'soft', lead: false, arp: true },
+      { chords: ['C', 'G'], drums: 'soft', lead: true, arp: true },
+      { chords: ['Am', 'Em'], drums: 'none', lead: true, arp: true },
+      { chords: ['F', 'G'], drums: 'soft', lead: false, arp: true },
+    ],
+  },
+};
+
+/** 어느 곡을 트느냐 */
+export type BgmTrack = 'menu' | 'battle';
 
 class SoundSystem {
   private ctx: AudioContext | null = null;
@@ -65,8 +163,21 @@ class SoundSystem {
 
   private muted = false;
   private bgmTimer: number | null = null;
+  /** 곡 시작부터 흐른 16분음표 수 — 마디·구간이 전부 여기서 나온다 */
   private bgmStep = 0;
   private bgmNextTime = 0;
+  private bgmTrack: BgmTrack | null = null;
+  /** unlock 전에 들어온 재생 요청 */
+  private pendingTrack: BgmTrack | null = null;
+  /*
+   * 곡의 열기는 두 축에서 따로 올라온다.
+   *   - 경기 진행(넷 → 둘 남음)
+   *   - 판의 규칙(서든데스 기믹)
+   * 둘을 한 변수에 담으면 서든데스가 끝나는 순간 "둘 남음"까지 같이 꺼진다.
+   * 따로 두고 큰 쪽을 쓴다.
+   */
+  private matchHeat: 0 | 1 | 2 = 0;
+  private ruleHeat: 0 | 1 | 2 = 0;
 
   /* ================================================================ */
   /* 초기화                                                           */
@@ -103,6 +214,13 @@ class SoundSystem {
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+    // 소리를 켤 수 없던 동안 들어온 요청을 이제 처리한다
+    if (this.pendingTrack) {
+      const t = this.pendingTrack;
+      this.pendingTrack = null;
+      this.startBgm(t);
+    }
   }
 
   get isMuted(): boolean {
@@ -251,9 +369,29 @@ class SoundSystem {
   /* BGM — 16스텝 시퀀서                                              */
   /* ================================================================ */
 
-  startBgm(): void {
-    if (!this.ctx || this.bgmTimer !== null) return;
+  /**
+   * 곡을 튼다.
+   *
+   * 같은 곡이 이미 돌고 있으면 아무것도 하지 않는다 — 씬을 옮길 때마다
+   * 처음부터 다시 시작하면 곡이 늘 첫 마디만 들리게 되기 때문이다.
+   * (제목 → 선택은 같은 menu 곡이므로 끊기지 않고 이어진다)
+   */
+  startBgm(track: BgmTrack = 'battle'): void {
+    /*
+     * 소리는 첫 입력 이후에만 켤 수 있다(브라우저 자동재생 정책). 제목 화면은
+     * 그보다 먼저 뜨므로, 여기서 그냥 돌아가면 제목·선택 화면은 영영 조용하다.
+     * 요청을 기억해 뒀다가 unlock 시점에 튼다.
+     */
+    if (!this.ctx) {
+      this.pendingTrack = track;
+      return;
+    }
+    if (this.bgmTrack === track && this.bgmTimer !== null) return;
 
+    this.stopBgm();
+    this.bgmTrack = track;
+    this.matchHeat = 0;
+    this.ruleHeat = 0;
     this.bgmStep = 0;
     this.bgmNextTime = this.ctx.currentTime + 0.1;
 
@@ -266,42 +404,164 @@ class SoundSystem {
       window.clearInterval(this.bgmTimer);
       this.bgmTimer = null;
     }
+    this.bgmTrack = null;
+  }
+
+  /**
+   * 판이 얼마나 뜨거운지 알려 준다.
+   *
+   * 0 평시 · 1 누군가 벼랑 끝 · 2 서든데스.
+   * 곡을 바꾸는 것이 아니라 같은 곡 위에 층을 얹는다 — 곡이 갈아엎히면
+   * 방금까지 듣던 흐름이 끊기고, 그러면 "긴장이 올랐다"가 아니라
+   * "노래가 바뀌었다"로 들린다.
+   */
+  setIntensity(level: 0 | 1 | 2): void {
+    this.matchHeat = level;
+  }
+
+  /** 기믹처럼 "지금 이 판의 규칙"이 만드는 열기 — 끝나면 0으로 되돌린다 */
+  setRuleIntensity(level: 0 | 1 | 2): void {
+    this.ruleHeat = level;
+  }
+
+  private get heat(): number {
+    return Math.max(this.matchHeat, this.ruleHeat);
+  }
+
+  /**
+   * 스모크 테스트가 들여다보는 창.
+   *
+   * 소리는 스크린샷에 안 찍힌다. 시퀀서가 멈춰 있어도 화면은 멀쩡하므로,
+   * "곡이 실제로 돌고 있는가"는 이 값이 늘어나는지로만 확인할 수 있다.
+   */
+  get bgmDebug(): { track: BgmTrack | null; step: number; heat: number } {
+    return { track: this.bgmTrack, step: this.bgmStep, heat: this.heat };
   }
 
   private scheduleBgm(): void {
     const ctx = this.ctx;
-    if (!ctx) return;
+    const track = this.bgmTrack ? TRACKS[this.bgmTrack] : null;
+    if (!ctx || !track) return;
 
-    const stepDur = 60 / BGM_BPM / 4; // 16분음표
+    // 뜨거워지면 조금 빨라진다. 크게 올리면 박자가 어긋난 것처럼 들린다
+    const bpm = track.bpm * (1 + this.heat * 0.045);
+    const stepDur = 60 / bpm / 4;
 
     while (this.bgmNextTime < ctx.currentTime + BGM_LOOKAHEAD) {
-      const t = this.bgmNextTime;
-      const s = this.bgmStep % 16;
-
-      // 킥 — 4분음표마다
-      if (s % 4 === 0) {
-        this.tone({ freq: 120, to: 42, type: 'sine', dur: 0.14, gain: 0.5, delay: t - ctx.currentTime, bus: this.bgmBus });
-      }
-
-      // 하이햇 — 8분음표 뒤박
-      if (s % 2 === 1) {
-        this.noise({ dur: 0.03, gain: 0.09, freq: 8000, q: 2, delay: t - ctx.currentTime, bus: this.bgmBus });
-      }
-
-      // 베이스
-      const bass = BASS_PATTERN[s];
-      if (bass) {
-        this.tone({ freq: bass, type: 'sawtooth', dur: stepDur * 1.6, gain: 0.16, delay: t - ctx.currentTime, bus: this.bgmBus });
-      }
-
-      // 리드 — 2마디마다 한 번씩만 등장시켜 단조로움을 던다
-      const lead = LEAD_PATTERN[s];
-      if (lead && Math.floor(this.bgmStep / 16) % 2 === 1) {
-        this.tone({ freq: lead, type: 'triangle', dur: stepDur * 1.2, gain: 0.07, delay: t - ctx.currentTime, bus: this.bgmBus });
-      }
-
+      this.scheduleStep(track, this.bgmNextTime - ctx.currentTime, stepDur);
       this.bgmNextTime += stepDur;
       this.bgmStep++;
+    }
+  }
+
+  /** 16분음표 한 칸에 울릴 것들을 전부 예약한다 */
+  private scheduleStep(track: Track, delay: number, stepDur: number): void {
+    const bus = this.bgmBus;
+    const bar = Math.floor(this.bgmStep / 16);
+    const s = this.bgmStep % 16;
+
+    /* 지금 어느 구간의 몇 번째 마디인가 */
+    let acc = 0;
+    let section = track.sections[0]!;
+    let barInSection = 0;
+    const cycle = track.sections.reduce((n, sec) => n + sec.chords.length, 0);
+    const barInCycle = bar % cycle;
+    for (const sec of track.sections) {
+      if (barInCycle < acc + sec.chords.length) {
+        section = sec;
+        barInSection = barInCycle - acc;
+        break;
+      }
+      acc += sec.chords.length;
+    }
+
+    const chord = CHORDS[section.chords[barInSection]!]!;
+    const hot = this.heat;
+
+    /* --- 드럼 ----------------------------------------------------- */
+    this.scheduleDrums(section.drums, s, delay, hot);
+
+    /* --- 베이스 --------------------------------------------------- */
+    if (section.drums !== 'none') {
+      // 8분음표 베이스. 뜨거우면 16분으로 쪼개 몰아친다
+      const beat = hot >= 2 ? true : s % 2 === 0;
+      if (beat) {
+        // 마디 끝 두 칸은 한 옥타브 올려 다음 마디로 밀어 넣는다
+        const note = s >= 14 ? chord.bass + 12 : chord.bass;
+        this.tone({
+          freq: mtof(note),
+          type: 'sawtooth',
+          dur: stepDur * 1.5,
+          gain: 0.15,
+          delay,
+          bus,
+        });
+      }
+    }
+
+    /* --- 아르페지오 ----------------------------------------------- */
+    if (section.arp && s % 2 === 0) {
+      const note = chord.tri[(s / 2) % 3]!;
+      this.tone({
+        freq: mtof(note + 12),
+        type: 'square',
+        dur: stepDur * 0.9,
+        gain: 0.035 + hot * 0.008,
+        delay,
+        bus,
+      });
+    }
+
+    /* --- 멜로디 --------------------------------------------------- */
+    if (section.lead || hot >= 2) {
+      const phrase = track.melody[bar % track.melody.length]!;
+      const note = phrase[s];
+      if (note) {
+        this.tone({
+          freq: mtof(hot >= 2 ? note + 12 : note),
+          type: 'triangle',
+          dur: stepDur * 2.2,
+          gain: 0.075,
+          delay,
+          bus,
+        });
+      }
+    }
+  }
+
+  private scheduleDrums(kit: DrumKit, s: number, delay: number, hot: number): void {
+    if (kit === 'none') return;
+    const bus = this.bgmBus;
+
+    const kick = (gain: number) =>
+      this.tone({ freq: 125, to: 42, type: 'sine', dur: 0.15, gain, delay, bus });
+    const hat = (gain: number) =>
+      this.noise({ dur: 0.03, gain, freq: 8200, q: 2.2, delay, bus });
+    const snare = () => {
+      this.noise({ dur: 0.11, gain: 0.16, freq: 1900, q: 0.8, delay, bus });
+      this.tone({ freq: 210, to: 150, type: 'triangle', dur: 0.08, gain: 0.1, delay, bus });
+    };
+
+    if (kit === 'soft') {
+      if (s === 0 || s === 8) kick(0.34);
+      if (s === 4 || s === 12) hat(0.05);
+      return;
+    }
+
+    if (kit === 'break') {
+      // 킥·스네어를 빼고 하이햇만 남긴다. 다음 구간이 세게 들리게 하는 자리다
+      if (s % 2 === 1) hat(0.06);
+      if (s === 15) snare(); // 다음 마디로 넘기는 한 방
+      return;
+    }
+
+    /* full */
+    if (s === 0 || s === 8 || s === 11) kick(s === 11 ? 0.3 : 0.5);
+    if (s === 4 || s === 12) snare();
+    if (hot >= 1 ? true : s % 2 === 1) hat(s % 2 === 1 ? 0.09 : 0.05);
+    // 서든데스 — 매 마디 첫 칸에 크래시를 얹어 압박을 만든다
+    if (hot >= 2 && s === 0) {
+      this.noise({ dur: 0.45, gain: 0.12, freq: 6000, to: 2500, q: 0.5, delay, bus });
     }
   }
 

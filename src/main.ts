@@ -26,7 +26,10 @@ const game = new Phaser.Game({
  * `import.meta.env.DEV` 는 프로덕션 빌드에서 false로 접혀 통째로 제거된다.
  */
 if (import.meta.env.DEV) {
-  (window as Window & { game?: Phaser.Game }).game = game;
+  const w = window as Window & { game?: Phaser.Game; sound?: typeof sound };
+  w.game = game;
+  // 소리는 스크린샷에 안 남는다 — 스모크가 시퀀서 상태를 직접 읽는다
+  w.sound = sound;
 }
 
 /**

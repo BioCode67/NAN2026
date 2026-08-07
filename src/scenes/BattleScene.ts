@@ -145,7 +145,7 @@ export class BattleScene extends Phaser.Scene {
     this.bindEvents();
     this.playIntro();
 
-    sound.startBgm();
+    sound.startBgm('battle');
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
 
     // 월드가 화면보다 넓다 — 카메라가 월드 밖을 비추지 않도록 경계를 준다
@@ -786,6 +786,15 @@ export class BattleScene extends Phaser.Scene {
 
         const killer = p.killerId ? this.findFighter(p.killerId) : null;
         killer?.say(killer.pickQuote('ko'), 0xffd54a);
+
+        /*
+         * 넷 중 둘이 남으면 곡을 한 단 올린다.
+         * 여기부터가 실질적인 결승이고, 그 사실을 화면 말고 곡으로도 알린다.
+         * (서든데스가 걸려 있으면 이미 2단계이므로 내리지 않는다)
+         */
+        if (this.fighters.filter((f) => f.alive).length === 2) {
+          sound.setIntensity(1);
+        }
 
         this.time.delayedCall(900, () => this.checkBattleEnd());
       }),

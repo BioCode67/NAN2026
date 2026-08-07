@@ -436,6 +436,30 @@ if (!atSelect) errors.push('[부팅] 캐릭터 선택 화면까지 넘어가지 
 await page.waitForTimeout(600);
 await shot('select');
 
+/*
+ * 메뉴 곡이 실제로 돌고 있는가.
+ *
+ * 소리는 스크린샷에 안 남는다. 시퀀서가 멈춰도 화면은 멀쩡하므로, 곡이
+ * 죽은 채 제출되는 사고는 눈으로는 절대 안 잡힌다. 스텝 수가 실제로
+ * 늘어나는지를 두 번 읽어 확인한다.
+ */
+{
+  const read = () => page.evaluate(() => window.sound?.bgmDebug ?? null);
+  const a = await read();
+  await page.waitForTimeout(700);
+  const b = await read();
+
+  if (!a || !b) {
+    errors.push('[BGM] 사운드 시스템을 읽지 못했습니다');
+  } else if (a.track !== 'menu') {
+    errors.push(`[BGM] 메뉴 곡이 아닙니다: ${a.track}`);
+  } else if (b.step <= a.step) {
+    errors.push(`[BGM] 시퀀서가 멈춰 있습니다 (${a.step} → ${b.step})`);
+  } else {
+    console.log(`  ✓ 메뉴 곡 재생 중 (${a.step} → ${b.step} 스텝)`);
+  }
+}
+
 for (let i = 0; i < PICK; i++) {
   await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(250);
@@ -446,6 +470,16 @@ await page.keyboard.press('Enter');
 // 페이드아웃 + 전투 생성 + READY/FIGHT 연출
 await page.waitForTimeout(3600);
 await shot('battle-start');
+
+// 전투에 들어오면 곡이 바뀐다 — 메뉴 곡이 그대로 흐르면 배선이 빠진 것이다
+{
+  const now = await page.evaluate(() => window.sound?.bgmDebug ?? null);
+  if (now?.track !== 'battle') {
+    errors.push(`[BGM] 전투 곡으로 바뀌지 않았습니다: ${now?.track}`);
+  } else {
+    console.log('  ✓ 전투 곡으로 전환');
+  }
+}
 
 console.log('이동 · 점프');
 await hold('d', 500);

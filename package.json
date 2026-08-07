@@ -20,6 +20,7 @@
     "art": "node tools/gen-art.mjs",
     "art:in": "node tools/art-in.mjs",
     "art:opt": "node tools/optimize-art.mjs",
+    "docs": "node tools/make-pdf.mjs",
     "sheet:merge": "node tools/merge-sheets.mjs"
   },
   "keywords": [

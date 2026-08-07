@@ -338,6 +338,29 @@ npm run art:opt -- --report  # 지금 무엇이 얼마나 무거운지
 스테이지 배경은 **맵 기믹과 짝지어져** 있다. "달로 보내줘"를 입력하면 중력만
 바뀌는 게 아니라 배경까지 달 표면으로 갈렸다가, 기믹이 끝나면 되돌아온다.
 
+## 대회 제출물
+
+사전 과제 마감 **2026. 08. 10 (월)**. 다섯 항목 중 **하나라도 빠지면 심사 대상에서
+제외**되므로, 남은 것과 끝난 것을 한 곳에서 본다 →
+[`docs/submission/00-제출-체크리스트.md`](docs/submission/00-제출-체크리스트.md)
+
+| # | 제출물 | 상태 |
+|---|---|---|
+| ① | 플레이 가능한 빌드 + 소스 | ✅ GitHub Pages 자동 배포 |
+| ② | 플레이 동영상 30~60초 | ⬜ 직접 촬영 — [촬영 대본](docs/submission/03-영상-촬영대본.md) |
+| ③ | 게임 소개 문서 (PDF) | ✅ 초안 완성 |
+| ④ | AI 활용 기술 문서 (PDF) | ✅ 초안 완성 |
+| ⑤ | 팀원 역할 기술서 (PDF) | ⬜ 2인 이상 팀만 (템플릿 있음) |
+
+```bash
+npm run docs          # 제출용 PDF 생성 → docs/submission/pdf/
+npm run docs -- --open
+```
+
+문서는 HTML로 쓰고 크로미움으로 인쇄해 PDF를 만든다. 화면용과 인쇄용을
+따로 두지 않는다 — 두 벌을 만들면 한쪽만 고치는 일이 반드시 생기고,
+그 차이는 제출 직전에 발견된다.
+
 ## 개발
 
 ```bash
@@ -353,6 +376,7 @@ npm run prompts    # 프롬프트 46개 생성 (캐릭터 35 + 스테이지·UI 
 npm run art        # 그 프롬프트로 이미지 생성 → 제자리에 저장 (API 키 필요, 유료)
 npm run art:in     # 웹에서 받은 그림을 제자리에 정리 (공짜)
 npm run art:opt    # 넣은 그림을 webp로 줄임 (배포 무게 32MB → 2.9MB)
+npm run docs       # 제출용 PDF 생성 (docs/submission/*.html → pdf/)
 npm run sheet:merge -- <key>            # 받은 묶음 이미지를 시트 한 장으로 합침
 npm run sheet -- <입력.png> <출력.png>   # 스프라이트 시트 전처리(단일 파일)
 npm run sheet -- <입력.png> <출력.png> --grid 5x3 --label-band 0.13

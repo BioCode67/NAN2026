@@ -979,6 +979,82 @@ if (!board) {
 }
 
 /*
+ * 연승 도전.
+ *
+ * 이긴 뒤 SPACE 로 다음 상대가 나오는 경로다. 여기가 끊기면 스무 명과
+ * 무대 넷을 만들어 놓고도 한 판에 다섯 명과 한 곳밖에 못 보게 된다.
+ * 실제로 이길 때까지 기다릴 수는 없으므로(수 분이 걸린다) 상대를 직접
+ * 지워 승리 상태를 만든 뒤, 이어지는 판의 조건이 실제로 달라지는지 본다.
+ */
+console.log('연승 도전');
+{
+  await restartRound();
+  await waitGrounded();
+
+  const before = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    return {
+      ai: s.fighters.filter((f) => f.side === 'ai').map((f) => f.cfg.id),
+      stage: s.getStageInfo().id,
+      label: s.difficulty.label,
+      interval: s.difficulty.decisionInterval,
+    };
+  });
+
+  // 봇 셋을 상장폐지시켜 승리로 끝낸다
+  await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    for (const f of s.fighters.filter((x) => x.side === 'ai' && x.alive)) {
+      s.stock.add(f.fighterId, -999, null);
+    }
+  });
+  await waitUntil((st) => !st.active, '승리 대기', 20000, true);
+  await page.waitForTimeout(1400);
+  await shot('streak-win');
+
+  await page.keyboard.press('Space');
+  await page.waitForFunction(
+    () => window.game?.scene?.getScene('Battle')?.getStageInfo?.() && window.game.scene.getScene('Battle').streak === 1,
+    null,
+    { timeout: 10000 },
+  ).catch(() => {});
+
+  const after = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    return {
+      streak: s.streak,
+      ai: s.fighters.filter((f) => f.side === 'ai').map((f) => f.cfg.id),
+      stage: s.getStageInfo().id,
+      label: s.difficulty.label,
+      interval: s.difficulty.decisionInterval,
+      playerStock: s.stock.get(s.player.fighterId),
+    };
+  });
+
+  if (after.streak !== 1) {
+    errors.push(`[연승] SPACE 로 다음 판이 시작되지 않았습니다 (연승 ${after.streak})`);
+  } else {
+    if (after.interval >= before.interval) {
+      errors.push(
+        `[연승] 봇이 빨라지지 않았습니다 (판단 주기 ${before.interval} → ${after.interval})`,
+      );
+    }
+    if (after.stage === before.stage) {
+      errors.push(`[연승] 무대가 그대로입니다 (${after.stage})`);
+    }
+    // 앞 판의 주가를 이어받되 하한이 있다
+    if (after.playerStock < 70 || after.playerStock > 150) {
+      errors.push(`[연승] 이어받은 주가가 범위 밖입니다 (${after.playerStock}%)`);
+    }
+    console.log(
+      `  ✓ 승리 → SPACE → 2번째 판 (봇 판단 ${before.interval}→${after.interval}ms · ` +
+        `무대 ${before.stage}→${after.stage} · 주가 ${after.playerStock}%)`,
+    );
+  }
+  await shot('streak-next');
+}
+
+/*
  * 무대 네 곳.
  *
  * 발판 배치는 스크린샷으로 보이지만 중력은 안 보인다. 그리고 무대를 늘리면

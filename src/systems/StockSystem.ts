@@ -32,16 +32,23 @@ export class StockSystem {
 
   constructor(private readonly bus: EventBus) {}
 
-  /** 파이터 등록 — 시작 주가 100%로 초기화한다 */
-  register(fighter: BaseCharacter): void {
-    this.fighters.set(fighter.fighterId, fighter);
-    this.values.set(fighter.fighterId, STOCK.START);
-    this.tiers.set(fighter.fighterId, this.computeTier(STOCK.START));
+  /**
+   * 파이터 등록 — 기본은 100%.
+   *
+   * @param start 다르게 시작해야 할 때(연승 도전은 앞 판의 주가를 이어받는다)
+   */
+  register(fighter: BaseCharacter, start: number = STOCK.START): void {
+    const value = Math.max(1, Math.min(STOCK.MAX, Math.round(start)));
+    const tier = this.computeTier(value);
 
-    fighter.updateGauge(STOCK.START, StockTier.NORMAL);
-    fighter.applyTier(StockTier.NORMAL);
+    this.fighters.set(fighter.fighterId, fighter);
+    this.values.set(fighter.fighterId, value);
+    this.tiers.set(fighter.fighterId, tier);
+
+    fighter.updateGauge(value, tier);
+    fighter.applyTier(tier);
     fighter.setPassiveMultiplier(
-      this.computePassiveMultiplier(fighter.cfg, STOCK.START),
+      this.computePassiveMultiplier(fighter.cfg, value),
     );
   }
 

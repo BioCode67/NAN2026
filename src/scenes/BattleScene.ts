@@ -3,6 +3,8 @@ import { DEFAULT_STAGE_ART, addBackdrop, hasArt } from '../config/artAssets';
 import { STAGE_BY_ID, pickStage } from '../config/stages';
 import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
+import { pickOpponents } from '../config/matchup';
+import { carryOverStock, streakDifficulty, streakTitle } from '../config/streak';
 import {
   AI_MEDIUM,
   DEPTH,
@@ -29,7 +31,7 @@ import { StockSystem } from '../systems/StockSystem';
 import { BannerLanes } from '../ui/BannerLanes';
 import { closePromptOverlay, openPromptOverlay } from '../ui/PromptOverlay';
 import { StockTier } from '../types';
-import type { AttackDir, BattleSceneData } from '../types';
+import type { AIDifficulty, AttackDir, BattleSceneData } from '../types';
 
 /** HUD 한 칸(파이터 1명분) */
 interface FighterHud {
@@ -96,6 +98,12 @@ export class BattleScene extends Phaser.Scene {
   private rhythm!: RhythmSystem;
   /** 이 판의 전적 — 결과 화면에서 보여준다 */
   private stats!: MatchStats;
+  /** 지금까지 이긴 판 수 */
+  private streak = 0;
+  /** 결과 화면에서 SPACE 가 다음 판으로 이어지는가 (이겼을 때만) */
+  private canContinue = false;
+  /** 이번 판의 봇 난이도 — 연승이 쌓이면 판단이 빨라진다 */
+  private difficulty: AIDifficulty = AI_MEDIUM;
 
   /** 프롬프트 입력 중 — 전투를 멈추고 조작을 막는다 */
   private prompting = false;
@@ -148,6 +156,8 @@ export class BattleScene extends Phaser.Scene {
     this.disposers = [];
     this.koOrder = [];
     this.battleActive = false;
+    this.canContinue = false;
+    this.streak = data.streak ?? 0;
     resetQuoteThrottle();
 
     // 앞 판의 집계가 남아 있으면 두 판이 합산된다
@@ -499,6 +509,14 @@ export class BattleScene extends Phaser.Scene {
     const total = 1 + this.battleData.aiIds.length;
 
     /*
+     * 연승이 쌓일수록 봇이 빨라진다.
+     *
+     * 피해량이나 체력이 아니라 **판단 주기와 반응 지연**만 줄인다.
+     * 수치를 손대면 "봇이 잘한다"가 아니라 "봇이 치트를 쓴다"로 느껴진다.
+     */
+    this.difficulty = streakDifficulty(this.streak);
+
+    /*
      * 스테이지 폭을 인원수로 나눠 고르게 배치한다.
      * 플레이어는 맨 왼쪽에서 시작해 오른쪽을 본다.
      */
@@ -544,7 +562,11 @@ export class BattleScene extends Phaser.Scene {
     this.combat = new CombatSystem(this, this.stock, eventBus);
 
     this.fighters.forEach((f) => {
-      this.stock.register(f);
+      // 연승 도전은 플레이어만 앞 판의 주가를 이어받는다
+      this.stock.register(
+        f,
+        f.side === 'player' ? (this.battleData.startStock ?? STOCK.START) : STOCK.START,
+      );
       // 투사체 스킬(빌 게이츠맨의 블루스크린 등) 발사 연결
       f.onSpawnProjectile = (owner, atk) => this.projectiles.spawn(owner, atk);
       // 로켓 드롭 착지 충격파
@@ -596,7 +618,7 @@ export class BattleScene extends Phaser.Scene {
           new AISystem(
             bot,
             () => this.pickAiTarget(bot),
-            AI_MEDIUM,
+            this.difficulty,
             { castSkill: (f) => this.castSkill(f) },
           ),
         );
@@ -655,6 +677,7 @@ export class BattleScene extends Phaser.Scene {
     ]);
 
     kb.on('keydown-R', () => this.scene.start('Battle', this.battleData));
+    kb.on('keydown-SPACE', () => this.startNextRound());
     kb.on('keydown-ESC', () => this.scene.start('Select'));
     kb.on('keydown-P', () => this.togglePause());
     kb.on('keydown-M', () => {
@@ -931,11 +954,20 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setAlpha(0);
 
+    /*
+     * 연승 중이면 몇 판째인지 함께 알린다.
+     * 상대가 빨라진 것을 몸으로만 느끼면 "봇이 이상하다"가 되고,
+     * 숫자를 보면 "내가 여기까지 왔다"가 된다.
+     */
+    const line = this.streak > 0
+      ? `${this.streak + 1}번째 판 · ${this.streak}연승 중 · ${this.stage.desc}`
+      : this.stage.desc;
+
     const desc = this.add
-      .text(GAME.WIDTH / 2, 178, this.stage.desc, {
+      .text(GAME.WIDTH / 2, 178, line, {
         fontFamily: GAME.FONT,
         fontSize: '15px',
-        color: '#9fb3dd',
+        color: this.streak > 0 ? '#ffd54a' : '#9fb3dd',
       })
       .setOrigin(0.5)
       .setAlpha(0);
@@ -1076,6 +1108,10 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.OVERLAY)
       .setScrollFactor(0);
 
+    /* 이긴 판이 몇 번째인가 — 이번 판을 포함한 수 */
+    const wonSoFar = playerWon ? this.streak + 1 : this.streak;
+    this.canContinue = playerWon;
+
     const title = this.add
       .text(
         GAME.WIDTH / 2,
@@ -1117,16 +1153,58 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
 
+    /*
+     * 연승 표시.
+     *
+     * 이 게임에는 스무 명과 무대 넷이 있는데, 한 판 하고 선택 화면으로
+     * 나가면 대부분 거기서 그만둔다. **나가지 않아도 다음 상대가 나오는 것**이
+     * 그 스무 명을 실제로 보게 만드는 유일한 장치다.
+     */
+    if (wonSoFar > 0) {
+      const badge = streakTitle(wonSoFar);
+      this.add
+        .text(
+          GAME.WIDTH / 2,
+          304,
+          `${wonSoFar}연승${badge ? `  ·  ${badge}` : ''}`,
+          {
+            fontFamily: GAME.FONT,
+            fontSize: '26px',
+            color: '#ffd54a',
+            fontStyle: 'bold',
+          },
+        )
+        .setOrigin(0.5)
+        .setDepth(DEPTH.OVERLAY + 1)
+        .setStroke('#0b1020', 7);
+    }
+
     this.buildScoreboard();
 
-    this.add
-      .text(GAME.WIDTH / 2, 648, 'R : 다시하기      ESC : 캐릭터 선택', {
+    const keys = playerWon
+      ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
+      : 'R : 다시하기      ESC : 캐릭터 선택';
+
+    const keyLabel = this.add
+      .text(GAME.WIDTH / 2, 648, keys, {
         fontFamily: GAME.FONT,
         fontSize: '18px',
-        color: '#8fa6d8',
+        color: playerWon ? '#e8eeff' : '#8fa6d8',
+        fontStyle: playerWon ? 'bold' : 'normal',
       })
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
+
+    // 이겼을 때는 다음 상대 안내가 눈에 띄어야 한다 — 여기서 멈추면 안 되므로
+    if (playerWon) {
+      this.tweens.add({
+        targets: keyLabel,
+        alpha: { from: 1, to: 0.45 },
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+      });
+    }
 
     this.tweens.add({
       targets: title,
@@ -1252,6 +1330,29 @@ export class BattleScene extends Phaser.Scene {
       )
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
+  }
+
+  /**
+   * 연승 도전 — 다음 상대.
+   *
+   * 같은 캐릭터로 계속 간다. 고른 캐릭터를 바꾸고 싶으면 선택 화면으로
+   * 나가면 되고, 여기서 원하는 것은 "지금 이 캐릭터로 어디까지 가나"다.
+   *
+   * 상대는 방금 싸운 셋을 뒤로 밀어 다시 뽑고, 무대도 앞 판과 다른 곳으로
+   * 간다(BattleScene 이 lastStageId 를 들고 있다). 주가는 이긴 순간의 값을
+   * 이어받되 너무 낮으면 올려 준다 — 바닥에서 시작하면 그냥 끝나므로.
+   */
+  private startNextRound(): void {
+    if (!this.canContinue) return;
+    this.canContinue = false;
+
+    const playerId = this.battleData.playerId;
+    this.scene.start('Battle', {
+      playerId,
+      aiIds: pickOpponents(playerId, this.battleData.aiIds.length, this.battleData.aiIds),
+      streak: this.streak + 1,
+      startStock: carryOverStock(this.stock.get(this.player.fighterId)),
+    } satisfies BattleSceneData);
   }
 
   /** 화면 중앙 대형 안내 문구 */
@@ -1465,7 +1566,7 @@ export class BattleScene extends Phaser.Scene {
       );
 
       ui(
-        this.add.text(x + 58, y + 27, isPlayer ? '1P' : `CPU (${AI_MEDIUM.label})`, {
+        this.add.text(x + 58, y + 27, isPlayer ? '1P' : `CPU (${this.difficulty.label})`, {
           fontFamily: GAME.FONT,
           fontSize: '10px',
           color: isPlayer ? '#4ade80' : '#7f93bd',

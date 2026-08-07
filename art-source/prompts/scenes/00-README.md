@@ -14,6 +14,7 @@
 | `moon-달 표면.txt` | `public/bg/stage_moon.png` | 맵 기믹 "달 표면"(저중력)이 걸렸을 때 |
 | `lava-용암 지대.txt` | `public/bg/stage_lava.png` | 맵 기믹 "용암 지대"가 걸렸을 때 |
 | `storm-폭풍 경보.txt` | `public/bg/stage_storm.png` | 맵 기믹 "폭풍 경보"(강풍)가 걸렸을 때 |
+| `server-서버실.txt` | `public/bg/stage_server.png` | 스테이지 "서버실" — 낮고 촘촘한 발판의 난전 맵 |
 | `blackout-정전.txt` | `public/bg/stage_blackout.png` | 맵 기믹 "정전"이 걸렸을 때 |
 
 ## UI

@@ -46,6 +46,7 @@ export const ART_IMAGES: ArtImage[] = [
   { key: 'stage_moon', path: 'bg/stage_moon.png' },
   { key: 'stage_lava', path: 'bg/stage_lava.png' },
   { key: 'stage_storm', path: 'bg/stage_storm.png' },
+  { key: 'stage_server', path: 'bg/stage_server.png' },
   { key: 'stage_blackout', path: 'bg/stage_blackout.png' },
   { key: 'ui_title_bg', path: 'ui/ui_title_bg.png' },
   { key: 'ui_title_logo', path: 'ui/ui_title_logo.png', chroma: true },

@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { DEFAULT_STAGE_ART, addBackdrop, hasArt } from '../config/artAssets';
+import { STAGE_BY_ID, pickStage } from '../config/stages';
+import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
 import {
   AI_MEDIUM,
@@ -60,6 +62,15 @@ const HUD_BAR_W = 186;
  */
 export class BattleScene extends Phaser.Scene {
   private battleData!: BattleSceneData;
+  /** 이번 판의 무대 — 발판 배치 · 중력 · 색 · 배경이 여기서 나온다 */
+  private stage!: StageConfig;
+  /**
+   * 바로 앞 판의 무대.
+   *
+   * 씬 인스턴스는 재시작해도 살아 있으므로 여기에 남는다. 같은 곳이 두세 번
+   * 연달아 나오면 "맵이 여러 개"라는 사실 자체가 전달되지 않는다.
+   */
+  private lastStageId?: StageId;
 
   private ground!: Phaser.GameObjects.Rectangle;
   private platforms: Phaser.GameObjects.Rectangle[] = [];
@@ -135,6 +146,12 @@ export class BattleScene extends Phaser.Scene {
     this.koOrder = [];
     this.battleActive = false;
     resetQuoteThrottle();
+
+    this.stage =
+      (data.stageId && STAGE_BY_ID[data.stageId as StageId]) || pickStage(this.lastStageId);
+    this.lastStageId = this.stage.id;
+    // 중력은 무대가 정한다. 맵 기믹이 잠시 덮어써도 끝나면 이 값으로 돌아온다
+    this.physics.world.gravity.y = GAME.GRAVITY * this.stage.gravityMul;
 
     this.buildBackground();
     this.buildStage();
@@ -305,13 +322,20 @@ export class BattleScene extends Phaser.Scene {
      */
     if (!this.bgArt?.scene) return;
 
+    /*
+     * 기믹이 걸려 있으면 그 그림, 아니면 이 무대의 그림.
+     * 무대 그림이 아직 없으면(안 그렸으면) 기본 거래소로 떨어진다 —
+     * 맵을 늘렸다고 배경이 사라지면 늘리지 않느니만 못하다.
+     */
     const wanted = this.stageArtStack[this.stageArtStack.length - 1];
     const key =
       wanted && hasArt(this, wanted)
         ? wanted
-        : hasArt(this, DEFAULT_STAGE_ART)
-          ? DEFAULT_STAGE_ART
-          : null;
+        : hasArt(this, this.stage.art)
+          ? this.stage.art
+          : hasArt(this, DEFAULT_STAGE_ART)
+            ? DEFAULT_STAGE_ART
+            : null;
 
     if (!key) {
       this.bgArt.setVisible(false);
@@ -392,7 +416,7 @@ export class BattleScene extends Phaser.Scene {
 
     /* 착지선 위로 새어 나오는 빛 — 바닥이 발광하는 물건처럼 보이게 한다 */
     this.add
-      .rectangle(cx, STAGE.GROUND_Y - 3, width, 10, 0x60a5fa, 0.28)
+      .rectangle(cx, STAGE.GROUND_Y - 3, width, 10, this.stage.accent, 0.28)
       .setDepth(DEPTH.STAGE + 1)
       .setBlendMode(Phaser.BlendModes.ADD);
 
@@ -420,7 +444,7 @@ export class BattleScene extends Phaser.Scene {
   private buildPlatforms(): void {
     const tex = this.stageTexture('stage-plat', 48, STAGE.PLATFORM_H, 7);
 
-    for (const p of STAGE.PLATFORMS) {
+    for (const p of this.stage.platforms) {
       /*
        * 판정은 사각형이 맡고 겉모습은 무늬 이미지가 맡는다.
        * 발판 붕괴 기믹이 이 사각형의 visible을 끄므로, 무늬도 같이 붙여 두고
@@ -444,7 +468,7 @@ export class BattleScene extends Phaser.Scene {
         .setDepth(DEPTH.STAGE);
 
       const glow = this.add
-        .rectangle(p.x, p.y - STAGE.PLATFORM_H / 2 - 2, p.w, 8, 0x60a5fa, 0.25)
+        .rectangle(p.x, p.y - STAGE.PLATFORM_H / 2 - 2, p.w, 8, this.stage.accent, 0.25)
         .setDepth(DEPTH.STAGE + 1)
         .setBlendMode(Phaser.BlendModes.ADD);
 
@@ -839,6 +863,18 @@ export class BattleScene extends Phaser.Scene {
   /* ================================================================ */
 
   private playIntro(): void {
+    /*
+     * 무대 이름을 먼저 띄운다.
+     *
+     * 맵이 무작위로 바뀌는데 아무 말이 없으면, 플레이어는 발판이 달라진 것을
+     * "왜 오늘따라 이상하지"로 받아들인다. 이름과 한 줄 설명을 보여 주면
+     * 같은 변화가 "이번엔 여기구나"가 된다.
+     *
+     * 자리는 READY?/FIGHT! 보다 위다. 같은 줄에 두면 두 글자가 포개져
+     * 둘 다 안 읽힌다 — 무대 이름은 개시 연출과 겹치는 시간대에 뜬다.
+     */
+    this.showStageBanner();
+
     this.time.delayedCall(320, () => this.announce('READY?', '#facc15'));
 
     this.time.delayedCall(1200, () => {
@@ -857,6 +893,70 @@ export class BattleScene extends Phaser.Scene {
           if (f.alive) f.say(f.pickQuote('intro'), f.cfg.colors.accent);
         });
       });
+  }
+
+  /**
+   * 지금 무대가 무엇인지.
+   *
+   * 발판 배치는 스크린샷으로도 보이지만, 중력처럼 보이지 않는 것은
+   * 화면으로 확인할 방법이 없다. 검사가 직접 읽는다.
+   */
+  getStageInfo(): { id: string; name: string; platforms: number; gravity: number } {
+    return {
+      id: this.stage.id,
+      name: this.stage.name,
+      platforms: this.platforms.length,
+      gravity: this.physics.world.gravity.y,
+    };
+  }
+
+  /** 무대 이름 — 화면 위쪽에서 잠깐 떴다 사라진다 */
+  private showStageBanner(): void {
+    const accent = `#${this.stage.accent.toString(16).padStart(6, '0')}`;
+
+    const name = this.add
+      .text(GAME.WIDTH / 2, 146, this.stage.name, {
+        fontFamily: GAME.FONT,
+        fontSize: '30px',
+        color: accent,
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0);
+
+    const desc = this.add
+      .text(GAME.WIDTH / 2, 178, this.stage.desc, {
+        fontFamily: GAME.FONT,
+        fontSize: '15px',
+        color: '#9fb3dd',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0);
+
+    // announce 와 같은 방식 — 화면 고정 + 최상단. 컨테이너에 넣으면 좌표가 꼬인다
+    [name, desc].forEach((t) => t.setScrollFactor(0).setDepth(DEPTH.OVERLAY));
+    name.setStroke('#0b1020', 7);
+    desc.setStroke('#0b1020', 5);
+
+    this.tweens.add({
+      targets: [name, desc],
+      alpha: 1,
+      y: '-=12',
+      duration: 300,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        this.tweens.add({
+          targets: [name, desc],
+          alpha: 0,
+          delay: 1500,
+          duration: 400,
+          onComplete: () => {
+            name.destroy();
+            desc.destroy();
+          },
+        });
+      },
+    });
   }
 
   /* ================================================================ */

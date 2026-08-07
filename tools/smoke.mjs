@@ -916,6 +916,63 @@ for (let i = 0; i < 20; i++) {
 await shot('mid-battle');
 await page.waitForTimeout(2500);
 await shot('final');
+
+/*
+ * 무대 네 곳.
+ *
+ * 발판 배치는 스크린샷으로 보이지만 중력은 안 보인다. 그리고 무대를 늘리면
+ * 늘어난 만큼 "그 무대에서만 터지는" 자리가 생긴다 — 발판이 여섯 개인 곳,
+ * 중력이 다른 곳. 네 곳을 실제로 한 번씩 세워 보고 콘솔이 조용한지 본다.
+ */
+console.log('무대');
+{
+  const WANT = [
+    ['exchange', 5, 2200],
+    ['rooftop', 3, 2200],
+    ['server', 6, 2200],
+    ['moon', 5, 1364],
+  ];
+
+  for (const [id, platforms, gravity] of WANT) {
+    await page.evaluate((stageId) => {
+      const g = window.game;
+      const sc = g.scene.getScene('Battle');
+      const prev = sc.scene.settings.data ?? {};
+      g.scene.stop('Battle');
+      g.scene.start('Battle', { ...prev, stageId });
+    }, id);
+
+    // 씬 재생성 + 페이드인
+    await page.waitForFunction(
+      (want) => window.game?.scene?.getScene('Battle')?.getStageInfo?.()?.id === want,
+      id,
+      { timeout: 8000 },
+    ).catch(() => {});
+
+    const info = await page.evaluate(
+      () => window.game?.scene?.getScene('Battle')?.getStageInfo?.() ?? null,
+    );
+
+    if (!info) {
+      errors.push(`[무대] ${id} 정보를 읽지 못했습니다`);
+      continue;
+    }
+    if (info.id !== id) {
+      errors.push(`[무대] ${id} 로 바뀌지 않았습니다 (${info.id})`);
+      continue;
+    }
+    if (info.platforms !== platforms) {
+      errors.push(`[무대] ${info.name}: 발판이 ${platforms}개여야 하는데 ${info.platforms}개`);
+    }
+    if (Math.abs(info.gravity - gravity) > 2) {
+      errors.push(`[무대] ${info.name}: 중력이 ${gravity} 여야 하는데 ${info.gravity}`);
+    }
+
+    await page.waitForTimeout(500);
+    await shot(`stage-${id}`);
+    console.log(`  ✓ ${info.name} — 발판 ${info.platforms}개 · 중력 ${Math.round(info.gravity)}`);
+  }
+}
 } catch (err) {
   errors.push(`[중단] ${step}단계 이후: ${err instanceof Error ? err.message : err}`);
 }

@@ -553,6 +553,11 @@ export interface BattleSceneData {
   playerId: CharacterId;
   /** AI 봇 캐릭터 목록 */
   aiIds: CharacterId[];
+  /**
+   * 무대를 지정한다. 적지 않으면 앞 판과 다른 곳으로 무작위 선정.
+   * (검사가 네 무대를 하나씩 돌려 보는 데 쓴다)
+   */
+  stageId?: string;
 }
 
 /* ------------------------------------------------------------------ */

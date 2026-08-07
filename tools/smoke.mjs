@@ -304,20 +304,35 @@ const restartRound = async () => {
  * 키 입력이 처리되는 다음 프레임에는 이미 지면이라 공중기가 아니라 지상기가 나간다.
  * 프레임이 드문 환경일수록 이 틈이 커지므로, 2단 점프까지 써서 여유 높이를 만든다.
  */
-const DIVE_MIN_HEIGHT = 130;
+/*
+ * 급강하를 걸기 전에 확보해야 하는 높이.
+ *
+ * 브라우저를 오가는 사이에도 계속 떨어진다 — 방향키와 공격키를 누르는 두 번의
+ * 왕복만으로 100px 넘게 내려오고, S가 먼저 눌린 프레임에서는 급강하 낙하까지
+ * 붙는다. 여유를 넉넉히 두지 않으면 공중기를 노렸는데 지상기가 나간다.
+ */
+const DIVE_MIN_HEIGHT = 150;
 
 const goAirborne = async () => {
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 6; i++) {
     const s = await playerState();
     if (!s?.alive) return false;
     if (s.airborne && s.height > DIVE_MIN_HEIGHT) return true;
 
-    // 후딜·경직 중에는 점프가 씹힌다 — 풀린 뒤에 누른다
+    /*
+     * 후딜·경직 중에는 점프가 씹힌다 — 풀린 뒤에 누른다.
+     *
+     * 충분히 길게 누른다. 짧게 누르면 숏홉이 되어(버튼을 떼면 상승이 잘린다)
+     * 급강하를 넣기 전에 착지해 버린다. 사람도 높이 뛰려면 길게 누른다.
+     */
     if (s.free || s.airborne) {
-      await hold('Space', 200);
-      await page.waitForTimeout(70);
+      await hold('Space', 420);
+      await page.waitForTimeout(60);
       // 2단 점프로 한 번 더 밀어 올려 여유를 만든다
-      await hold('Space', 200);
+      await hold('Space', 420);
+      // 여기서 이미 충분히 떴으면 더 기다리지 않는다 — 기다리는 만큼 떨어진다
+      const now = await playerState();
+      if (now?.airborne && now.height > DIVE_MIN_HEIGHT) return true;
     }
     await page.waitForTimeout(90);
   }
@@ -337,7 +352,7 @@ const goAirborne = async () => {
  */
 const command = async (dirKey, btn, prep, expect) => {
   const before = (await readMoves()).length;
-  const until = Date.now() + 12000;
+  const until = Date.now() + 22000;
   let fired = false;
   /* 실패했을 때 "무엇이 대신 나갔는지"를 말해 주기 위해 마지막 오답을 남긴다 */
   let wrong = null;
@@ -366,9 +381,12 @@ const command = async (dirKey, btn, prep, expect) => {
      * 프레임이 드문 환경에서는 그 한 프레임에 지면까지 내려와, 공중기를 노렸는데
      * 지상 광역기가 나가버린다.
      */
-    await page.keyboard.down(dirKey);
-    await page.keyboard.down(btn);
-    await page.waitForTimeout(260);
+    /*
+     * 두 키를 한 번에 보낸다. 하나씩 await 하면 그 사이에도 브라우저를
+     * 오가고, 방향키만 눌린 그 프레임에서 급강하 낙하가 붙어 착지해 버린다.
+     */
+    await Promise.all([page.keyboard.down(dirKey), page.keyboard.down(btn)]);
+    await page.waitForTimeout(200);
     await page.keyboard.up(btn);
     await page.keyboard.up(dirKey);
 
@@ -577,7 +595,35 @@ const cases = [
 for (const [dir, btn, name, prep, want] of cases) {
   await restartRound();
   await waitGrounded();
+
+  /*
+   * 공중 급강하만 중력을 낮춰 놓고 확인한다.
+   *
+   * 확인하려는 것은 "공중에서 S+K 가 급강하로 해석되는가"이지 체공 시간이
+   * 아니다. 그런데 헤드리스는 키 하나 누르는 데도 브라우저를 오가느라
+   * 100ms 넘게 걸리고, 그 사이에 떨어져 착지해 버려 같은 입력이 지상기로
+   * 해석된다 — 조작이 깨진 게 아니라 검사가 준비에 실패하는 것이다.
+   * 체공을 넉넉히 만들어 그 변수를 지운다.
+   */
+  const slowFall = name === 'cmd-air-dive';
+  let gravityBefore = 0;
+  if (slowFall) {
+    gravityBefore = await page.evaluate(() => {
+      const w = window.game.scene.getScene('Battle').physics.world;
+      const before = w.gravity.y;
+      w.gravity.y = 520;
+      return before;
+    });
+  }
+
   await command(dir, btn, prep, want);
+
+  if (slowFall) {
+    await page.evaluate((g) => {
+      window.game.scene.getScene('Battle').physics.world.gravity.y = g;
+    }, gravityBefore);
+  }
+
   await shot(name);
 }
 
@@ -1034,6 +1080,163 @@ if (!board) {
   console.log(
     `  ✓ 전적 집계 — 준 피해 ${Math.round(board.dealt)} · 맞은 피해 ${Math.round(board.taken)} · 적중 ${board.hits}`,
   );
+}
+
+/*
+ * 조작감 세 가지 — 숏홉 · 차지 강공격 · 회피.
+ *
+ * 셋 다 "손에 어떻게 잡히는가"의 문제라 스크린샷으로는 확인할 수 없다.
+ * 눌린 길이에 따라 결과가 달라져야 하는 것들이므로, 실제로 길이를 달리
+ * 눌러 보고 나온 숫자를 비교한다.
+ */
+console.log('조작감');
+{
+  /* --- 숏홉 — 짧게 누르면 낮게 뛴다 ------------------------------ */
+
+  /*
+   * 정점 높이로 재려다 실패했다. 넷이 붙어 싸우는 판에서는 뛰는 도중
+   * 맞아 날아가고, 헤드리스는 표본이 드물어 정점을 자주 놓친다.
+   * 그래서 둘로 나눠 본다 — **규칙이 맞는가**와 **입력이 닿는가**.
+   */
+  await waitGrounded();
+
+  const hop = await page.evaluate(() => {
+    const p = window.game.scene.getScene('Battle').player;
+    p.body.setVelocityY(0);
+    p.jump();
+    const full = p.body.velocity.y;
+    p.releaseJump();
+    return { full, cut: p.body.velocity.y };
+  });
+
+  if (!(hop.full < -300)) {
+    errors.push(`[조작감] 점프가 나가지 않았습니다 (속도 ${hop.full})`);
+  } else if (!(hop.cut > hop.full * 0.75)) {
+    errors.push(
+      `[조작감] 버튼을 떼도 상승이 잘리지 않습니다 (${Math.round(hop.full)} → ${Math.round(hop.cut)})`,
+    );
+  } else {
+    console.log(
+      `  ✓ 숏홉 — 떼는 순간 상승 ${Math.round(hop.full)} → ${Math.round(hop.cut)} ` +
+        `(${Math.round((hop.cut / hop.full) * 100)}%)`,
+    );
+  }
+
+  /* 입력이 실제로 닿는가 — 누른 동안과 뗀 동안의 상태가 갈리는지 */
+  const heldState = async (down) => {
+    if (down) await page.keyboard.down(' ');
+    else await page.keyboard.up(' ');
+    await page.waitForTimeout(400);
+    return page.evaluate(
+      () => window.game.scene.getScene('Battle').player.jumpHeld,
+    );
+  };
+
+  const whileHeld = await heldState(true);
+  const whileFree = await heldState(false);
+
+  if (!whileHeld || whileFree) {
+    errors.push(
+      `[조작감] 점프 버튼 상태가 캐릭터에 전달되지 않습니다 (누름 ${whileHeld} / 뗌 ${whileFree})`,
+    );
+  } else {
+    console.log('  ✓ 점프 버튼 상태 전달 — 누름 true / 뗌 false');
+  }
+
+  /* --- 차지 강공격 — 꾹 누르면 세진다 ---------------------------- */
+  /*
+   * 차지된 피해량은 beginAttack 시점에는 아직 정해지지 않았다 —
+   * 선딜이 끝나는 순간에야 "얼마나 모았는지"가 확정되기 때문이다.
+   * 그래서 발동 순간을 가로채는 대신, 확정된 값을 게임에게 물어본다.
+   */
+  const heavyDamage = async (holdMs) => {
+    await waitGrounded();
+
+    /*
+     * 앞 시도의 기록을 지운다. 안 지우면 이번에 공격이 안 나갔을 때
+     * 지난번 값이 그대로 읽혀 "차지가 안 된다"는 엉뚱한 결론이 난다.
+     */
+    await page.evaluate(() => {
+      window.game.scene.getScene('Battle').player.lastMoveAt = -99999;
+    });
+
+    await page.keyboard.down('k');
+    await page.waitForTimeout(holdMs);
+    await page.keyboard.up('k');
+    // 선딜이 끝나 판정이 켜질 때까지
+    await page.waitForTimeout(700);
+
+    return page.evaluate(() => {
+      const p = window.game.scene.getScene('Battle').player;
+      // 이번 시도에서 실제로 나간 것만 (오래된 기록은 null)
+      const name = p.getRecentMoveName(2500);
+      return { damage: name ? p.getRecentMoveDamage() : 0, name };
+    });
+  };
+
+  /*
+   * 맞아서 끊기거나 공중에서 눌리면 다른 기술이 나간다 —
+   * 지상 중립 강공격이 실제로 나온 시도만 센다.
+   */
+  const groundHeavyName = await page.evaluate(
+    () => window.game.scene.getScene('Battle').player.cfg.moves.heavy.name,
+  );
+  /*
+   * 기준은 설정에 적힌 원래 피해량이다. "짧게 눌렀을 때"와 비교하면
+   * 프레임이 드문 환경에서 짧은 누름조차 조금 모여 버려 기준이 흔들린다.
+   */
+  const baseDamage = await page.evaluate(
+    () => window.game.scene.getScene('Battle').player.cfg.moves.heavy.damage,
+  );
+
+  let charged = null;
+  for (let i = 0; i < 6 && !charged; i++) {
+    const r = await heavyDamage(1200);
+    if (r.name?.startsWith(groundHeavyName) && r.damage > baseDamage) charged = r;
+  }
+
+  if (!charged) {
+    errors.push(
+      `[조작감] 꾹 눌러도 강공격이 세지지 않습니다 (기본 ${baseDamage})`,
+    );
+  } else {
+    console.log(
+      `  ✓ 차지 강공격 — 기본 ${baseDamage} → ${charged.damage} ` +
+        `(×${(charged.damage / baseDamage).toFixed(2)}) "${charged.name}"`,
+    );
+  }
+
+  /* --- 회피 — 방어 중 좌우로 무적 구르기 ------------------------- */
+
+  /*
+   * 경직 중이면 못 구르는 것이 규칙이다(맞고도 빠져나가면 연속기가 성립하지
+   * 않는다). 넷이 붙어 싸우는 판에서는 그 순간에 걸리는 일이 흔하므로
+   * 몇 번 시도해 본다 — 한 번 실패했다고 기능이 죽은 것은 아니다.
+   */
+  let rolled = { dodging: false, invuln: false };
+  for (let i = 0; i < 5 && !rolled.dodging; i++) {
+    await waitGrounded();
+    await page.keyboard.down('s');
+    await page.waitForTimeout(160);
+    await page.keyboard.press('d');
+    await page.waitForTimeout(120);
+
+    rolled = await page.evaluate(() => {
+      const p = window.game.scene.getScene('Battle').player;
+      return { dodging: p.isDodging(), invuln: p.isInvulnerable() };
+    });
+    await page.keyboard.up('s');
+    if (!rolled.dodging) await page.waitForTimeout(700);
+  }
+
+  if (!rolled.dodging) {
+    errors.push('[조작감] 방어 중 방향키로 구르기가 나가지 않았습니다');
+  } else if (!rolled.invuln) {
+    errors.push('[조작감] 구르는 중인데 무적이 아닙니다');
+  } else {
+    console.log('  ✓ 회피 — 방어 중 A/D 구르기 + 무적');
+  }
+  await shot('dodge');
 }
 
 /*

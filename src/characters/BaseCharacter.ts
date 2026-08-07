@@ -166,6 +166,45 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   private jumpsLeft: number = FIGHTER.MAX_JUMPS;
   private wasOnGround = true;
+  /**
+   * 지금 상승 중인 점프가 "버튼을 떼면 잘리는" 점프인가.
+   *
+   * 넉백으로 떠오르는 것과 스스로 뛴 것을 구별해야 한다 — 맞아서 뜬 것을
+   * 버튼 떼기로 자를 수 있으면 콤보를 손쉽게 빠져나가게 된다.
+   */
+  private jumpRising = false;
+  /** 착지 직전에 눌린 점프를 기억한다 (0 = 없음) */
+  private jumpBufferedAt = 0;
+  /**
+   * 점프 버튼이 눌려 있는가.
+   *
+   * 기본값이 true 인 이유 — 봇은 이 값을 갱신하지 않는다. false 로 두면
+   * 봇의 점프가 전부 즉시 잘려 아무도 발판에 못 올라간다.
+   * "따로 알려주지 않으면 계속 누르고 있는 것으로 본다"가 안전한 쪽이다.
+   */
+  private jumpHeld = true;
+  /**
+   * 차지 강공격.
+   *
+   * ── 왜 이 방식인가 ────────────────────────────────────────────
+   * "누르고 있다가 떼면 발동"으로 만들면 입력이 130ms 늦게 나간다.
+   * 격투 게임에서 그 지연은 곧바로 "뻑뻑하다"로 느껴진다.
+   *
+   * 그래서 **누르는 즉시 모션은 시작하되, 선딜 구간에서 버튼을 계속
+   * 누르고 있으면 그 자리에 멈춰 힘을 모은다.** 대난투의 스매시 어택과
+   * 같은 방식이고, 입력 지연이 0이면서 "모으는 맛"이 생긴다.
+   */
+  private chargeMs = 0;
+  /** 지금 강공격 버튼이 눌려 있는가 (씬이 매 프레임 알려준다) */
+  private holdingHeavy = false;
+  /** 차지 불티를 마지막으로 뿌린 시각 — 매 프레임 뿌리면 화면이 탄다 */
+  private lastChargeSpark = 0;
+  /** 방금 낸 기술의 실제 피해량 (차지가 반영된 값) */
+  private lastMoveDamage = 0;
+  /** 회피가 끝나는 시각 */
+  private dodgeUntil = 0;
+  /** 다음 회피가 가능한 시각 */
+  private dodgeReadyAt = 0;
   /** 착지 포즈가 유지되는 시각 */
   private landUntil = 0;
   /** 아이템을 집어드는 포즈가 유지되는 시각 */
@@ -288,6 +327,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     return (
       this.alive &&
       !this.guarding &&
+      !this.isDodging() &&
       this.attackPhase === 'none' &&
       this.scene.time.now >= this.stunUntil
     );
@@ -299,8 +339,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 공격·방어 중에는 이동 불가 (관성만 유지)
     if (this.attackPhase !== 'none' || this.guarding) return;
-    // 대시 중에는 대시 속도를 덮어쓰지 않는다
+    // 대시·회피 중에는 그 속도를 덮어쓰지 않는다
     if (this.scene.time.now < this.dashUntil) return;
+    if (this.isDodging()) return;
 
     if (dir === 0) {
       this.body.setAccelerationX(0);
@@ -320,11 +361,23 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 공중에서 쓰는 구조라, 맞는 순간 전부 사라진다.
    */
   jump(): void {
-    if (!this.canAct()) return;
+    if (!this.canAct()) {
+      /*
+       * 지금은 못 뛰지만(후딜·경직 중) 눌린 것은 기억해 둔다.
+       * 사람은 착지하는 순간에 정확히 못 누른다 — 조금 일찍 누른 것을
+       * 버리면 "점프가 씹혔다"가 되고, 그 감각이 조작을 뻑뻑하게 만든다.
+       */
+      if (this.alive) this.jumpBufferedAt = this.scene.time.now;
+      return;
+    }
 
     let balloonJump = false;
     if (this.jumpsLeft <= 0) {
-      if (this.cfg.signature.id !== 'balloon' || this.sigStacks <= 0) return;
+      if (this.cfg.signature.id !== 'balloon' || this.sigStacks <= 0) {
+        // 공중에서 다 쓴 뒤 누른 것도 기억한다 — 착지하자마자 뛴다
+        this.jumpBufferedAt = this.scene.time.now;
+        return;
+      }
       this.sigStacks--;
       balloonJump = true;
       this.spawnBalloonPop();
@@ -333,6 +386,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const first = !balloonJump && this.jumpsLeft === FIGHTER.MAX_JUMPS;
     const power = first ? this.cfg.stats.jump : this.cfg.stats.doubleJump;
     this.body.setVelocityY(power);
+    this.jumpRising = true;
+    this.jumpBufferedAt = 0;
     if (!balloonJump) this.jumpsLeft--;
 
     // 도약 시 위로 늘어나는 스트레치
@@ -340,6 +395,96 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     sound.play(first ? 'jump' : 'doubleJump');
 
     if (!first) this.spawnDoubleJumpRing();
+  }
+
+  /**
+   * 점프 버튼을 뗐다.
+   *
+   * 아직 올라가는 중이면 상승을 잘라 낮은 점프로 만든다.
+   * 같은 버튼에 "낮게 톡"과 "높게 크게" 두 선택지가 생긴다 —
+   * 대난투류에서 낮은 점프 공중공격이 성립하는 이유가 이것이다.
+   */
+  releaseJump(): void {
+    if (!this.jumpRising) return;
+    this.jumpRising = false;
+    if (this.body.velocity.y < 0) {
+      this.body.setVelocityY(this.body.velocity.y * FIGHTER.SHORT_HOP_MUL);
+    }
+  }
+
+  /**
+   * 점프 버튼 상태를 매 프레임 알려준다.
+   *
+   * 뗀 "순간"만 잡으면 프레임이 드문 환경에서 누르고 떼는 것이 통째로
+   * 프레임 사이에 들어가 이벤트가 사라진다. 상태를 계속 넘겨받아
+   * 매 프레임 조금씩 눌러 내리는 쪽이 확실하고, 뚝 끊기지 않아 더 부드럽다.
+   */
+  setJumpHeld(held: boolean): void {
+    this.jumpHeld = held;
+  }
+
+  /**
+   * 회피 — 무적으로 빠져나간다.
+   *
+   * ── 왜 넣는가 ──────────────────────────────────────────────────
+   * 지금까지 방어 수단은 가드 하나였다. 가드는 그 자리에 서서 버티는 것이라
+   * **몰리면 답이 없다** — 셋에게 둘러싸이면 가드가 깨질 때까지 맞는 게 전부다.
+   *
+   * 회피가 생기면 "맞기 직전에 빠져나간다"는 선택지가 늘고, 공격하는 쪽도
+   * 상대가 회피할 자리를 읽어야 한다. 공격/가드 둘뿐이던 판이 셋이 된다.
+   *
+   * @param dir 0이면 제자리 회피, ±1이면 그 방향으로 구른다
+   */
+  dodge(dir: -1 | 0 | 1): boolean {
+    const now = this.scene.time.now;
+    if (!this.alive || now < this.dodgeReadyAt) return false;
+    // 경직 중에는 안 된다 — 맞고도 빠져나가면 연속기가 성립하지 않는다
+    if (this.attackPhase !== 'none' || now < this.stunUntil) return false;
+
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    if (!onGround) return false;
+
+    this.guarding = false;
+    this.dodgeUntil = now + FIGHTER.DODGE_MS;
+    this.dodgeReadyAt = now + FIGHTER.DODGE_COOLDOWN;
+    /*
+     * 무적은 지속보다 짧다. 회피가 끝나기 전에 무적이 풀리므로,
+     * 아무 때나 굴러도 되는 것이 아니라 **타이밍을 재야** 한다.
+     */
+    this.invulnUntil = Math.max(this.invulnUntil, now + FIGHTER.DODGE_INVULN_MS);
+
+    if (dir === 0) {
+      this.body.setVelocityX(this.body.velocity.x * 0.2);
+      this.pulseSquash(1.25, 0.72, 160);
+    } else {
+      const speed = this.cfg.stats.speed * FIGHTER.DODGE_SPEED_MUL;
+      this.body.setVelocityX(speed * dir);
+      this.setFacing(dir);
+      this.pulseSquash(1.18, 0.84, 200);
+    }
+
+    this.spawnDodgeTrail(dir);
+    sound.play('whiff', 0.3);
+    return true;
+  }
+
+  /** 회피 중인가 — 이동·공격을 막는 데 쓴다 */
+  isDodging(): boolean {
+    return this.scene.time.now < this.dodgeUntil;
+  }
+
+  /** 강공격 버튼 상태 — 차지 유지 판정에 쓴다 */
+  setHeavyHeld(held: boolean): void {
+    this.holdingHeavy = held;
+  }
+
+  /**
+   * 지금 모으고 있는 정도 (0~1). HUD 게이지가 읽는다.
+   * 모으는 것이 보이지 않으면 그냥 "가끔 세게 나가는 기술"이 된다.
+   */
+  getChargeRatio(): number {
+    if (!this.chargeMs) return 0;
+    return Math.min(1, this.chargeMs / FIGHTER.CHARGE_MAX_MS);
   }
 
   /** 급강하 (S) — 공중에서 빠르게 낙하 */
@@ -456,6 +601,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    */
   getRecentMoveName(windowMs = 900): string | null {
     return this.scene.time.now - this.lastMoveAt <= windowMs ? this.lastMove : null;
+  }
+
+  /** 방금 낸 기술의 실제 피해량 — 차지가 반영된 값 (검사·HUD용) */
+  getRecentMoveDamage(): number {
+    return this.lastMoveDamage;
   }
 
   /** HUD가 읽어가는 현재 자원량 */
@@ -730,12 +880,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
      * "이 캐릭터엔 기술이 많다"가 전달된다.
      */
     this.lastMove = atk.name;
+    this.lastMoveDamage = atk.damage;
     this.lastMoveAt = this.scene.time.now;
 
     // 새 모션이 시작되면 이전 타의 여운은 무효가 된다
     // (선입력은 호출부가 남은 개수를 되돌려 놓는다)
     this.chainBuffered = 0;
     this.chainNext = null;
+    this.chargeMs = 0;
 
     /* 선딜 예비동작 — 어느 방향으로 내는 기술인지 몸이 먼저 알려준다 */
     switch (atk.hitAnchor ?? 'front') {
@@ -1199,15 +1351,47 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     /* 공격 상태 머신 진행 */
     if (this.attackPhase !== 'none' && this.currentAttack) {
-      this.attackTimer -= delta;
+      /*
+       * 선딜 구간에서 버튼을 계속 누르고 있으면 그 자리에 멈춰 모은다.
+       * 타이머를 줄이지 않는 것만으로 "차지"가 된다 — 별도 상태가 필요 없다.
+       */
+      if (
+        this.attackPhase === 'startup' &&
+        this.holdingHeavy &&
+        this.isChargeable(this.currentAttack) &&
+        this.chargeMs < FIGHTER.CHARGE_MAX_MS
+      ) {
+        this.chargeMs += delta;
+        this.tickChargeFx(time);
+      } else {
+        this.attackTimer -= delta;
+      }
       if (this.attackTimer <= 0) {
         const atk = this.currentAttack;
         switch (this.attackPhase) {
-          case 'startup':
+          case 'startup': {
+            /*
+             * 모은 만큼 강해진 사본으로 갈아 끼운다.
+             * 원본을 건드리면 그 캐릭터의 기술이 영구히 세지므로,
+             * 이 한 번의 공격에만 쓰는 복사본을 만든다.
+             */
+            const charged = this.applyCharge(atk);
+            this.currentAttack = charged;
+            /*
+             * 화면에 뜨는 이름·수치도 모은 뒤의 것으로 갈아 끼운다.
+             * beginAttack 시점에는 얼마나 모을지 알 수 없어 원본이 적혀 있고,
+             * 그대로 두면 "풀차지로 때렸는데 HUD엔 기본값"이 된다.
+             */
+            this.lastMove = charged.name;
+            this.lastMoveDamage = charged.damage;
+            this.lastMoveAt = time;
             this.attackPhase = 'active';
-            this.attackTimer = atk.active;
-            this.spawnSwing(atk);
+            this.attackTimer = charged.active;
+            this.spawnSwing(charged);
+            if (this.chargeMs >= FIGHTER.CHARGE_MIN_MS) this.spawnChargeBurst();
+            this.chargeMs = 0;
             break;
+          }
           case 'active':
             /*
              * 판정이 끝나는 순간이 연속기가 이어지는 지점이다.
@@ -1253,8 +1437,30 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       }
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
+      this.jumpRising = false;
+
+      /*
+       * 착지 직전에 눌린 점프를 이제 실행한다.
+       * 이것이 있어야 "착지하자마자 다시 뛰기"가 손에 맞는다.
+       */
+      if (this.jumpBufferedAt && time - this.jumpBufferedAt <= FIGHTER.JUMP_BUFFER_MS) {
+        this.jumpBufferedAt = 0;
+        this.jump();
+      }
     } else {
       this.fallSpeed = Math.max(this.fallSpeed, this.body.velocity.y);
+
+      if (this.body.velocity.y >= 0) {
+        this.jumpRising = false;
+      } else if (this.jumpRising && !this.jumpHeld) {
+        /*
+         * 버튼을 뗐는데 아직 올라가는 중 — 추가 중력으로 눌러 내린다.
+         * 짧게 누르면 낮게, 길게 누르면 높게. 같은 버튼에 두 선택지가 생긴다.
+         */
+        this.body.setVelocityY(
+          this.body.velocity.y + (FIGHTER.LOW_JUMP_GRAVITY * delta) / 1000,
+        );
+      }
     }
     this.wasOnGround = onGround;
 
@@ -1567,6 +1773,128 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       ease: 'Cubic.easeOut',
       onComplete: () => ring.destroy(),
     });
+  }
+
+  /* ================================================================ */
+  /* 차지 강공격                                                       */
+  /* ================================================================ */
+
+  /**
+   * 이 기술을 모을 수 있는가.
+   *
+   * 지상 중립 강공격(K)과 그 2타만 허용한다. 방향기까지 모을 수 있게 하면
+   * 모든 강공격이 "일단 눌러 두고 상황 보는" 기술이 되어, 커맨드를 나눈
+   * 의미가 사라진다. **하나만 모을 수 있어야 그 하나가 특별해진다.**
+   */
+  private isChargeable(atk: AttackConfig): boolean {
+    if (atk.type !== 'heavy') return false;
+    if (atk.slot !== 'heavy' && atk.slot !== 'heavy2') return false;
+    return this.body.blocked.down || this.body.touching.down;
+  }
+
+  /** 모은 만큼 강해진 사본 (안 모았으면 원본 그대로) */
+  private applyCharge(atk: AttackConfig): AttackConfig {
+    if (this.chargeMs < FIGHTER.CHARGE_MIN_MS) return atk;
+
+    const t = Math.min(1, this.chargeMs / FIGHTER.CHARGE_MAX_MS);
+    const dmg = 1 + (FIGHTER.CHARGE_DAMAGE_MUL - 1) * t;
+    const kb = 1 + (FIGHTER.CHARGE_KNOCKBACK_MUL - 1) * t;
+
+    return {
+      ...atk,
+      // 이름에 표시를 붙인다 — HUD에 "인수 합병 (풀차지)" 로 뜬다
+      name: t >= 0.98 ? `${atk.name} (풀차지)` : atk.name,
+      damage: Math.round(atk.damage * dmg),
+      knockbackX: Math.round(atk.knockbackX * kb),
+      knockbackY: Math.round(atk.knockbackY * kb),
+      hitstop: Math.round(atk.hitstop * (1 + 0.5 * t)),
+      shake: atk.shake * (1 + 0.8 * t),
+      // 모은 한 방은 판정도 조금 길다 — 모은 보람이 맞히기 쉬움으로도 온다
+      active: Math.round(atk.active * (1 + 0.25 * t)),
+      range: Math.round(atk.range * (1 + 0.12 * t)),
+    };
+  }
+
+  /** 모으는 동안의 진동과 불티 */
+  private tickChargeFx(time: number): void {
+    if (this.chargeMs < FIGHTER.CHARGE_MIN_MS) return;
+
+    // 몸을 떨리게 — 모으는 중이라는 것이 정지 화면에서도 읽혀야 한다
+    const t = Math.min(1, this.chargeMs / FIGHTER.CHARGE_MAX_MS);
+    this.visual.x = Math.sin(time * 0.06) * (1 + t * 2.5);
+
+    if (time - this.lastChargeSpark < 90) return;
+    this.lastChargeSpark = time;
+
+    const spark = this.scene.add
+      .circle(
+        this.x + Phaser.Math.Between(-26, 26),
+        this.y + Phaser.Math.Between(-10, 34),
+        3 + t * 3,
+        this.cfg.colors.accent,
+        0.9,
+      )
+      .setDepth(DEPTH.IMPACT);
+
+    this.scene.tweens.add({
+      targets: spark,
+      y: spark.y - 34,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => spark.destroy(),
+    });
+  }
+
+  /** 모은 것을 놓는 순간의 방출 링 */
+  private spawnChargeBurst(): void {
+    this.visual.x = 0;
+    const t = Math.min(1, this.chargeMs / FIGHTER.CHARGE_MAX_MS);
+
+    const ring = this.scene.add
+      .circle(this.x, this.y, 18)
+      .setStrokeStyle(4 + t * 3, this.cfg.colors.accent, 1)
+      .setDepth(DEPTH.IMPACT);
+
+    this.scene.tweens.add({
+      targets: ring,
+      scale: 2.4 + t * 2,
+      alpha: 0,
+      duration: 260,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+
+    sound.play('surge', 0.3 + t * 0.6);
+  }
+
+  /**
+   * 회피 잔상.
+   *
+   * 무적은 눈에 안 보인다. 잔상이 없으면 "왜 안 맞았지"가 되고,
+   * 그러면 회피가 실력이 아니라 운으로 읽힌다. 지나간 자리를 남긴다.
+   */
+  private spawnDodgeTrail(dir: -1 | 0 | 1): void {
+    const count = dir === 0 ? 1 : 4;
+
+    for (let i = 0; i < count; i++) {
+      const ghost = this.scene.add
+        .circle(
+          this.x - dir * i * 16,
+          this.y,
+          FIGHTER.BODY_W * 0.42,
+          this.cfg.colors.accent,
+          0.32 - i * 0.06,
+        )
+        .setDepth(DEPTH.FIGHTER - 1);
+
+      this.scene.tweens.add({
+        targets: ghost,
+        alpha: 0,
+        scale: 0.7,
+        duration: 220 + i * 40,
+        onComplete: () => ghost.destroy(),
+      });
+    }
   }
 
   /** 떡상 불꽃 파티클 강도 설정 */

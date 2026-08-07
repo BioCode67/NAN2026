@@ -692,38 +692,81 @@ export class BattleScene extends Phaser.Scene {
     const p = this.player;
     if (!p.alive) return;
 
+    /*
+     * JustDown 은 한 번 읽으면 그 프레임의 "방금 눌림"을 소비한다.
+     * 같은 키를 두 곳에서 각각 읽으면 뒤쪽은 언제나 false 가 된다 —
+     * 실제로 회피가 통째로 죽어 있었다. 프레임 시작에 한 번만 읽어 나눠 쓴다.
+     */
     const JustDown = Phaser.Input.Keyboard.JustDown;
+    const JustUp = Phaser.Input.Keyboard.JustUp;
+
+    const tapLeft = JustDown(this.keys.left!);
+    const tapRight = JustDown(this.keys.right!);
+    const tapJump = JustDown(this.keys.jump!) || JustDown(this.keys.jumpAlt!);
+    const releaseJump = JustUp(this.keys.jump!) || JustUp(this.keys.jumpAlt!);
+    const tapLight = JustDown(this.keys.light!);
+    const tapHeavy = JustDown(this.keys.heavy!);
+    const tapSkill = JustDown(this.keys.skill!);
+    const tapTaunt = JustDown(this.keys.taunt!);
+
     const left = this.keys.left!.isDown;
     const right = this.keys.right!.isDown;
     const up = this.keys.up!.isDown;
     const down = this.keys.down!.isDown;
     const onGround = p.body.blocked.down || p.body.touching.down;
+    const reversed = this.gimmicks.isReversed();
 
     /* 공격 방향 — 같은 버튼이라도 W/S를 함께 누르면 다른 기술이 나간다 */
     const dir: AttackDir = up ? 'up' : down ? 'down' : 'neutral';
 
-    /* A/D 더블탭 → 대시 */
-    if (JustDown(this.keys.left!) && this.checkDoubleTap(-1)) p.dash(-1);
-    if (JustDown(this.keys.right!) && this.checkDoubleTap(1)) p.dash(1);
+    /*
+     * S를 누른 채로는 방어 상태다.
+     *
+     * 방어 중 좌우 → 구르기, 방어 중 점프 → 제자리 회피.
+     * 가드만 있으면 몰렸을 때 답이 없다 — 그 자리에서 깨질 때까지 맞는 게
+     * 전부다. 빠져나가는 선택지가 있어야 공격하는 쪽도 읽을 것이 생긴다.
+     */
+    const wantGuard = down && onGround;
+    let dodged = false;
+    if (wantGuard) {
+      if (tapLeft) dodged = p.dodge(reversed ? 1 : -1);
+      else if (tapRight) dodged = p.dodge(reversed ? -1 : 1);
+      else if (tapJump) dodged = p.dodge(0);
+    }
+
+    /* A/D 더블탭 → 대시 (방어 중에는 구르기가 먼저다) */
+    if (!wantGuard) {
+      if (tapLeft && this.checkDoubleTap(-1)) p.dash(-1);
+      if (tapRight && this.checkDoubleTap(1)) p.dash(1);
+    }
 
     /* 조작 반전 룰이 걸려 있으면 좌우가 뒤집힌다 */
     let move: -1 | 0 | 1 = left && !right ? -1 : right && !left ? 1 : 0;
-    if (this.gimmicks.isReversed()) move = -move as -1 | 0 | 1;
+    if (reversed) move = -move as -1 | 0 | 1;
     p.moveHorizontal(move);
 
-    if (JustDown(this.keys.jump!) || JustDown(this.keys.jumpAlt!)) p.jump();
-    if (JustDown(this.keys.light!)) p.attack('light', dir);
-    if (JustDown(this.keys.heavy!)) p.attack('heavy', dir);
-    if (JustDown(this.keys.skill!)) this.castSkill(p);
-    if (JustDown(this.keys.taunt!)) p.taunt();
-
+    // 방어 중 점프는 회피로 쓰이므로 여기서는 뛰지 않는다
+    if (tapJump && !wantGuard) p.jump();
     /*
-     * S — 지상에서는 방어, 공중에서는 급강하.
+     * 점프 버튼을 떼면 상승이 잘린다 (숏홉).
+     * 짧게 누르면 낮게, 길게 누르면 높게 — 같은 버튼에 두 선택지가 생긴다.
      *
-     * 공격 판정보다 뒤에 둬야 S+J/K 하단기가 방어에 막히지 않는다.
-     * (공격 중이면 setGuard가 스스로 방어를 걸지 않는다)
+     * 뗀 순간(JustUp)만 보지 않고 눌린 상태를 매 프레임 넘긴다. 프레임이
+     * 드문 환경에서는 누르고 떼는 것이 통째로 프레임 사이에 들어가
+     * JustUp 을 놓치기 때문이다.
      */
-    p.setGuard(down && onGround);
+    p.setJumpHeld(this.keys.jump!.isDown || this.keys.jumpAlt!.isDown);
+    // 뗀 순간을 잡을 수 있으면 즉시 잘라 반응을 더 또렷하게 한다
+    if (releaseJump) p.releaseJump();
+
+    if (tapLight) p.attack('light', dir);
+    if (tapHeavy) p.attack('heavy', dir);
+    // 누르고 있으면 선딜 구간에서 힘을 모은다 (차지 강공격)
+    p.setHeavyHeld(this.keys.heavy!.isDown);
+    if (tapSkill) this.castSkill(p);
+    if (tapTaunt) p.taunt();
+
+    p.setGuard(wantGuard && !dodged && !p.isDodging());
     if (down && !onGround) p.fastFall();
   }
 
@@ -1450,12 +1493,12 @@ export class BattleScene extends Phaser.Scene {
 
     hint(
       16,
-      'A/D 이동 · SPACE(↑) 점프(2단) · S 방어 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
+      'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
       '#8ea3cc',
     );
     hint(
       34,
-      'J 약공격(JJJ 연속기) · K 강공격(KK) · L 스킬  ｜  W+J·W+K 상단기 · S+J·S+K 하단기 · 대시 중 J/K 돌진 · 공중 S+J/K 급강하',
+      'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬  ｜  W+J·W+K 상단기 · S+J·S+K 하단기 · 대시 중 J/K 돌진 · 공중 S+J/K 급강하',
       '#a8bce0',
     );
 

@@ -187,6 +187,14 @@ export class BattleScene extends Phaser.Scene {
    */
   netStats = { sent: 0, recv: 0 };
 
+  /* --- 선두 표시 -------------------------------------------------- */
+  /** 지금 주가가 가장 높은 사람 머리 위에 뜨는 왕관 */
+  private crown?: Phaser.GameObjects.Image;
+  /** 마지막으로 선두였던 사람 — 바뀔 때만 알린다 */
+  private leaderId = '';
+  /** 선두 교체를 마지막으로 알린 시각 — 엎치락뒤치락하면 배너가 도배된다 */
+  private leaderAnnouncedAt = 0;
+
   /** 화면 밖으로 나간 사람을 가리키는 가장자리 표시 */
   private offscreenMarks: Array<{
     fighter: BaseCharacter;
@@ -240,6 +248,8 @@ export class BattleScene extends Phaser.Scene {
     this.remoteFrames = [];
     this.outTaps = emptyFrame();
     this.netHits = [];
+    this.leaderId = '';
+    this.leaderAnnouncedAt = 0;
 
     this.buildBackground();
     this.buildStage();
@@ -1383,6 +1393,81 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /* ================================================================ */
+  /* 격추 연출                                                        */
+  /* ================================================================ */
+
+  /**
+   * 격추 순간.
+   *
+   * ── 왜 따로 공들이는가 ────────────────────────────────────────────
+   * 한 판에서 가장 크게 웃는 순간이 여기다. 넷이 뒤엉켜 치고받다가 누군가
+   * 하나가 날아가는 그 순간이 이 게임의 하이라이트인데, 지금까지는 글자
+   * 한 줄과 짧은 흔들림이 전부라 그냥 지나갔다.
+   *
+   * 세 가지를 겹친다.
+   *  1. **판을 잠깐 멈춘다** — 눈이 따라갈 시간을 준다. 안 멈추면 다음 싸움에
+   *     묻혀서 누가 죽었는지도 모르고 지나간다.
+   *  2. **누가 누구를 잡았는지 이름으로 말한다** — 넷이 붙는 판에서 제일
+   *     궁금한 것이 그거다. "상장폐지!"만으로는 내 공이었는지 알 수 없다.
+   *  3. **남은 인원을 알린다** — 판이 어디까지 왔는지가 곧 긴장이다.
+   */
+  private playKo(victim: BaseCharacter, killer: BaseCharacter | null): void {
+    const left = this.fighters.filter((f) => f.alive).length;
+
+    /* 1) 판을 잠깐 멈춘다 — 마지막 한 명이 남는 순간은 더 길게 */
+    const last = left <= 1;
+    this.combat.freeze(last ? 460 : 240);
+
+    this.cameras.main.shake(last ? 520 : 340, last ? 0.03 : 0.02);
+    this.cameras.main.flash(last ? 260 : 140, 255, 90, 90, true);
+    sound.play(last ? 'finisher' : 'ko');
+
+    /* 2) 누가 누구를 잡았는가 */
+    const accent = killer
+      ? `#${killer.cfg.colors.accent.toString(16).padStart(6, '0')}`
+      : '#ff5a5a';
+    const text =
+      killer && killer !== victim
+        ? `${killer.cfg.name} → ${victim.cfg.name} 상장폐지!`
+        : `${victim.cfg.name} 자멸…`;
+    this.announce(text, accent, 1500);
+
+    /*
+     * 격추 지점에서 이름이 솟아오른다.
+     *
+     * 가운데 배너만으로는 **어디서** 벌어진 일인지 안 보인다. 넷이 흩어져
+     * 싸우는 판에서는 그 자리를 짚어 줘야 "저기서 터졌구나"가 된다.
+     */
+    const label = this.add
+      .text(victim.x, victim.y - 40, killer ? `${killer.cfg.name} KO!` : 'KO!', {
+        fontFamily: GAME.FONT,
+        fontSize: '30px',
+        color: accent,
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH.FLOATING);
+    label.setStroke('#0b1020', 8);
+    this.tweens.add({
+      targets: label,
+      y: label.y - 90,
+      scale: { from: 0.4, to: 1.25 },
+      alpha: { from: 1, to: 0 },
+      duration: 1100,
+      ease: 'Back.easeOut',
+      onComplete: () => label.destroy(),
+    });
+
+    /* 3) 몇 명 남았는가 — 마지막 둘이 되는 순간이 가장 크게 읽혀야 한다 */
+    if (left === 2) {
+      this.time.delayedCall(700, () => {
+        if (!this.battleActive) return;
+        this.announce('마지막 둘!', '#facc15', 1100);
+      });
+    }
+  }
+
+  /* ================================================================ */
   /* 이벤트 연결                                                      */
   /* ================================================================ */
 
@@ -1394,10 +1479,9 @@ export class BattleScene extends Phaser.Scene {
 
         victim.kill();
         this.koOrder.push(p.fighterId);
-        this.announce(`${p.name} 상장폐지!`, '#ff5a5a', 1400);
-        this.cameras.main.shake(340, 0.02);
 
         const killer = p.killerId ? this.findFighter(p.killerId) : null;
+        this.playKo(victim, killer);
         killer?.say(killer.pickQuote('ko'), 0xffd54a);
 
         /*
@@ -2022,6 +2106,110 @@ export class BattleScene extends Phaser.Scene {
    * 대난투가 같은 문제를 화면 가장자리 표시로 푼다. 카메라를 억지로
    * 넓히는 것보다 이쪽이 확실하다 — 넷이 흩어지면 어차피 다 담을 수 없다.
    */
+  /**
+   * 선두에게 왕관을 씌운다.
+   *
+   * ── 왜 필요한가 ──────────────────────────────────────────────────
+   * 넷이 붙는 판에서 매 순간의 판단은 "누구를 때릴까"다. 그런데 주가는
+   * 화면 아래 패널의 작은 숫자로만 보여서, 싸우는 동안에는 아무도 안 본다.
+   * 그러면 그냥 눈앞에 있는 사람을 때리게 되고, 판이 난장판일 뿐 전략이 없다.
+   *
+   * 선두가 머리에 왕관을 쓰고 있으면 셋이 그쪽을 노린다. 그게 이 장르가
+   * 재미있는 이유다 — 앞서면 표적이 되고, 표적이 되면 다시 뒤집힌다.
+   * "1등을 때리자"가 말하지 않아도 자동으로 성립한다.
+   */
+  private updateLeader(): void {
+    if (!this.battleActive) {
+      this.crown?.setVisible(false);
+      return;
+    }
+
+    const alive = this.fighters.filter((f) => f.alive);
+    if (alive.length < 2) {
+      this.crown?.setVisible(false);
+      return;
+    }
+
+    let best = alive[0]!;
+    for (const f of alive) {
+      if (this.stock.get(f.fighterId) > this.stock.get(best.fighterId)) best = f;
+    }
+
+    /*
+     * 다 같이 100%로 시작하므로 처음에는 선두가 없다.
+     * 아무나 왕관을 씌우면 시작하자마자 한 명이 억울하게 표적이 된다.
+     */
+    const top = this.stock.get(best.fighterId);
+    const second = Math.max(
+      ...alive.filter((f) => f !== best).map((f) => this.stock.get(f.fighterId)),
+    );
+    if (top <= second) {
+      this.crown?.setVisible(false);
+      this.leaderId = '';
+      return;
+    }
+
+    if (!this.crown) this.crown = this.makeCrown();
+    // 게이지(-34) 보다 더 위에 — 겹치면 둘 다 안 읽힌다
+    this.crown.setPosition(best.x, best.y - FIGHTER.BODY_H / 2 - 58).setVisible(true);
+
+    if (best.fighterId === this.leaderId) return;
+
+    /*
+     * 선두가 바뀌었다. 다만 엎치락뒤치락하는 구간에서는 배너가 도배되므로
+     * 간격을 둔다 — 매번 외치면 아무도 안 읽게 된다.
+     */
+    const first = this.leaderId === '';
+    this.leaderId = best.fighterId;
+    const now = this.time.now;
+    if (first || now - this.leaderAnnouncedAt < 4000) return;
+
+    this.leaderAnnouncedAt = now;
+    this.announce(
+      `선두 교체 — ${best.cfg.name}!`,
+      `#${best.cfg.colors.accent.toString(16).padStart(6, '0')}`,
+      900,
+    );
+    this.crown.setScale(1.9);
+    this.tweens.add({ targets: this.crown, scale: 1, duration: 280, ease: 'Back.easeOut' });
+  }
+
+  /**
+   * 왕관을 도형으로 그린다.
+   *
+   * 이모지(👑)로 뒀더니 글꼴에 그 글자가 없는 환경에서는 아무것도 안 보였다.
+   * 왕관은 "지금 누가 1등인가"를 알리는 유일한 표시라, 안 보이면 그 규칙이
+   * 통째로 사라진다. 도형으로 그리면 어느 기계에서든 똑같이 나온다.
+   */
+  private makeCrown(): Phaser.GameObjects.Image {
+    const KEY = 'crown-mark';
+    const W = 38;
+    const H = 30;
+
+    if (!this.textures.exists(KEY)) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      // 봉우리 셋 + 아래 띠 — 작게 줄여도 왕관으로 읽히는 최소한의 모양
+      const pts = [
+        { x: 2, y: H - 3 },
+        { x: 2, y: 8 },
+        { x: 10, y: 17 },
+        { x: 19, y: 3 },
+        { x: 28, y: 17 },
+        { x: 36, y: 8 },
+        { x: 36, y: H - 3 },
+      ];
+      // 어두운 배경에서 실루엣이 분리되도록 외곽선을 두껍게 깐다
+      g.lineStyle(6, 0x0b1020, 1);
+      g.strokePoints(pts, true, true);
+      g.fillStyle(0xffd54a, 1);
+      g.fillPoints(pts, true);
+      g.generateTexture(KEY, W, H);
+      g.destroy();
+    }
+
+    return this.add.image(0, 0, KEY).setOrigin(0.5).setDepth(DEPTH.FLOATING);
+  }
+
   private buildOffscreenMarkers(
     ui: <T extends Phaser.GameObjects.GameObject>(obj: T) => T,
   ): void {
@@ -2558,6 +2746,7 @@ export class BattleScene extends Phaser.Scene {
     this.updateCamera(scaled);
     // 카메라가 정해진 뒤라야 "화면 밖"을 판단할 수 있다
     this.updateOffscreenMarkers();
+    this.updateLeader();
 
     /*
      * 게스트는 판을 계산하지 않는다.

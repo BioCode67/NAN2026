@@ -1255,6 +1255,56 @@ console.log('조작감');
 }
 
 /*
+ * 선두 왕관.
+ *
+ * 넷이 붙는 판에서 "누구를 때릴까"를 만드는 장치다. 앞선 사람 머리에
+ * 왕관이 떠야 셋이 그쪽을 노리고, 그래야 판이 뒤집힌다.
+ * 왕관이 조용히 안 뜨면 아무도 그 사실을 모른 채 끝난다.
+ */
+console.log('선두 표시');
+{
+  const crown = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const alive = s.fighters.filter((f) => f.alive);
+    if (alive.length < 2) return { why: '둘 이상 살아 있지 않습니다' };
+
+    /*
+     * 마지막에는 **플레이어**가 선두가 되게 한다.
+     * 그래야 스크린샷 안에 왕관이 들어온다 — 남이 쓰고 있으면 화면 밖일 때가 많다.
+     */
+    const lead = alive.find((f) => f !== s.player) ?? alive[0];
+    alive.forEach((f) => s.stock.setExact(f.fighterId, f === lead ? 210 : 90));
+    await wait(200);
+
+    const shown = s.crown?.visible === true;
+    const onLead = shown && Math.abs(s.crown.x - lead.x) < 60;
+
+    /* 다른 사람이 앞서면 왕관도 따라가야 한다 */
+    const next = s.player.alive ? s.player : alive[1];
+    s.stock.setExact(next.fighterId, 260);
+    await wait(200);
+    const moved = s.crown?.visible === true && Math.abs(s.crown.x - next.x) < 60;
+
+    // 왕관 그림이 실제로 픽셀을 갖는가 (글꼴에 없는 글자면 빈 칸이 된다)
+    const tex = s.textures.get('crown-mark');
+    const drawn = !!tex && tex.getSourceImage()?.width > 0;
+
+    return { shown, onLead, moved, drawn, lead: lead.cfg.name, next: next.cfg.name };
+  });
+
+  if (crown.why) errors.push(`[선두] ${crown.why}`);
+  else if (!crown.shown) errors.push('[선두] 앞서 있는데도 왕관이 안 뜹니다');
+  else if (!crown.onLead) errors.push('[선두] 왕관이 선두 위에 있지 않습니다');
+  else if (!crown.moved) errors.push('[선두] 선두가 바뀌었는데 왕관이 안 따라갑니다');
+  else if (!crown.drawn) errors.push('[선두] 왕관 그림이 비어 있습니다');
+  else console.log(`  ✓ 왕관 — ${crown.lead} → ${crown.next} 로 따라간다`);
+
+  await shot('crown');
+}
+
+/*
  * 잡기 — 공격 · 가드 · 잡기의 삼각형.
  *
  * 이건 판정이 아니라 **관계**를 확인하는 검사다. 잡기가 가드를 뚫지 못하면

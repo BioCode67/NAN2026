@@ -120,6 +120,16 @@ export class CombatSystem {
     return true;
   }
 
+  /**
+   * 판을 잠깐 멈춘다 (격추 연출 등 바깥에서 부르는 용도).
+   *
+   * 타격의 히트스탑과 같은 장치를 쓴다 — 멈추는 이유는 달라도
+   * "화면이 정지하고 눈이 따라잡는다"는 효과는 같아야 하기 때문이다.
+   */
+  freeze(ms: number): void {
+    this.applyHitstop(ms);
+  }
+
   /** 지정 시간만큼 모든 동작을 정지시킨다 */
   private applyHitstop(ms: number): void {
     this.hitstopUntil = Math.max(this.hitstopUntil, this.scene.time.now + ms);

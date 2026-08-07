@@ -1213,17 +1213,32 @@ console.log('조작감');
    * 않는다). 넷이 붙어 싸우는 판에서는 그 순간에 걸리는 일이 흔하므로
    * 몇 번 시도해 본다 — 한 번 실패했다고 기능이 죽은 것은 아니다.
    */
+  /*
+   * 무적(0.21초)은 회피 지속(0.3초)보다 짧다 — 아무 때나 굴러도 되는 것이
+   * 아니라는 규칙이다. 그래서 구르는 것을 확인한 뒤 천천히 읽으면
+   * 무적이 이미 끝나 있다. 누른 직후에 한 번에 읽어야 한다.
+   */
   let rolled = { dodging: false, invuln: false };
-  for (let i = 0; i < 5 && !rolled.dodging; i++) {
+  for (let i = 0; i < 6 && !(rolled.dodging && rolled.invuln); i++) {
     await waitGrounded();
     await page.keyboard.down('s');
     await page.waitForTimeout(160);
     await page.keyboard.press('d');
-    await page.waitForTimeout(120);
 
-    rolled = await page.evaluate(() => {
+    // 페이지 안에서 촘촘히 들여다본다 — 왕복하며 재기에는 창이 너무 짧다
+    rolled = await page.evaluate(async () => {
       const p = window.game.scene.getScene('Battle').player;
-      return { dodging: p.isDodging(), invuln: p.isInvulnerable() };
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      let dodging = false;
+      let invuln = false;
+      for (let i = 0; i < 22; i++) {
+        if (p.isDodging()) {
+          dodging = true;
+          if (p.isInvulnerable()) invuln = true;
+        } else if (dodging) break;
+        await wait(20);
+      }
+      return { dodging, invuln };
     });
     await page.keyboard.up('s');
     if (!rolled.dodging) await page.waitForTimeout(700);
@@ -1237,6 +1252,223 @@ console.log('조작감');
     console.log('  ✓ 회피 — 방어 중 A/D 구르기 + 무적');
   }
   await shot('dodge');
+}
+
+/*
+ * 잡기 — 공격 · 가드 · 잡기의 삼각형.
+ *
+ * 이건 판정이 아니라 **관계**를 확인하는 검사다. 잡기가 가드를 뚫지 못하면
+ * 삼각형이 닫히지 않고, 그러면 웅크리고 버티는 것이 여전히 정답이 된다.
+ *
+ * 넷이 뒤엉켜 도망 다니는 판에서 키 입력만으로 잡기를 성립시키기는 어렵다.
+ * 그래서 두 갈래로 나눈다 — **키가 닿는가**(U를 실제로 눌러 본다)와
+ * **규칙이 맞는가**(상대를 앞에 세워 두고 관계를 확인한다).
+ */
+console.log('잡기');
+{
+  /* --- U 키가 잡기로 이어지는가 ---------------------------------- */
+  let keyReached = false;
+  for (let i = 0; i < 6 && !keyReached; i++) {
+    await waitGrounded();
+    await page.keyboard.press('u');
+    await page.waitForTimeout(90);
+    keyReached = await page.evaluate(() =>
+      window.game.scene.getScene('Battle').player.isGrabActive(),
+    );
+    if (!keyReached) await page.waitForTimeout(700);
+  }
+
+  if (!keyReached) errors.push('[잡기] U를 눌러도 잡기 모션이 나가지 않습니다');
+  else console.log('  ✓ U — 잡기 모션 발동');
+
+  // 헛친 후딜이 끝나기를 기다린다
+  await page.waitForTimeout(900);
+
+  /*
+   * 잡을 상대가 남아 있어야 한다.
+   *
+   * 여기까지 오는 동안 봇 셋이 전부 상장폐지됐을 수 있다. 그러면 잡기가
+   * 고장난 것이 아니라 잡을 사람이 없는 것이므로, 판을 새로 열고 확인한다.
+   */
+  const hasFoe = async () =>
+    page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      return s.fighters.some((f) => f !== s.player && f.alive);
+    });
+  if (!(await hasFoe())) {
+    await restartRound();
+    await waitGrounded();
+  }
+
+  /*
+   * 규칙 검사는 브라우저 안에서 한 번에 돌린다.
+   * 붙잡는 데 성공하려면 상대가 판정 구간 내내 앞에 있어야 하는데,
+   * 봇은 매 프레임 움직인다 — 바깥에서 왕복하며 붙잡아 두기에는 너무 느리다.
+   */
+  const grab = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const foeOf = () => s.fighters.find((f) => f !== p && f.alive);
+
+    let foe = foeOf();
+    if (!foe) return { why: '살아 있는 상대가 없습니다' };
+
+    /** 상대를 앞에 세워 두고 잡힐 때까지 기다린다 */
+    const holdStill = async (frames) => {
+      for (let i = 0; i < frames && !p.isGrabbing(); i++) {
+        // 잡으려던 상대가 격추되면 다른 상대로 갈아탄다
+        if (!foe?.alive) foe = foeOf();
+        if (!foe) return;
+        foe.setPosition(p.x + p.facing * 44, p.y);
+        foe.body.setVelocity(0, 0);
+        // 가드를 세워 둔다 — 잡기가 뚫어야 하는 것이 바로 이 상태다
+        foe.setGuard(true);
+        if (foe.isGuarding()) guardedFoe = true;
+        await wait(25);
+      }
+    };
+
+    let guardedFoe = false;
+
+    /**
+     * 한 번 잡아서 붙잡기까지.
+     *
+     * 붙지 않으면 null. 넷이 뒤엉킨 판이라 자주 실패한다 —
+     * 실패는 기능이 죽었다는 뜻이 아니라 그냥 이번엔 안 붙은 것이다.
+     */
+    const grabOnce = async () => {
+      p.facing = 1;
+      p.grab();
+      await holdStill(16);
+      return p.isGrabbing() ? p.getGrabbed() : null;
+    };
+
+    /*
+     * 잡기 → 툭툭 → 던지기를 한 호흡에 확인한다.
+     *
+     * 도중에 다른 봇이 끼어들어 때리면 잡기가 풀린다 — 그것이 규칙이므로
+     * 실패가 아니라 **다시 해야 할 시도**다. 끼어들었으면 처음부터 다시 잡는다.
+     */
+    let combo = null;
+    for (let t = 0; t < 10 && !combo; t++) {
+      const victim = await grabOnce();
+      if (!victim) continue;
+
+      const before = s.stock.get(victim.fighterId);
+
+      /* 잡은 채 툭툭 치기 — 넉백 없이 피해만 (잡기가 풀리면 안 된다) */
+      p.pummelReadyAt = 0;
+      p.pummel();
+      await wait(40);
+      // 여기서 풀렸으면 바깥에서 끼어든 것이다
+      if (!p.isGrabbing()) continue;
+
+      const afterPummel = s.stock.get(victim.fighterId);
+
+      /* 위로 던지기 — 높이 떠야 쫓아 올라가 이어칠 수 있다 */
+      p.throwGrabbed('up');
+      await wait(100);
+
+      combo = {
+        pummel: { before, after: afterPummel },
+        thrown: {
+          vy: victim.body.velocity.y,
+          released: !p.isGrabbing() && !victim.isGrabbed(),
+        },
+      };
+    }
+    if (!combo) return { why: '잡기가 붙지 않았습니다', guardedFoe };
+
+    /* 두드려서 빠져나가기 */
+    await wait(900);
+    let escaped = false;
+    for (let t = 0; t < 8 && !escaped; t++) {
+      const held = await grabOnce();
+      if (!held) continue;
+
+      for (let i = 0; i < 12 && p.isGrabbing(); i++) {
+        held.struggle();
+        await wait(70);
+      }
+      escaped = !p.isGrabbing();
+    }
+
+    return { guardedFoe, ...combo, escaped };
+  });
+
+  if (grab.why) {
+    errors.push(`[잡기] ${grab.why}`);
+  } else {
+    if (!grab.guardedFoe) {
+      // 확인하지 못했을 뿐이므로 실패로는 치지 않는다
+      console.log('  · 가드 상태를 세워 두지 못해 "가드를 뚫는다"는 확인 못 함');
+    } else {
+      console.log('  ✓ 잡기가 가드를 뚫는다 — 막고 선 상대를 그대로 잡았다');
+    }
+
+    if (grab.pummel.after >= grab.pummel.before) {
+      errors.push('[잡기] 잡기 공격에 피해가 없습니다');
+    } else {
+      console.log(
+        `  ✓ 잡기 공격 — 주가 ${grab.pummel.before} → ${grab.pummel.after}, 잡은 채 유지`,
+      );
+    }
+
+    if (!grab.thrown.released) {
+      errors.push('[잡기] 던졌는데 잡기가 풀리지 않았습니다');
+    } else if (grab.thrown.vy > -300) {
+      errors.push(
+        `[잡기] 위로 던졌는데 뜨지 않습니다 (수직 속도 ${Math.round(grab.thrown.vy)})`,
+      );
+    } else {
+      console.log(
+        `  ✓ 위로 던지기 — 수직 속도 ${Math.round(grab.thrown.vy)} 로 띄운다`,
+      );
+    }
+
+    if (!grab.escaped) errors.push('[잡기] 두드려도 빠져나가지 못합니다');
+    else console.log('  ✓ 몸부림 — 연타로 잡기 탈출');
+  }
+  await shot('grab');
+
+  /* --- 공중 히트 → 점프 반환 (공중 연속기의 근거) ----------------- */
+  const airCombo = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    for (let t = 0; t < 6; t++) {
+      const foe = s.fighters.find((f) => f !== p && f.alive);
+      if (!foe) return { why: '살아 있는 상대가 없습니다' };
+
+      /* 둘 다 공중에 띄우고, 점프를 다 쓴 상태로 만든다 */
+      p.setPosition(640, 210);
+      p.body.setVelocity(0, -40);
+      foe.setPosition(640 + 44, 210);
+      foe.body.setVelocity(0, -40);
+      p.facing = 1;
+      p.jumpsLeft = 0;
+      p.hitTargets.clear();
+      p.attack('light', 'neutral');
+
+      for (let i = 0; i < 24; i++) {
+        await wait(25);
+        const grounded = p.body.blocked.down || p.body.touching.down;
+        // 착지하면 어차피 점프가 복구되므로 그 표본은 버린다
+        if (grounded) break;
+        if (p.jumpsLeft > 0) return { refunded: true };
+      }
+    }
+    return { refunded: false };
+  });
+
+  if (airCombo.why) errors.push(`[공중 연속기] ${airCombo.why}`);
+  else if (!airCombo.refunded) {
+    errors.push('[공중 연속기] 공중에서 맞혀도 점프가 돌아오지 않습니다');
+  } else {
+    console.log('  ✓ 공중 히트 — 점프를 한 번 돌려받는다 (띄우고 쫓아간다)');
+  }
 }
 
 /*

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { personaFor, shouldCastSkill } from '../config/aiPersona';
-import { STAGE } from '../config/gameConfig';
+import { FIGHTER, STAGE } from '../config/gameConfig';
 import type { AiPersona } from '../config/aiPersona';
 import type { AIDifficulty, AIState, AttackDir } from '../types';
 import type { BaseCharacter } from '../characters/BaseCharacter';
@@ -47,6 +47,12 @@ export class AISystem {
   private skillReadySince = -1;
   /** 이 시각까지 방어를 유지한다 (0이면 방어 중이 아니다) */
   private guardUntil = 0;
+  /** 잡혔을 때 마지막으로 몸부림친 시각 */
+  private lastMashAt = 0;
+  /** 붙잡은 뒤 던지기 전까지 툭툭 칠 횟수 */
+  private pummelsLeft = 0;
+  /** 다음 잡기를 시도할 수 있는 시각 — 계속 잡으러만 오면 읽힌다 */
+  private grabTryAt = 0;
 
   constructor(
     private readonly self: BaseCharacter,
@@ -69,6 +75,9 @@ export class AISystem {
 
   update(time: number, delta: number): void {
     if (!this.self.alive) return;
+
+    /* 잡기 관련 상태는 FSM보다 먼저 처리한다 — 다른 행동이 불가능하다 */
+    if (this.tickGrab(time)) return;
 
     this.decisionTimer -= delta;
     this.reactionTimer -= delta;
@@ -105,6 +114,53 @@ export class AISystem {
     }
 
     this.act(target, time);
+  }
+
+  /**
+   * 잡기 상태 처리.
+   *
+   * @returns 이번 프레임 FSM을 건너뛰어야 하면 true
+   */
+  private tickGrab(time: number): boolean {
+    /* 잡혔다 — 몸부림친다 */
+    if (this.self.isGrabbed()) {
+      /*
+       * 사람처럼 두드린다.
+       *
+       * 매 프레임 부르면 최소 간격(55ms)마다 인정돼 봇이 거의 언제나
+       * 던져지기 전에 빠져나간다. 잡기가 봇 상대로는 무의미해진다는 뜻이다.
+       * 반응 속도에 맞춰 두드리게 하면, 연승으로 봇이 빨라질수록
+       * 잡고 던질 여유가 줄어든다 — 난이도가 잡기에도 걸린다.
+       */
+      const gap = Math.max(120, this.difficulty.reactionDelay * 0.85);
+      if (time - this.lastMashAt >= gap) {
+        this.lastMashAt = time;
+        this.self.struggle();
+      }
+      return true;
+    }
+
+    /* 잡았다 — 툭툭 치다가 던진다 */
+    if (this.self.isGrabbing()) {
+      if (this.pummelsLeft > 0) {
+        if (this.self.pummel()) this.pummelsLeft--;
+        return true;
+      }
+      /*
+       * 던지는 방향을 고른다.
+       * 낭떠러지가 등 뒤면 뒤로 메쳐 밖으로 넘기고, 아니면 위로 띄워
+       * 쫓아 올라간다 — 봇도 공중 연속기를 시도한다.
+       */
+      const toEdge = Math.min(
+        Math.abs(this.self.x - STAGE.LEFT),
+        Math.abs(this.self.x - STAGE.RIGHT),
+      );
+      this.self.throwGrabbed(toEdge < 240 ? 'back' : 'up');
+      return true;
+    }
+
+    // 잡기 모션(선딜·헛친 후딜) 중에는 아무것도 못 한다
+    return this.self.isGrabActive();
   }
 
   /**
@@ -220,7 +276,10 @@ export class AISystem {
         if (dist > this.self.cfg.moves.heavy.range) this.self.moveHorizontal(dir);
         else this.self.moveHorizontal(0);
 
-        if (this.attackCooldown <= 0) this.swing(dy);
+        if (this.attackCooldown <= 0) {
+          // 막고 선 상대는 때려서 못 뚫는다 — 잡아야 한다
+          if (!this.tryGrab(target, time)) this.swing(dy);
+        }
         break;
       }
 
@@ -264,6 +323,29 @@ export class AISystem {
         break;
       }
     }
+  }
+
+  /**
+   * 잡으러 갈 것인가.
+   *
+   * 막고 선 상대에게는 거의 항상 간다 — 봇이 가드를 못 뚫고 앞에서
+   * 헛스윙만 하면 플레이어는 "웅크리고 있으면 안전하다"를 배운다.
+   * 그 외에는 가끔만 섞는다. 계속 잡으러 오면 읽히고, 헛치면 크게 손해다.
+   */
+  private tryGrab(target: BaseCharacter, time: number): boolean {
+    if (time < this.grabTryAt) return false;
+
+    const dist = Math.abs(target.x - this.self.x);
+    if (dist > FIGHTER.GRAB_RANGE + 34) return false;
+
+    const chance = target.isGuarding() ? 0.8 : 0.12;
+    if (Phaser.Math.FloatBetween(0, 1) >= chance) return false;
+    if (!this.self.grab()) return false;
+
+    this.pummelsLeft = 2;
+    this.grabTryAt = time + 1600;
+    this.attackCooldown = FIGHTER.GRAB_STARTUP + FIGHTER.GRAB_ACTIVE + 220;
+    return true;
   }
 
   /**

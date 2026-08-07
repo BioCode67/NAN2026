@@ -569,7 +569,21 @@ export class SelectScene extends Phaser.Scene {
       );
     });
 
+    /*
+     * 삼각형을 한 줄로 알린다.
+     *
+     * 커맨드 목록은 "무엇을 낼 수 있는가"만 알려준다. 언제 무엇을 내야
+     * 하는가는 이 세 줄의 관계에서 나오고, 그건 목록만 봐서는 안 보인다.
+     */
     parts.push(
+      this.add
+        .text(
+          GAME.WIDTH / 2,
+          GAME.HEIGHT - 78,
+          '공격은 가드에 막히고 · 가드는 잡기(U)에 뚫리고 · 잡기는 공격에 진다',
+          { fontFamily: GAME.FONT, fontSize: '16px', color: '#c084fc' },
+        )
+        .setOrigin(0.5),
       this.add
         .text(GAME.WIDTH / 2, GAME.HEIGHT - 44, 'TAB · I · ESC : 닫기', {
           fontFamily: GAME.FONT,

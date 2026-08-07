@@ -573,6 +573,10 @@ export class BattleScene extends Phaser.Scene {
       f.onSpawnProjectile = (owner, atk) => this.projectiles.spawn(owner, atk);
       // 로켓 드롭 착지 충격파
       f.onShockwave = (owner, atk) => this.combat.triggerShockwave(owner, atk);
+      // 던지기·잡기 공격도 일반 타격과 같은 경로를 태운다
+      f.onThrow = (thrower, victim, atk, fromX) =>
+        this.combat.applyThrow(thrower, victim, atk, fromX);
+      f.onPummel = (thrower, victim) => this.combat.applyPummel(thrower, victim);
     });
     this.combat.setFighters(this.fighters);
     this.combat.setProjectiles(this.projectiles);
@@ -668,6 +672,14 @@ export class BattleScene extends Phaser.Scene {
       light: Phaser.Input.Keyboard.KeyCodes.J,
       heavy: Phaser.Input.Keyboard.KeyCodes.K,
       skill: Phaser.Input.Keyboard.KeyCodes.L,
+      /*
+       * 잡기는 전용 키를 쓴다.
+       *
+       * 대난투처럼 "방어 + 공격"으로 묶고 싶었지만, 이 게임에서는 S가
+       * 방어이자 하단기 모디파이어라 S+J는 이미 하단 약공격이다.
+       * U는 J 바로 위 — 검지를 한 칸 올리면 닿는다.
+       */
+      grab: Phaser.Input.Keyboard.KeyCodes.U,
       taunt: Phaser.Input.Keyboard.KeyCodes.T,
     }) as Record<string, Phaser.Input.Keyboard.Key>;
 
@@ -707,6 +719,7 @@ export class BattleScene extends Phaser.Scene {
     const tapLight = JustDown(this.keys.light!);
     const tapHeavy = JustDown(this.keys.heavy!);
     const tapSkill = JustDown(this.keys.skill!);
+    const tapGrab = JustDown(this.keys.grab!);
     const tapTaunt = JustDown(this.keys.taunt!);
 
     const left = this.keys.left!.isDown;
@@ -718,6 +731,35 @@ export class BattleScene extends Phaser.Scene {
 
     /* 공격 방향 — 같은 버튼이라도 W/S를 함께 누르면 다른 기술이 나간다 */
     const dir: AttackDir = up ? 'up' : down ? 'down' : 'neutral';
+
+    /*
+     * 잡힌 상태 — 여기서 할 수 있는 건 몸부림뿐이다.
+     *
+     * 무엇을 눌러도 몸부림으로 친다. 잡힌 사람이 제일 먼저 하는 행동은
+     * 아무 버튼이나 두드리는 것이고, 그게 그대로 통해야 한다.
+     */
+    if (p.isGrabbed()) {
+      const mashed =
+        tapLeft || tapRight || tapJump || tapLight || tapHeavy || tapSkill || tapGrab;
+      if (mashed) p.struggle();
+      return;
+    }
+
+    /*
+     * 붙잡고 있는 동안 — J는 툭툭 치기, K는 던지기.
+     *
+     * 던지는 방향에 따라 쓰임이 갈린다. 뒤로 메치기가 가장 아프고,
+     * 위로 던지면 높이 떠오르니 쫓아 올라가 공중에서 이어친다.
+     */
+    if (p.isGrabbing()) {
+      if (tapLight) p.pummel();
+      else if (tapHeavy || tapGrab) {
+        // 등 뒤쪽 방향키를 누르고 있으면 뒤로 메친다
+        const back = (left && p.facing > 0) || (right && p.facing < 0);
+        p.throwGrabbed(up ? 'up' : down ? 'down' : back ? 'back' : 'forward');
+      }
+      return;
+    }
 
     /*
      * S를 누른 채로는 방어 상태다.
@@ -758,6 +800,12 @@ export class BattleScene extends Phaser.Scene {
     p.setJumpHeld(this.keys.jump!.isDown || this.keys.jumpAlt!.isDown);
     // 뗀 순간을 잡을 수 있으면 즉시 잘라 반응을 더 또렷하게 한다
     if (releaseJump) p.releaseJump();
+
+    /*
+     * 잡기 — 가드를 뚫는 유일한 수단.
+     * 헛치면 크게 굳으니 "일단 지르는" 버튼은 아니다.
+     */
+    if (tapGrab) p.grab();
 
     if (tapLight) p.attack('light', dir);
     if (tapHeavy) p.attack('heavy', dir);
@@ -1498,7 +1546,7 @@ export class BattleScene extends Phaser.Scene {
     );
     hint(
       34,
-      'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬  ｜  W+J·W+K 상단기 · S+J·S+K 하단기 · 대시 중 J/K 돌진 · 공중 S+J/K 급강하',
+      'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬 · U 잡기(가드를 뚫는다)  ｜  잡은 뒤 J 툭툭 · K 던지기(W/S/뒤로 방향 지정) · 잡히면 아무 버튼 연타로 탈출',
       '#a8bce0',
     );
 

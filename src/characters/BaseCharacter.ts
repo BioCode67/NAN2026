@@ -7,9 +7,11 @@ import {
   IMPACT,
   STAGE,
   STOCK,
+  THROW,
   TIERS,
   resolveMoveSlot,
 } from '../config/gameConfig';
+import type { ThrowKind } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import type { ItemConfig, ItemMods } from '../config/items';
 import { createFighterView } from './FighterView';
@@ -92,6 +94,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private readonly gauge: Phaser.GameObjects.Container;
   private readonly gaugeFill: Phaser.GameObjects.Rectangle;
   private readonly gaugeText: Phaser.GameObjects.Text;
+  /** 지금 모으고 있는 정도를 보여주는 얇은 막대 */
+  private readonly chargeBar: Phaser.GameObjects.Rectangle;
 
   private flameEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
   private auraTween?: Phaser.Tweens.Tween;
@@ -205,6 +209,52 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private dodgeUntil = 0;
   /** 다음 회피가 가능한 시각 */
   private dodgeReadyAt = 0;
+
+  /* --- 잡기 ------------------------------------------------------- */
+  /**
+   * 잡기 상태.
+   *  startup → 손을 뻗는 중 (아직 판정 없음)
+   *  active  → 잡기 판정이 켜진 구간
+   *  whiff   → 헛쳤다. 길게 굳는다 — 지르면 손해라는 규칙이 여기서 나온다
+   *  hold    → 붙잡고 있다. 이때만 잡기 공격·던지기가 나간다
+   */
+  private grabPhase: 'none' | 'startup' | 'active' | 'whiff' | 'hold' = 'none';
+  private grabTimer = 0;
+  /** 다음 잡기가 가능한 시각 */
+  private grabReadyAt = 0;
+  /** 내가 붙잡고 있는 상대 */
+  private grabbing: BaseCharacter | null = null;
+  /** 나를 붙잡고 있는 상대 */
+  private grabbedBy: BaseCharacter | null = null;
+  /** 붙잡힘이 자동으로 풀리는 시각 (몸부림칠수록 앞당겨진다) */
+  private grabHoldUntil = 0;
+  /** 마지막으로 몸부림을 인정한 시각 */
+  private lastMashAt = 0;
+  /** 이번에 잡힌 뒤 몸부림친 횟수 */
+  private mashCount = 0;
+  /** 다음 잡기 공격이 가능한 시각 */
+  private pummelReadyAt = 0;
+  /** 던지는 자세가 유지되는 시각 */
+  private throwUntil = 0;
+  /** 잡기 판정 사각형 (재사용) */
+  private readonly grabRect = new Phaser.Geom.Rectangle();
+  /**
+   * 잡기 공격·던지기를 실제 피해로 바꾸는 통로.
+   * 주가·격추·연출은 전부 CombatSystem에 있으므로 씬이 연결해 준다.
+   */
+  onThrow?: (
+    thrower: BaseCharacter,
+    victim: BaseCharacter,
+    atk: AttackConfig,
+    fromX: number,
+  ) => void;
+  onPummel?: (thrower: BaseCharacter, victim: BaseCharacter) => void;
+  /**
+   * 이번 체공에서 공중 히트로 점프를 돌려받았는가.
+   *
+   * 한 번만 돌려준다. 무제한이면 공중에서 계속 치며 영영 안 내려온다.
+   */
+  private airHitRefunded = false;
   /** 착지 포즈가 유지되는 시각 */
   private landUntil = 0;
   /** 아이템을 집어드는 포즈가 유지되는 시각 */
@@ -296,10 +346,23 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     // 게이지 채움 색이 밝아도 숫자가 읽히도록 외곽선을 준다
     this.gaugeText.setStroke('#0b1020', 3);
 
+    /*
+     * 차지 게이지 — 게이지 바로 아래에 얇게 붙는다.
+     *
+     * 모으는 것이 눈에 안 보이면 차지 강공격은 그냥 "가끔 세게 나가는 기술"이
+     * 된다. 얼마나 찼는지 보여야 언제 놓을지가 판단이 되고, 맞는 쪽도
+     * 상대가 모으고 있다는 것을 보고 대응할 수 있다.
+     */
+    this.chargeBar = scene.add
+      .rectangle(-GAUGE_W / 2, GAUGE_H / 2 + 5, 0, 4, 0xfacc15)
+      .setOrigin(0, 0.5)
+      .setVisible(false);
+
     this.gauge = scene.add.container(0, gaugeY, [
       gaugeBg,
       this.gaugeFill,
       this.gaugeText,
+      this.chargeBar,
     ]);
 
     this.add([this.visual, this.gauge]);
@@ -328,6 +391,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.alive &&
       !this.guarding &&
       !this.isDodging() &&
+      this.grabPhase === 'none' &&
+      !this.grabbedBy &&
       this.attackPhase === 'none' &&
       this.scene.time.now >= this.stunUntil
     );
@@ -339,6 +404,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 공격·방어 중에는 이동 불가 (관성만 유지)
     if (this.attackPhase !== 'none' || this.guarding) return;
+    // 잡는 중·잡힌 중에도 못 움직인다
+    if (this.grabPhase !== 'none' || this.grabbedBy) return;
     // 대시·회피 중에는 그 속도를 덮어쓰지 않는다
     if (this.scene.time.now < this.dashUntil) return;
     if (this.isDodging()) return;
@@ -485,6 +552,252 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   getChargeRatio(): number {
     if (!this.chargeMs) return 0;
     return Math.min(1, this.chargeMs / FIGHTER.CHARGE_MAX_MS);
+  }
+
+  /* ================================================================ */
+  /* 잡기 — 가드를 뚫는 유일한 수단                                    */
+  /* ================================================================ */
+
+  /**
+   * 잡으러 손을 뻗는다.
+   *
+   * 공격·가드·잡기가 가위바위보를 이룬다. 잡기는 **가드를 무시하지만**
+   * 헛치면 후딜이 길어 공격에 진다. 그래서 웅크린 상대에게 지르는 것이
+   * 정답이 아니라 "지금 웅크릴 것 같다"를 읽어야 하는 선택이 된다.
+   */
+  grab(): boolean {
+    const now = this.scene.time.now;
+    if (!this.alive || now < this.grabReadyAt) return false;
+    if (this.grabPhase !== 'none' || this.attackPhase !== 'none') return false;
+    if (now < this.stunUntil || this.isDodging() || this.grabbedBy) return false;
+
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    if (!onGround) return false;
+
+    this.guarding = false;
+    this.grabPhase = 'startup';
+    this.grabTimer = FIGHTER.GRAB_STARTUP;
+    this.body.setVelocityX(0);
+    this.pulseSquash(1.12, 0.9, 140);
+    sound.play('whiff', 0.35);
+    return true;
+  }
+
+  /** 잡기 판정 (활성 구간에만 존재). CombatSystem이 매 프레임 읽는다 */
+  getGrabBox(): Phaser.Geom.Rectangle | null {
+    if (this.grabPhase !== 'active') return null;
+
+    const w = FIGHTER.GRAB_RANGE * this.sizeScale;
+    const h = FIGHTER.BODY_H * this.sizeScale * 0.9;
+    const halfW = (FIGHTER.BODY_W * this.sizeScale) / 2;
+    const cx = this.x + this.facing * (halfW + w / 2);
+    this.grabRect.setTo(cx - w / 2, this.y - h / 2, w, h);
+    return this.grabRect;
+  }
+
+  /**
+   * 잡기가 닿았다.
+   *
+   * 가드 여부를 보지 않는 것이 핵심이다 — 그것이 잡기를 넣은 이유다.
+   */
+  onGrabConnect(target: BaseCharacter): void {
+    if (this.grabPhase !== 'active' || target.grabbedBy) return;
+
+    const now = this.scene.time.now;
+    this.grabPhase = 'hold';
+    this.grabbing = target;
+    this.grabHoldUntil = now + FIGHTER.GRAB_HOLD_MS;
+    this.pummelReadyAt = now + FIGHTER.PUMMEL_INTERVAL;
+
+    target.grabbedBy = this;
+    target.guarding = false;
+    target.attackPhase = 'none';
+    target.currentAttack = null;
+    target.chainNext = null;
+    target.chainBuffered = 0;
+    target.lastMashAt = 0;
+    target.mashCount = 0;
+    target.body.setVelocity(0, 0);
+    // 잡힌 쪽은 잡은 쪽을 마주 본다 — 등지고 잡히면 그림이 읽히지 않는다
+    target.setFacing(this.x > target.x ? 1 : -1);
+
+    sound.play('hitHeavy', 0.5);
+    this.say('잡았다', this.cfg.colors.accent);
+  }
+
+  /**
+   * 잡힌 쪽이 몸부림친다 — 아무 버튼이나 누르면 붙잡힌 시간이 줄어든다.
+   *
+   * 자동으로 풀리기만 하면 잡힌 쪽은 그동안 화면을 구경한다.
+   * 두드리면 빨라진다는 것만으로 그 1초가 "버티는 시간"이 된다.
+   */
+  struggle(): void {
+    if (!this.grabbedBy) return;
+    const now = this.scene.time.now;
+    if (now - this.lastMashAt < FIGHTER.GRAB_MASH_GAP) return;
+
+    this.lastMashAt = now;
+    this.mashCount++;
+    this.grabbedBy.grabHoldUntil -= FIGHTER.GRAB_MASH_RELIEF;
+    this.pulseSquash(1.14, 0.88, 90);
+
+    /* 충분히 두드렸으면 그 자리에서 뿌리치고 나간다 */
+    if (this.mashCount >= FIGHTER.GRAB_ESCAPE_MASHES) {
+      this.grabbedBy.releaseGrab(true);
+      this.say('놔!', 0xfacc15);
+    }
+  }
+
+  /** 잡은 채로 툭툭 친다 — 피해는 작지만 던지기 전에 벌어 두는 값이다 */
+  pummel(): boolean {
+    const now = this.scene.time.now;
+    if (this.grabPhase !== 'hold' || !this.grabbing) return false;
+    if (now < this.pummelReadyAt) return false;
+
+    this.pummelReadyAt = now + FIGHTER.PUMMEL_INTERVAL;
+    this.grabbing.flash();
+    this.grabbing.pulseSquash(1.2, 0.84, 110);
+    this.onPummel?.(this, this.grabbing);
+    sound.play('hitLight', 0.45);
+    return true;
+  }
+
+  /**
+   * 붙잡은 상대를 던진다.
+   *
+   * 방향마다 쓰임이 갈린다. 위로 던지면 높이 떠오르므로 쫓아 올라가
+   * 공중에서 이어칠 수 있고(AIR_HIT_JUMP_REFUND), 뒤로 메치면 가장 아프다.
+   */
+  throwGrabbed(kind: ThrowKind): boolean {
+    if (this.grabPhase !== 'hold' || !this.grabbing) return false;
+
+    const victim = this.grabbing;
+    const spec = THROW[kind];
+
+    /*
+     * 뒤로 메치기는 상대를 등 뒤로 넘긴다.
+     * 넉백은 "공격자 X 기준 반대쪽"으로 계산되므로, 던지는 쪽이 아니라
+     * 기준점을 반대편에 두어야 원하는 방향으로 날아간다.
+     */
+    const away = kind === 'back' ? -this.facing : this.facing;
+    const fromX = this.x - away * 40;
+
+    this.releaseGrab(false);
+    this.grabPhase = 'whiff';
+    // 던진 뒤에도 잠깐 굳는다 — 던지자마자 다시 붙으면 벗어날 수가 없다
+    this.grabTimer = 220;
+    this.grabReadyAt = this.scene.time.now + FIGHTER.GRAB_COOLDOWN;
+
+    this.throwUntil = this.scene.time.now + 220;
+    this.pulseSquash(1.3, 0.78, 180);
+    this.onThrow?.(this, victim, this.throwAttack(kind, spec), fromX);
+    return true;
+  }
+
+  /**
+   * 붙잡기를 푼다.
+   * @param escaped 잡힌 쪽이 몸부림쳐서 빠져나갔는가
+   */
+  private releaseGrab(escaped: boolean): void {
+    const victim = this.grabbing;
+    this.grabbing = null;
+    this.grabPhase = 'none';
+    if (!victim) return;
+
+    victim.grabbedBy = null;
+    if (escaped) {
+      /*
+       * 빠져나간 쪽에 잠깐 무적을 준다.
+       * 이것이 없으면 탈출한 프레임에 다시 잡혀 두드린 보람이 사라진다.
+       */
+      victim.invulnUntil = Math.max(
+        victim.invulnUntil,
+        this.scene.time.now + FIGHTER.GRAB_ESCAPE_INVULN,
+      );
+      victim.pulseSquash(0.8, 1.26, 200);
+      this.grabPhase = 'whiff';
+      this.grabTimer = 260;
+      this.grabReadyAt = this.scene.time.now + FIGHTER.GRAB_COOLDOWN;
+      sound.play('whiff', 0.5);
+    }
+  }
+
+  /** 잡기 상태를 통째로 끊는다 (피격·사망·라운드 종료) */
+  breakGrab(): void {
+    if (this.grabbing) {
+      this.grabbing.grabbedBy = null;
+      this.grabbing = null;
+    }
+    if (this.grabbedBy) {
+      this.grabbedBy.grabbing = null;
+      this.grabbedBy.grabPhase = 'none';
+      this.grabbedBy = null;
+    }
+    if (this.grabPhase === 'hold' || this.grabPhase === 'active') {
+      this.grabPhase = 'none';
+    }
+  }
+
+  /** 지금 누군가를 붙잡고 있는가 */
+  isGrabbing(): boolean {
+    return this.grabPhase === 'hold' && !!this.grabbing;
+  }
+
+  /** 지금 붙잡혀 있는가 */
+  isGrabbed(): boolean {
+    return !!this.grabbedBy;
+  }
+
+  /** 잡기 모션 중인가 (선딜·판정·후딜 포함) — AI가 빈틈을 읽는 데 쓴다 */
+  isGrabActive(): boolean {
+    return this.grabPhase !== 'none';
+  }
+
+  /** 붙잡고 있는 상대 (없으면 null) */
+  getGrabbed(): BaseCharacter | null {
+    return this.grabbing;
+  }
+
+  /** 던지기 1회를 공격 데이터로 만든다 — 타격과 같은 경로를 태우기 위해서다 */
+  private throwAttack(
+    kind: ThrowKind,
+    spec: (typeof THROW)[ThrowKind],
+  ): AttackConfig {
+    // 무거운 캐릭터가 더 세게 던진다 — 스탯이 잡기에도 묻어나야 한다
+    const heft = 1 + (this.cfg.stats.weight - 1) * 0.35;
+    return {
+      type: 'heavy',
+      slot: 'heavy',
+      name: spec.name,
+      damage: Math.round(spec.damage * heft),
+      startup: 0,
+      active: 1,
+      recovery: 0,
+      range: 0,
+      hitHeight: 0,
+      knockbackX: spec.kbX * heft,
+      knockbackY: spec.kbY,
+      hitstun: spec.hitstun,
+      hitstop: kind === 'back' ? 120 : 90,
+      shake: kind === 'back' ? 0.012 : 0.008,
+      finisher: kind === 'back',
+    };
+  }
+
+  /**
+   * 공중에서 한 대 맞혔다 — 점프를 한 번 돌려준다.
+   *
+   * 띄운 뒤 쫓아 올라가 치고, 그 히트로 다시 뛰어 또 친다.
+   * 이 규칙 하나가 "띄우기"를 넉백 큰 기술에서 연속기의 시작으로 바꾼다.
+   */
+  refundAirJump(): void {
+    if (!FIGHTER.AIR_HIT_JUMP_REFUND || this.airHitRefunded) return;
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    if (onGround) return;
+
+    this.airHitRefunded = true;
+    this.jumpsLeft = Math.max(this.jumpsLeft, 1);
+    this.spawnDoubleJumpRing();
   }
 
   /** 급강하 (S) — 공중에서 빠르게 낙하 */
@@ -727,6 +1040,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   attack(intent: 'light' | 'heavy', dir: AttackDir = 'neutral'): boolean {
     if (!this.alive) return false;
     if (this.scene.time.now < this.stunUntil) return false;
+    // 잡는 중·잡힌 중에는 일반 공격이 나가지 않는다 (잡기 전용 입력이 우선)
+    if (this.grabPhase !== 'none' || this.grabbedBy) return false;
 
     /*
      * 공격 도중 같은 버튼을 다시 눌렀다면 연속기 선입력이다.
@@ -1046,6 +1361,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.stunUntil = now + stun;
     this.invulnUntil = now + FIGHTER.INVULN_MS;
 
+    /*
+     * 잡기는 맞으면 풀린다.
+     *
+     * 4인 난투에서 이것이 중요하다 — 둘이 엉겨 있을 때 셋째가 끼어들어
+     * 붙잡힌 쪽을 구해 줄 수 있다. 잡기가 "둘만의 일"로 닫히지 않는다.
+     */
+    this.breakGrab();
+
     // 공격 모션 강제 취소 — 낙하 공격도 함께 끊어야 그대로 처박히지 않는다
     this.attackPhase = 'none';
     this.currentAttack = null;
@@ -1099,6 +1422,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   kill(): void {
     if (!this.alive) return;
     this.alive = false;
+    // 잡은 채로 격추되면 상대가 허공에 붙들린 채 남는다
+    this.breakGrab();
     this.attackPhase = 'none';
     this.currentAttack = null;
     this.diving = null;
@@ -1348,6 +1673,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     this.tickItem(time);
     this.tickSignature(time);
+    this.tickGrab(time, delta);
 
     /* 공격 상태 머신 진행 */
     if (this.attackPhase !== 'none' && this.currentAttack) {
@@ -1438,6 +1764,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
       this.jumpRising = false;
+      // 다음 체공에서 공중 히트 보너스를 다시 받을 수 있다
+      this.airHitRefunded = false;
 
       /*
        * 착지 직전에 눌린 점프를 이제 실행한다.
@@ -1474,6 +1802,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.squash.y * this.sizeScale,
     );
 
+    /*
+     * 붙잡힌 동안 몸을 떤다.
+     *
+     * 포즈만으로는 부족하다 — 도형 아트에는 잡힌 그림이 따로 없고,
+     * 시트도 피격 그림으로 대체된다. 떨림이 있어야 "붙잡혀 버둥거리는 중"이
+     * 한눈에 읽힌다.
+     */
+    this.visual.x = this.grabbedBy ? Phaser.Math.Between(-3, 3) : 0;
+
     /* 그림자 — 지면에 고정되고, 높이 뜰수록 작고 옅어진다 */
     const groundY = STAGE.GROUND_Y + 4;
     const airGap = Phaser.Math.Clamp(
@@ -1487,6 +1824,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 경직 중에는 게이지를 살짝 흔들어 피격 상태를 알린다
     this.gauge.x = time < this.stunUntil ? Phaser.Math.Between(-2, 2) : 0;
+
+    /* 차지 막대 — 다 차면 색이 붉게 바뀌어 "지금이다"가 보인다 */
+    const charge = this.getChargeRatio();
+    this.chargeBar.setVisible(charge > 0);
+    if (charge > 0) {
+      this.chargeBar.setSize(Math.max(1, GAUGE_W * charge), 4);
+      this.chargeBar.setFillStyle(charge >= 0.98 ? 0xef4444 : 0xfacc15);
+    }
   }
 
   /* ================================================================ */
@@ -1495,6 +1840,67 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   private setFacing(dir: -1 | 1): void {
     this.facing = dir;
+  }
+
+  /**
+   * 잡기 상태 진행.
+   *
+   * 붙잡고 있는 동안 상대를 앞에 세워 두고, 시간이 다 되면 자동으로 던진다.
+   * 자동 던지기가 있어야 잡은 쪽도 마냥 붙들고 있을 수 없다 — 붙잡은 1초는
+   * "무엇을 할지 고르는 시간"이지 공짜로 얻은 시간이 아니다.
+   */
+  private tickGrab(time: number, delta: number): void {
+    /* 붙잡힌 쪽 — 잡은 사람 앞에 붙어 선다 */
+    if (this.grabbedBy) {
+      const g = this.grabbedBy;
+      if (!g.alive || g.grabbing !== this) {
+        this.grabbedBy = null;
+      } else {
+        this.body.setVelocity(0, 0);
+        this.setPosition(g.x + g.facing * FIGHTER.GRAB_HOLD_OFFSET, g.y - 4);
+        return;
+      }
+    }
+
+    if (this.grabPhase === 'none') return;
+
+    if (this.grabPhase === 'hold') {
+      const victim = this.grabbing;
+      if (!victim || !victim.alive) {
+        this.releaseGrab(false);
+        return;
+      }
+      this.body.setVelocityX(0);
+      /*
+       * 시간이 다 되면 자동으로 앞으로 던진다.
+       * 잡은 쪽도 마냥 붙들고 있을 수 없어야 한다 — 붙잡은 1초는
+       * "무엇을 할지 고르는 시간"이지 공짜로 얻은 시간이 아니다.
+       */
+      if (time >= this.grabHoldUntil) this.throwGrabbed('forward');
+      return;
+    }
+
+    this.grabTimer -= delta;
+    if (this.grabTimer > 0) return;
+
+    switch (this.grabPhase) {
+      case 'startup':
+        this.grabPhase = 'active';
+        this.grabTimer = FIGHTER.GRAB_ACTIVE;
+        break;
+      case 'active':
+        /*
+         * 헛쳤다. 여기서 길게 굳는 것이 잡기의 대가다.
+         * 이 후딜이 없으면 "일단 잡기부터 지른다"가 최적해가 된다.
+         */
+        this.grabPhase = 'whiff';
+        this.grabTimer = FIGHTER.GRAB_WHIFF;
+        this.grabReadyAt = time + FIGHTER.GRAB_COOLDOWN;
+        break;
+      case 'whiff':
+        this.grabPhase = 'none';
+        break;
+    }
   }
 
   /**
@@ -1550,6 +1956,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
         Math.abs(this.body.velocity.x) > 420 || this.body.velocity.y < -320;
       return flung ? 'knockback' : 'hit';
     }
+
+    /*
+     * 잡기 자세는 경직 다음으로 우선한다.
+     * 붙잡힌 채 서 있는 그림이면 무슨 일이 벌어지는지 읽히지 않는다.
+     */
+    if (this.grabbedBy) return 'grabbed';
+    if (now < this.throwUntil) return 'throw';
+    if (this.grabPhase === 'hold') return 'grabHold';
+    if (this.grabPhase !== 'none') return 'grab';
 
     // 프롬프트 시전·도발은 전투 동작이 아니라 연출이라 공격보다 앞에 둔다
     if (now < this.promptUntil) return 'promptCast';

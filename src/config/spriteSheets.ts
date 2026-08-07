@@ -38,6 +38,11 @@ export type Pose =
   | 'itemHold'
   | 'itemThrow'
   | 'itemSwing'
+  /* 잡기 */
+  | 'grab'
+  | 'grabHold'
+  | 'grabbed'
+  | 'throw'
   /* 상태 · 결과 */
   | 'guard'
   | 'dizzy'
@@ -89,6 +94,14 @@ export const POSE_FALLBACK: Partial<Record<Pose, Pose>> = {
   airK: 'attackK',
   dive: 'attackK',
   dashAttack: 'attackK',
+  /*
+   * 잡기 — 전용 그림이 없어도 손을 뻗는 그림(attackJ)이면 읽힌다.
+   * 잡힌 쪽은 맞는 자세, 붙잡고 선 자세는 서 있는 그림으로 떨어진다.
+   */
+  grab: 'attackJ',
+  throw: 'attackK',
+  grabHold: 'idle',
+  grabbed: 'hit',
   // 스킬 · 프롬프트
   skillCharge: 'skill',
   promptCast: 'win',

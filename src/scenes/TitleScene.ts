@@ -206,7 +206,7 @@ export class TitleScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         620,
-        'A/D 이동 · SPACE 점프 · J 약공격 · K 강공격 · L 스킬 · S 방어',
+        'A/D 이동 · SPACE 점프 · J 약공격 · K 강공격 · L 스킬 · S 방어 · U 잡기',
         { fontFamily: GAME.FONT, fontSize: '14px', color: '#5d739f' },
       )
       .setOrigin(0.5)

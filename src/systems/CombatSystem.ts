@@ -303,7 +303,76 @@ export class CombatSystem {
       }
     }
 
+    this.resolveGrabs();
     this.resolveProjectileHits();
+  }
+
+  /**
+   * 잡기 판정.
+   *
+   * 타격과 결정적으로 다른 점: **방어를 보지 않는다.**
+   * 그것이 잡기를 넣은 이유다 — 웅크리고 버티는 상대를 뚫는 유일한 수단.
+   * 대신 무적(회피 중 포함)은 그대로 피한다.
+   */
+  private resolveGrabs(): void {
+    for (const attacker of this.fighters) {
+      if (!attacker.alive) continue;
+
+      const box = attacker.getGrabBox();
+      if (!box) continue;
+
+      for (const target of this.fighters) {
+        if (target === attacker || !target.alive) continue;
+        if (target.isInvulnerable() || target.isGrabbed()) continue;
+
+        const tb = target.body;
+        this.targetRect.setTo(tb.x, tb.y, tb.width, tb.height);
+        if (!Phaser.Geom.Intersects.RectangleToRectangle(box, this.targetRect)) {
+          continue;
+        }
+
+        attacker.onGrabConnect(target);
+        this.floatText(target.x, target.y - 70, 'GRAB!', '#c084fc');
+        break;
+      }
+    }
+  }
+
+  /**
+   * 던지기 1회 — 근접 타격과 같은 경로를 태운다.
+   *
+   * 별도 계산을 두지 않는 이유: 주가·격추·연출·통계가 전부 resolveHit에 있다.
+   * 던지기만 다른 길로 가면 그 전부를 두 번 만들어야 하고, 언젠가 어긋난다.
+   */
+  applyThrow(
+    thrower: BaseCharacter,
+    victim: BaseCharacter,
+    atk: AttackConfig,
+    fromX: number,
+  ): void {
+    if (!thrower.alive || !victim.alive) return;
+
+    const vb = victim.body;
+    this.targetRect.setTo(vb.x, vb.y, vb.width, vb.height);
+    this.resolveHit(thrower, victim, atk, this.targetRect, fromX);
+  }
+
+  /** 잡은 채 툭툭 치기 — 넉백 없이 피해만 넣는다 (잡기가 안 풀려야 한다) */
+  applyPummel(thrower: BaseCharacter, victim: BaseCharacter): void {
+    if (!thrower.alive || !victim.alive) return;
+
+    const result = this.stock.applyHit(thrower, victim, FIGHTER.PUMMEL_DAMAGE);
+    this.floatText(victim.x, victim.y - 40, `-${result.damage}%`, '#ff8a8a');
+    this.bus.emit('combat:hit', {
+      attackerId: thrower.fighterId,
+      targetId: victim.fighterId,
+      damage: result.damage,
+      absorbed: result.absorbed,
+      attackType: 'light',
+      moveName: '잡기 공격',
+      x: victim.x,
+      y: victim.y,
+    });
   }
 
   /** 날아가는 탄의 판정 — 근접과 같은 연출 경로를 탄다 */
@@ -418,6 +487,15 @@ export class CombatSystem {
     attacker.onDealtHit();
     if (atk.type === 'skill') attacker.onSkillLanded();
     if (guarded) target.onGuarded(atk);
+
+    /*
+     * 공중에서 맞혔으면 점프를 한 번 돌려준다.
+     *
+     * 띄우고 → 쫓아 올라가 치고 → 그 히트로 다시 뛰어 또 친다.
+     * 이 한 줄이 상단기와 위로 던지기를 "넉백 큰 기술"에서
+     * 공중 연속기의 시작으로 바꾼다.
+     */
+    if (!guarded) attacker.refundAirJump();
 
     /*
      * 방어 파괴 — 마무리 타를 방어로 받으면 가드가 깨진다.

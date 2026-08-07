@@ -17,13 +17,14 @@
     "test:ai": "node --experimental-strip-types tools/test-ai.mjs",
     "test:char": "node tools/test-roster.mjs",
     "char:new": "node tools/new-character.mjs",
-    "test": "npm run typecheck && npm run test:prompt && npm run test:sheet && npm run test:ai && npm run test:char",
+    "test": "npm run typecheck && npm run test:prompt && npm run test:sheet && npm run test:ai && npm run test:char && npm run balance",
     "prompts": "node tools/gen-prompts.mjs",
     "art": "node tools/gen-art.mjs",
     "art:in": "node tools/art-in.mjs",
     "art:opt": "node tools/optimize-art.mjs",
     "docs": "node tools/make-pdf.mjs",
-    "sheet:merge": "node tools/merge-sheets.mjs"
+    "sheet:merge": "node tools/merge-sheets.mjs",
+    "balance": "node --experimental-transform-types --no-warnings --import ./tools/ts-resolve.mjs tools/balance.mjs"
   },
   "keywords": [
     "phaser",

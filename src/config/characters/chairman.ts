@@ -26,8 +26,8 @@ export const chairman: CharacterConfig = {
   passive: {
     type: 'absorb_flat',
     name: '지배 구조',
-    desc: '타격에 성공할 때마다 피해량의 200%를 흡수한다. 로스터 최고 흡수율',
-    absorbRatio: 2.0,
+    desc: '타격에 성공할 때마다 피해량의 165%를 흡수한다. 무게와 함께 버티는 축이다',
+    absorbRatio: 1.65,
   },
 
   signature: {

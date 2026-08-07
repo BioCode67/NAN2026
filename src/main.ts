@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PHASER_CONFIG } from './config/gameConfig';
+import { PHASER_CONFIG } from './config/phaserConfig';
 import { sound } from './systems/SoundSystem';
 import { BootScene } from './scenes/BootScene';
 import { TitleScene } from './scenes/TitleScene';

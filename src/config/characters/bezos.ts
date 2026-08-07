@@ -26,8 +26,8 @@ export const bezos: CharacterConfig = {
   passive: {
     type: 'absorb_flat',
     name: '물류 마진',
-    desc: '타격에 성공할 때마다 피해량의 180%를 흡수한다. 한 건마다 남긴다',
-    absorbRatio: 1.8,
+    desc: '타격에 성공할 때마다 피해량의 150%를 흡수한다. 한 건마다 남긴다',
+    absorbRatio: 1.5,
   },
 
   signature: {

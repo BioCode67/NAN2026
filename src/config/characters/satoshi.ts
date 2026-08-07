@@ -28,9 +28,9 @@ export const satoshi: CharacterConfig = {
   passive: {
     type: 'absorb_chance',
     name: '채굴 보상',
-    desc: '타격의 25% 확률로 피해량의 300%를 흡수한다. 터질 때 크게 터진다',
-    chance: 0.25,
-    absorbRatio: 3.0,
+    desc: '타격의 30% 확률로 피해량의 320%를 흡수한다. 터질 때 크게 터진다',
+    chance: 0.3,
+    absorbRatio: 3.2,
   },
 
   signature: {
@@ -48,11 +48,11 @@ export const satoshi: CharacterConfig = {
    * 잘 맞지만 잘 도망친다. 채굴 보상이 터지는 순간을 노리고 붙어야 한다.
    */
   moves: moveSet({
-    light: { name: '해시 잽', damage: 7, startup: 48, active: 95, range: 60 },
-    light2: { name: '논스 탐색', damage: 8, startup: 84 },
+    light: { name: '해시 잽', damage: 8, startup: 48, active: 95, range: 60 },
+    light2: { name: '논스 탐색', damage: 9, startup: 84 },
     light3: {
       name: '블록 생성',
-      damage: 14,
+      damage: 16,
       startup: 112,
       knockbackY: -660,
       cry: '한 블록 채굴 완료.',
@@ -100,7 +100,7 @@ export const satoshi: CharacterConfig = {
 
     skill: {
       name: '제네시스 블록',
-      damage: 26,
+      damage: 29,
       startup: 230,
       recovery: 400,
       range: 128,

@@ -9,7 +9,7 @@ export const whale: CharacterConfig = {
   tagline: '내가 사면 오르고, 내가 팔면 내린다',
   colors: { body: 0x1d4ed8, head: 0x93c5fd, accent: 0x38bdf8 },
   // 로스터 최중량 · 최저 점프. 대신 한 방이 가장 무겁다
-  stats: { speed: 200, jump: -650, doubleJump: -520, weight: 1.6 },
+  stats: { speed: 200, jump: -650, doubleJump: -520, weight: 1.45 },
 
   art: {
     hair: 'none',
@@ -27,9 +27,9 @@ export const whale: CharacterConfig = {
   passive: {
     type: 'absorb_random',
     name: '대량 체결',
-    desc: '타격에 성공할 때마다 피해량의 100~250%를 랜덤하게 흡수한다',
-    minRatio: 1.0,
-    maxRatio: 2.5,
+    desc: '타격에 성공할 때마다 피해량의 80~200%를 랜덤하게 흡수한다',
+    minRatio: 0.8,
+    maxRatio: 2.0,
   },
 
   signature: {
@@ -73,7 +73,7 @@ export const whale: CharacterConfig = {
       cry: '전부 내가 산다.',
     },
 
-    dashAttack: { name: '해일', damage: 19, startup: 115, lunge: 600, range: 96 },
+    dashAttack: { name: '해일', damage: 19, startup: 115, lunge: 600, range: 90 },
 
     lightUp: { name: '물보라', damage: 11, startup: 106, hitHeight: 120 },
     lightDown: {
@@ -96,7 +96,7 @@ export const whale: CharacterConfig = {
       // 로스터 최대 범위 광역기
       damage: 29,
       startup: 255,
-      range: 182,
+      range: 168,
       hitstop: 170,
       shake: 0.032,
       cry: '가라앉아라.',

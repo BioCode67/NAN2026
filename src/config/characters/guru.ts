@@ -46,8 +46,8 @@ export const guru: CharacterConfig = {
    * 붙으면 약하지만 거리를 벌리면 계속 긁는다. 스킬이 투사체인 둘째 캐릭터.
    */
   moves: moveSet({
-    light: { name: '지지선 확인', damage: 8, startup: 58, range: 68 },
-    light2: { name: '저항선 돌파', damage: 9, startup: 94 },
+    light: { name: '지지선 확인', damage: 9, startup: 58, range: 76 },
+    light2: { name: '저항선 돌파', damage: 10, startup: 94, range: 80 },
     light3: {
       name: '골든 크로스',
       damage: 16,
@@ -56,7 +56,7 @@ export const guru: CharacterConfig = {
       cry: '골든 크로스 떴습니다!',
     },
 
-    heavy: { name: '수정 구슬 강타', damage: 22, startup: 198, range: 84 },
+    heavy: { name: '수정 구슬 강타', damage: 23, startup: 198, range: 92 },
     heavy2: {
       name: '점괘 적중',
       damage: 27,
@@ -96,7 +96,7 @@ export const guru: CharacterConfig = {
 
     skill: {
       name: '무조건 오릅니다',
-      damage: 19,
+      damage: 24,
       startup: 205,
       recovery: 350,
       range: 112,

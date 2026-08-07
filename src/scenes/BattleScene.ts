@@ -967,6 +967,9 @@ export class BattleScene extends Phaser.Scene {
     }
     // 오브는 이 게임의 중심 장치다 — 안 보이면 판이 왜 멈추는지 알 수가 없다
     snap.orb = this.orbs.snapshot();
+    // 아이템도 — 안 보이면 상대가 왜 갑자기 세졌는지 알 수가 없다
+    const items = this.items.snapshot();
+    if (items.length) snap.item = items;
     if (!this.battleActive) {
       const alive = this.fighters.findIndex((f) => f.alive);
       snap.over = alive;
@@ -1000,6 +1003,7 @@ export class BattleScene extends Phaser.Scene {
       this.combat.playRemoteHit(h[0]!, h[1]!, h[2]!, h[3] === 1);
     }
     this.orbs.applyRemote(snap.orb, this.time.now);
+    this.items.applyRemote(snap.item ?? []);
 
     if (snap.over !== undefined && this.battleActive) {
       this.battleActive = false;

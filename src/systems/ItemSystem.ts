@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ITEM_ICON_FRAME, hasArt } from '../config/artAssets';
 import { DEPTH, GAME, STAGE } from '../config/gameConfig';
-import { ITEMS, rollItem } from '../config/items';
+import { ITEMS, ITEM_LIST, rollItem } from '../config/items';
 import type { ItemConfig, ItemId } from '../config/items';
 import { sound } from './SoundSystem';
 import type { BaseCharacter } from '../characters/BaseCharacter';
@@ -71,6 +71,44 @@ export class ItemSystem {
     this.nextSpawnAt = this.scene.time.now + FIRST_SPAWN_DELAY;
   }
 
+  /**
+   * 떨어져 있는 아이템들 — 온라인에서 회선으로 보낸다.
+   * 아이템마다 [x, y, 종류번호].
+   */
+  snapshot(): number[][] {
+    return this.drops
+      .filter((d) => !d.taken)
+      .map((d) => [
+        Math.round(d.root.x),
+        Math.round(d.root.y),
+        ITEM_LIST.findIndex((i) => i.id === d.cfg.id),
+      ]);
+  }
+
+  /**
+   * 회선으로 받은 아이템들을 그린다 (참가자 쪽).
+   *
+   * 참가자는 판을 계산하지 않으므로 아이템도 스스로 못 만든다. 그런데
+   * 아이템은 판을 뒤집는 장치라, 안 보이면 **상대가 왜 갑자기 세졌는지**
+   * 알 수가 없다. 자리와 종류만 받아 같은 그림을 세운다.
+   *
+   * 개수가 맞으면 자리만 옮기고, 다르면 전부 다시 세운다 — 목록이 짧아
+   * (많아야 서넛) 통째로 다시 만드는 편이 짝을 맞추는 것보다 단순하고 안전하다.
+   */
+  applyRemote(list: number[][]): void {
+    if (list.length !== this.drops.length) {
+      this.drops.forEach((d) => d.root.destroy());
+      this.drops.length = 0;
+      for (const [x, y, kind] of list) {
+        this.spawn(ITEM_LIST[kind!] ?? undefined, 0, x, y);
+      }
+      // 참가자 쪽에서는 떨어뜨리는 물리를 돌리지 않는다 (자리는 호스트가 준다)
+      this.drops.forEach((d) => (d.landed = true));
+      return;
+    }
+    list.forEach((row, i) => this.drops[i]?.root.setPosition(row[0]!, row[1]!));
+  }
+
   update(time: number, delta: number): void {
     if (time >= this.nextSpawnAt) {
       this.spawn();
@@ -89,12 +127,12 @@ export class ItemSystem {
    * @param forced 지정하면 그 아이템으로 떨어뜨린다 (기믹용)
    * @param dropOffsetY 여러 개를 한꺼번에 뿌릴 때 높이를 벌리는 값
    */
-  private spawn(forced?: ItemConfig, dropOffsetY = 0): void {
+  private spawn(forced?: ItemConfig, dropOffsetY = 0, atX?: number, atY?: number): void {
     const cfg = forced ?? rollItem(() => Phaser.Math.FloatBetween(0, 1));
 
     // 스테이지 안쪽에만 떨어뜨린다 (장외로 굴러가면 못 줍는다)
-    const x = Phaser.Math.Between(STAGE.LEFT + 120, STAGE.RIGHT - 120);
-    const y = -60 - dropOffsetY;
+    const x = atX ?? Phaser.Math.Between(STAGE.LEFT + 120, STAGE.RIGHT - 120);
+    const y = atY ?? -60 - dropOffsetY;
 
     const box = this.scene.add
       .rectangle(0, 0, 44, 44, 0x0b1020, 0.9)

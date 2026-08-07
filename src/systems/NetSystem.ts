@@ -60,6 +60,8 @@ export interface NetSnapshot {
   hit?: number[][];
   /** 프롬프트 오브 [x, y, 남은체력 0~100]. 없으면 오브가 없다 */
   orb?: number[];
+  /** 떨어져 있는 아이템들 [x, y, 종류번호] */
+  item?: number[][];
   /** 판이 끝났으면 이긴 자리 번호 (-1 = 전원 탈락) */
   over?: number;
 }

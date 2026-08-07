@@ -371,6 +371,42 @@ try {
 
   await shot(host, 'after-input');
 
+  /* --- 아이템이 회선을 건너가는가 ------------------------------------ */
+  {
+    const guest = guests[0];
+    await host.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.items.dropBurst(2);
+      s.items.nextSpawnAt = 0;
+    });
+
+    const seen = await guest
+      .waitForFunction(
+        () => window.game.scene.getScene('Battle').items.snapshot().length > 0,
+        null,
+        { timeout: 20000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    if (!seen) errors.push('[온라인] 참가자 화면에 아이템이 안 보입니다');
+    else {
+      const [a, b] = await Promise.all(
+        [host, guest].map((p) =>
+          p.evaluate(() => window.game.scene.getScene('Battle').items.snapshot()),
+        ),
+      );
+      const drift = Math.max(
+        ...a.map((row, i) => Math.abs(row[0] - (b[i]?.[0] ?? 1e9))),
+      );
+      if (a.length !== b.length || drift > 80) {
+        errors.push(`[온라인] 아이템이 다른 자리에 있습니다 (${a.length}/${b.length}개)`);
+      } else {
+        console.log(`  ✓ 아이템 ${a.length}개가 같은 자리에 있다 (차이 ${drift}px)`);
+      }
+    }
+  }
+
   /* --- 프롬프트 오브가 회선을 건너가는가 ----------------------------- */
   {
     /*

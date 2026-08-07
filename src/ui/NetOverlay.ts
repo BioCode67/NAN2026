@@ -102,9 +102,9 @@ export function openLobby(): Promise<LobbyChoice> {
     title(
       root,
       '온라인 대전',
-      '둘이 1:1로 붙는다. 한 사람이 방을 만들어 코드를 알려주고,\n' +
-        '다른 사람이 그 코드로 들어오면 시작된다.\n' +
-        '(브라우저 탭 두 개로 혼자 시험해 볼 수도 있다)',
+      '최대 네 명이 붙는다. 한 사람이 방을 만들어 코드를 알려주고,\n' +
+        '나머지가 그 코드로 들어온다. 빈자리는 봇이 채운다.\n' +
+        '(브라우저 창 여러 개로 혼자 시험해 볼 수도 있다)',
     );
 
     const make = button('방 만들기', '#4ade80');
@@ -213,10 +213,14 @@ export function openLobby(): Promise<LobbyChoice> {
  * @param code 상대에게 불러 줄 코드
  * @param onCancel 기다리기를 그만두면 호출
  */
-export function showWaiting(code: string, onCancel: () => void): void {
+export function showWaiting(
+  code: string,
+  onCancel: () => void,
+  onStart?: () => void,
+): { setCount: (n: number) => void } {
   const root = shell();
 
-  title(root, '상대를 기다리는 중…', '아래 코드를 상대에게 알려주세요.');
+  title(root, '사람을 기다리는 중…', '아래 코드를 알려주세요. 최대 네 명까지 들어올 수 있습니다.');
 
   const box = document.createElement('div');
   box.setAttribute('data-testid', 'net-room-code');
@@ -245,12 +249,56 @@ export function showWaiting(code: string, onCancel: () => void): void {
   };
   root.appendChild(copy);
 
+  /*
+   * 몇 명 들어와 있는지 보여준다.
+   *
+   * 방을 열어 놓고 기다리는 쪽은 상대가 들어왔는지 알 방법이 없다.
+   * 숫자가 안 움직이면 코드를 잘못 불러 준 것이고, 움직이면 기다리면 된다 —
+   * 그 차이를 알 수 있어야 사람이 답답해하지 않는다.
+   */
+  const count = document.createElement('div');
+  count.setAttribute('data-testid', 'net-count');
+  Object.assign(count.style, {
+    fontSize: '18px',
+    color: '#e8eeff',
+    fontWeight: 'bold',
+  } satisfies Partial<CSSStyleDeclaration>);
+  root.appendChild(count);
+
+  const start = button('이 인원으로 시작', '#4ade80');
+  start.setAttribute('data-testid', 'net-start');
+  start.disabled = true;
+  start.style.opacity = '0.4';
+  start.style.cursor = 'default';
+  start.onclick = () => {
+    if (start.disabled) return;
+    closeNetOverlay();
+    onStart?.();
+  };
+  root.appendChild(start);
+
   const cancel = button('그만두기', '#8fa6d8');
   cancel.onclick = () => {
     closeNetOverlay();
     onCancel();
   };
   root.appendChild(cancel);
+
+  const setCount = (n: number) => {
+    const bots = Math.max(0, 4 - n);
+    count.textContent =
+      n <= 1
+        ? '아직 아무도 안 들어왔습니다'
+        : `${n}명 참가 중${bots ? ` · 빈자리 ${bots}칸은 봇` : ' · 자리가 다 찼습니다'}`;
+    // 혼자서는 시작할 수 없다 — 그건 온라인이 아니라 그냥 1인 플레이다
+    const ready = n >= 2;
+    start.disabled = !ready;
+    start.style.opacity = ready ? '1' : '0.4';
+    start.style.cursor = ready ? 'pointer' : 'default';
+  };
+  setCount(1);
+
+  return { setCount };
 }
 
 /** 진행 상황 한 줄 (연결 중 · 상대를 기다리는 중) */

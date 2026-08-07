@@ -5,7 +5,7 @@ import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
 import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
-import { net } from '../systems/NetSystem';
+import { MAX_PLAYERS, net } from '../systems/NetSystem';
 import {
   closeNetOverlay,
   isNetOverlayOpen,
@@ -109,8 +109,7 @@ export class SelectScene extends Phaser.Scene {
   private online = false;
   /** 내가 고른 캐릭터 (보냈다) */
   private myPick: CharacterId | null = null;
-  /** 상대가 고른 캐릭터 */
-  private foePick: CharacterId | null = null;
+
 
   constructor() {
     super({ key: 'Select' });
@@ -124,7 +123,6 @@ export class SelectScene extends Phaser.Scene {
     this.p1Id = null;
     this.online = false;
     this.myPick = null;
-    this.foePick = null;
     closeNetOverlay();
 
     /*
@@ -234,9 +232,14 @@ export class SelectScene extends Phaser.Scene {
    */
   private refreshPrompt(): void {
     if (this.online) {
-      const waiting = this.myPick && !this.foePick;
+      const picks = net.lobby.picks;
+      const total = Math.max(picks.length, 2);
+      const done = picks.filter(Boolean).length;
+      const waiting = !!this.myPick && done < total;
       this.prompt.setText(
-        waiting ? '상대가 고르는 중…' : '온라인 대전 — 파이터를 선택하세요',
+        waiting
+          ? `상대를 기다리는 중…  (${done}/${total}명 선택 완료)`
+          : `온라인 ${total}인 대전 — 파이터를 선택하세요`,
       );
       this.prompt.setColor(waiting ? '#facc15' : '#4ade80');
       return;
@@ -272,7 +275,7 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private modeText(): string {
-    if (this.online) return '🌐 온라인 1:1  ·  연결됨';
+    if (this.online) return `🌐 온라인 대전  ·  연결됨 (빈자리는 봇)`;
     return this.twoPlayer
       ? '👥 2인 대전  ·  사람 둘 + 봇 둘   (F2 : 1인으로 · F3 : 온라인)'
       : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전 · F3 : 온라인 1:1)';
@@ -297,18 +300,15 @@ export class SelectScene extends Phaser.Scene {
 
     try {
       if (choice.kind === 'localHost') {
-        showStatus('다른 탭을 기다리는 중…', '새 탭에서 같은 주소를 열고 "참가"를 누르세요.');
         await net.connectLocal('host');
+        await this.waitInLobby('DEMO');
       } else if (choice.kind === 'localGuest') {
-        showStatus('방을 연 탭을 찾는 중…');
+        showStatus('방을 연 창을 찾는 중…');
         await net.connectLocal('guest');
       } else if (choice.kind === 'host') {
         showStatus('방을 여는 중…');
         const code = await net.host();
-        showWaiting(code, () => {
-          net.close();
-        });
-        await net.waitForGuest();
+        await this.waitInLobby(code);
       } else {
         showStatus('연결하는 중…', choice.code);
         await net.join(choice.code);
@@ -331,17 +331,17 @@ export class SelectScene extends Phaser.Scene {
     this.modeLabel.setText(this.modeText());
     this.modeLabel.setColor('#4ade80');
 
-    net.onPick = (c) => {
-      this.foePick = c;
+    net.onLobby = () => {
       this.refreshPrompt();
       this.tryStartOnline();
     };
     net.onStart = (d) => {
-      // 게스트는 호스트가 정한 대로 따라 들어간다
+      // 참가자는 호스트가 정한 대로 따라 들어간다
       this.launch({
-        playerId: d.hostChar,
-        player2Id: d.guestChar,
-        aiIds: d.botIds ?? [],
+        playerId: d.chars[0]!,
+        humanIds: d.chars,
+        netSlot: net.slot,
+        aiIds: d.bots,
         stageId: d.stageId,
         duel: true,
         netRole: 'guest',
@@ -351,36 +351,64 @@ export class SelectScene extends Phaser.Scene {
       if (this.confirmed) return;
       this.online = false;
       this.myPick = null;
-      this.foePick = null;
       showError(reason, () => this.scene.restart());
     };
   }
 
-  /** 둘 다 골랐으면 호스트가 판을 연다 */
+  /**
+   * 호스트가 사람을 받는 동안 기다린다.
+   *
+   * 몇 명이 들어와 있는지 계속 보여주고, 호스트가 "이 인원으로 시작"을
+   * 누르면 그 순간의 인원으로 확정한다. 자동으로 넷을 채울 때까지 기다리면
+   * 셋이 모여도 영영 시작을 못 한다 — 빈자리는 봇이 채우면 된다.
+   */
+  private waitInLobby(code: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const panel = showWaiting(
+        code,
+        () => {
+          net.close();
+          reject(new Error('방을 닫았습니다.'));
+        },
+        () => resolve(),
+      );
+      net.onLobby = () => panel.setCount(net.playerCount);
+      panel.setCount(net.playerCount);
+    });
+  }
+
+  /** 전원이 골랐으면 호스트가 판을 연다 */
   private tryStartOnline(): void {
     if (!this.online || this.confirmed) return;
-    if (!this.myPick || !this.foePick) return;
     if (net.role !== 'host') return;
 
     /*
-     * 봇도 함께 넣는다 — 사람 둘 + 봇 둘, 로컬 2인 대전과 같은 구성이다.
-     * 어느 봇이 나올지는 호스트가 정해 알려준다. 양쪽이 따로 뽑으면
-     * 같은 자리에 다른 캐릭터가 서게 된다.
+     * 들어와 있는 사람이 **전부** 골라야 시작한다.
+     *
+     * 한 명이라도 고르는 중인데 시작하면 그 사람은 남이 정해 준 캐릭터로
+     * 싸우게 된다. 기다리는 쪽에는 "누가 고르는 중"인지 화면에 뜬다.
+     */
+    const picks = net.lobby.picks.slice(0, net.playerCount);
+    if (picks.length < 2 || picks.some((p) => !p)) return;
+
+    const chars = picks as CharacterId[];
+
+    /*
+     * 빈자리는 봇이 채운다. 어느 봇이 나올지는 호스트가 정해 알려준다 —
+     * 각자 뽑으면 같은 자리에 다른 캐릭터가 서고, 번호로 주고받는 상태가
+     * 엉뚱한 사람에게 붙는다.
      */
     const stage = pickStage();
-    const bots = pickOpponents(this.myPick, AI_COUNT - 1, [], [this.foePick]);
-    const d = {
-      hostChar: this.myPick,
-      guestChar: this.foePick,
-      stageId: stage.id,
-      botIds: bots,
-    };
+    const bots = pickOpponents(chars[0]!, MAX_PLAYERS - chars.length, [], chars.slice(1));
+
+    const d = { chars, bots, stageId: stage.id };
     net.sendStart(d);
     this.launch({
-      playerId: d.hostChar,
-      player2Id: d.guestChar,
+      playerId: chars[0]!,
+      humanIds: chars,
+      netSlot: 0,
       aiIds: bots,
-      stageId: d.stageId,
+      stageId: stage.id,
       duel: true,
       netRole: 'host',
     });
@@ -932,6 +960,7 @@ export class SelectScene extends Phaser.Scene {
       this.tryStartOnline();
       return;
     }
+
 
     /*
      * 2인 대전은 한 번 더 고른다.

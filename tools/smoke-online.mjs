@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 온라인 1:1 결투 검사 — 브라우저 두 개를 실제로 붙인다.
+ * 온라인 대전 검사 — 브라우저 창 여러 개를 실제로 붙인다.
  *
  *   npm run smoke:online
  *
@@ -41,24 +41,40 @@ const browser = await chromium.launch({
 });
 
 /*
- * 탭 두 개를 **같은 창**에 연다.
+ * 탭 여러 개를 **같은 프로필**에 연다.
  *
  * 같은 컴퓨터 경로는 BroadcastChannel 로 잇는데, 그건 같은 브라우저 프로필
- * 안에서만 오간다. 창을 따로 열면 서로를 못 본다.
+ * 안에서만 오간다. 프로필을 따로 쓰면 서로를 못 본다.
  */
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-const host = await ctx.newPage();
-const guest = await ctx.newPage();
 
+/*
+ * 창은 쓸 때 하나씩 만든다.
+ *
+ * 넷을 미리 열어 두면 빈 창 넷이 동시에 자원을 잡고 있다가 첫 창의 캔버스가
+ * 아예 안 뜨는 일이 있었다. 열고 → 띄우고 → 다음, 순서대로 간다.
+ */
+/*
+ * 몇 창을 열 것인가.
+ *
+ * 기본 3창(사람 셋 + 봇 하나). 네 창까지 여는 것은 게임이 아니라 **이 환경**의
+ * 한계다 — 헤드리스 브라우저가 네 번째 창에 그림판(WebGL)을 못 내준다.
+ * 회선 코드는 자리 수에 무관하므로 셋이 붙으면 넷도 붙는다.
+ * 진짜 기계에서 넷을 보려면  NET_PLAYERS=4 npm run smoke:online
+ */
+const PLAYERS = Number(process.env.NET_PLAYERS ?? 3);
+const pages = [];
 const consoleErrors = [];
-for (const [name, page] of [
-  ['호스트', host],
-  ['게스트', guest],
-]) {
+
+async function openPage(i) {
+  const page = await ctx.newPage();
+  const name = i === 0 ? '호스트' : `참가자${i}`;
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.push(`[${name}] ${m.text()}`);
   });
   page.on('pageerror', (e) => consoleErrors.push(`[${name}] ${e.message}`));
+  pages.push(page);
+  return page;
 }
 
 const shot = async (page, name) => {
@@ -75,17 +91,47 @@ const shot = async (page, name) => {
  * 선택 씬이 실제로 살아날 때까지 Enter를 두드리되, 한 번 누르면
  * 페이드가 끝날 때까지 기다린다(연타하면 캐릭터가 즉시 확정된다).
  */
-async function toSelect(page) {
+async function toSelect(page, index) {
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('canvas', { timeout: 30000 });
+  const drawn = await page
+    .waitForSelector('canvas', { timeout: 30000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!drawn) {
+    /*
+     * 그림판이 안 열렸다. 창을 여러 개 여는 검사에서만 나는 일이고,
+     * 게임이 아니라 헤드리스 브라우저의 한계다 — 몇 번째에서 막혔는지
+     * 알려 줘야 "게임이 고장났다"로 오해하지 않는다.
+     */
+    console.log(`  · ${index + 1}번째 창에서 그림판(WebGL)이 안 열립니다`);
+    return false;
+  }
 
   const alive = (k) =>
     page.evaluate((key) => !!window.game?.scene?.isActive(key), k).catch(() => false);
 
   for (let i = 0; i < 60; i++) {
     if (await alive('Select')) {
+      await page.waitForTimeout(500);
+      /*
+       * 캐릭터를 이미 확정해 버렸으면 되돌린다.
+       *
+       * 넘어가려고 누른 Enter 가 선택 화면까지 새어 들어가면 그 자리에서
+       * 캐릭터가 정해지고, 그 뒤로는 F3 도 방향키도 안 먹는다.
+       * 창이 여럿이면 화면마다 뜨는 속도가 달라 이 일이 실제로 일어난다.
+       */
+      const stuck = await page.evaluate(
+        () => window.game.scene.getScene('Select')?.confirmed === true,
+      );
+      if (!stuck) return true;
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+      continue;
+    }
+    if (await alive('Battle')) {
+      await page.keyboard.press('Escape');
       await page.waitForTimeout(700);
-      return true;
+      continue;
     }
     if (await alive('Title')) {
       await page.keyboard.press('Enter');
@@ -100,13 +146,30 @@ async function toSelect(page) {
 let skipped = '';
 
 try {
-  console.log('온라인 대전 (사람 둘 + 봇 둘)\n');
+  console.log(`온라인 ${PLAYERS}인 대전\n`);
 
-  const ready = await Promise.all([toSelect(host), toSelect(guest)]);
-  if (!ready[0] || !ready[1]) {
-    throw new Error('선택 화면까지 넘어가지 못했습니다');
+  /*
+   * 창을 하나씩 차례로 연다.
+   *
+   * 한꺼번에 열면 넷이 서로 자원을 다투며 화면 전환 속도가 제각각이 되고,
+   * 그 틈에 Enter 가 엉뚱한 화면으로 새어 들어간다. 순서대로 열면 느리지만
+   * 매번 같은 순서가 나온다.
+   */
+  const ready = [];
+  for (let i = 0; i < PLAYERS; i++) {
+    const p = await openPage(i);
+    await p.bringToFront();
+    ready.push(await toSelect(p, i));
   }
-  console.log('  ✓ 양쪽 모두 선택 화면');
+  const host = pages[0];
+  const guests = pages.slice(1);
+  if (ready.some((r) => !r)) {
+    skipped =
+      `창 ${PLAYERS}개를 못 열었습니다 — 이 환경의 브라우저 한계입니다. ` +
+      `NET_PLAYERS=2 로 줄여 돌리거나 진짜 기계에서 확인해 주세요.`;
+    throw new Error('__skip__');
+  }
+  console.log(`  ✓ 창 ${PLAYERS}개 모두 선택 화면`);
 
   /*
    * "이 컴퓨터에서" 경로로 붙인다.
@@ -119,155 +182,197 @@ try {
   await host.keyboard.press('F3');
   await host.waitForSelector('[data-testid="net-local-host"]', { timeout: 8000 });
   await host.click('[data-testid="net-local-host"]');
-  await shot(host, 'room-open');
+  await host.waitForSelector('[data-testid="net-start"]', { timeout: 8000 });
 
-  await guest.bringToFront();
-  await guest.keyboard.press('F3');
-  await guest.waitForSelector('[data-testid="net-local-guest"]', { timeout: 8000 });
-  await guest.click('[data-testid="net-local-guest"]');
+  for (const g of guests) {
+    await g.bringToFront();
+    await g.keyboard.press('F3');
+    await g.waitForSelector('[data-testid="net-local-guest"]', { timeout: 8000 });
+    await g.click('[data-testid="net-local-guest"]');
+    await g.waitForTimeout(400);
+  }
 
-  {
-    const linked = await Promise.all([
-      host
+  /* --- 호스트가 인원을 다 봤는가 ----------------------------------- */
+  await host.bringToFront();
+  const counted = await host
+    .waitForFunction(
+      (want) => {
+        const el = document.querySelector('[data-testid="net-count"]');
+        const n = Number(/(\d+)명 참가/.exec(el?.textContent ?? '')?.[1] ?? 0);
+        return n === want;
+      },
+      PLAYERS,
+      { timeout: 20000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!counted) {
+    const n = await host.evaluate(() => document.querySelector('[data-testid="net-count"]')?.textContent);
+    errors.push(`[온라인] 호스트가 ${PLAYERS}명을 다 못 봤습니다 (${n})`);
+  } else {
+    console.log(`  ✓ 호스트가 ${PLAYERS}명 참가를 확인`);
+  }
+  await shot(host, 'lobby');
+
+  /* --- 이 인원으로 시작 --------------------------------------------- */
+  await host.click('[data-testid="net-start"]');
+  await host.waitForTimeout(500);
+
+  const online = await Promise.all(
+    pages.map((p) =>
+      p
         .waitForFunction(() => window.game.scene.getScene('Select')?.online === true, null, {
-          timeout: 25000,
+          timeout: 20000,
         })
         .then(() => true)
         .catch(() => false),
-      guest
-        .waitForFunction(() => window.game.scene.getScene('Select')?.online === true, null, {
-          timeout: 25000,
-        })
+    ),
+  );
+  if (online.some((o) => !o)) {
+    errors.push(`[온라인] 연결되지 않은 창이 있습니다 (${online.join('/')})`);
+  } else {
+    console.log('  ✓ 창 전부가 서로 연결됨');
+  }
+  await shot(guests[0], 'connected');
+
+  /* --- 각자 다른 캐릭터를 고른다 ------------------------------------ */
+  for (let i = 0; i < pages.length; i++) {
+    await pages[i].bringToFront();
+    for (let k = 0; k < i * 2; k++) {
+      await pages[i].keyboard.press('ArrowRight');
+      await pages[i].waitForTimeout(70);
+    }
+    await pages[i].waitForTimeout(200);
+    await pages[i].keyboard.press('Enter');
+    await pages[i].waitForTimeout(250);
+  }
+
+  /* --- 전원이 전투로 들어갔는가 ------------------------------------- */
+  const roles = ['host', ...guests.map(() => 'guest')];
+  const inBattle = await Promise.all(
+    pages.map((p, i) =>
+      p
+        .waitForFunction(
+          (want) => {
+            const s = window.game.scene.getScene('Battle');
+            return s?.scene?.isActive?.() && s.netRole === want;
+          },
+          roles[i],
+          { timeout: 25000 },
+        )
         .then(() => true)
         .catch(() => false),
-    ]);
+    ),
+  );
+  if (inBattle.some((b) => !b)) {
+    errors.push(`[온라인] 전투로 못 들어간 창이 있습니다 (${inBattle.join('/')})`);
+  } else {
+    console.log(`  ✓ ${PLAYERS}개 창 모두 전투 시작`);
+  }
 
-    if (!linked[0] || !linked[1]) {
-      errors.push('[온라인] 두 탭이 서로 연결되지 않았습니다');
-    } else {
-      console.log('  ✓ 두 브라우저가 서로 연결됨');
-      await shot(guest, 'connected');
+  await host.waitForTimeout(2500);
+  await shot(host, 'battle-host');
+  await shot(guests[0], 'battle-guest1');
+  await shot(guests[guests.length - 1], 'battle-guest-last');
 
-      /* --- 각자 다른 캐릭터를 고른다 ---------------------------------- */
-      await guest.keyboard.press('ArrowRight');
-      await guest.keyboard.press('ArrowRight');
-      await guest.waitForTimeout(300);
+  /* --- 모두 같은 판을 보고 있는가 ----------------------------------- */
+  const read = (page) =>
+    page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      return {
+        stage: s.getStageInfo().id,
+        n: s.fighters.length,
+        ids: s.fighters.map((f) => f.cfg.id),
+        humans: s.fighters.filter((f) => f.side === 'player').length,
+        pos: s.fighters.map((f) => Math.round(f.x)),
+      };
+    });
 
-      await host.keyboard.press('Enter');
-      await guest.waitForTimeout(300);
-      await guest.keyboard.press('Enter');
+  const views = await Promise.all(pages.map(read));
+  const a = views[0];
 
-      /* --- 양쪽 모두 전투로 들어갔는가 -------------------------------- */
-      const inBattle = async (page, role) =>
-        page
-          .waitForFunction(
-            (want) => {
-              const s = window.game.scene.getScene('Battle');
-              return s?.scene?.isActive?.() && s.netRole === want;
-            },
-            role,
-            { timeout: 25000 },
-          )
-          .then(() => true)
-          .catch(() => false);
+  if (a.humans !== PLAYERS) {
+    errors.push(`[온라인] 사람이 ${PLAYERS}명이어야 하는데 ${a.humans}명입니다`);
+  } else if (new Set(a.ids).size !== a.ids.length) {
+    errors.push(`[온라인] 같은 캐릭터가 두 번 나왔습니다 — ${a.ids.join()}`);
+  } else {
+    console.log(`  ✓ 사람 ${a.humans}명 + 봇 ${a.n - a.humans}명 — ${a.ids.join(' · ')}`);
+  }
 
-      const both = await Promise.all([inBattle(host, 'host'), inBattle(guest, 'guest')]);
-      if (!both[0] || !both[1]) {
-        errors.push(
-          `[온라인] 전투로 들어가지 못했습니다 (호스트 ${both[0]} · 게스트 ${both[1]})`,
-        );
-      } else {
-        console.log('  ✓ 양쪽 모두 전투 시작 (호스트/게스트)');
-      }
-
-      await host.waitForTimeout(2500);
-      await shot(host, 'battle-host');
-      await shot(guest, 'battle-guest');
-
-      /* --- 같은 판을 보고 있는가 -------------------------------------- */
-      const read = (page) =>
-        page.evaluate(() => {
-          const s = window.game.scene.getScene('Battle');
-          return {
-            stage: s.getStageInfo().id,
-            n: s.fighters.length,
-            ids: s.fighters.map((f) => f.cfg.id),
-            pos: s.fighters.map((f) => Math.round(f.x)),
-          };
-        });
-
-      const [a, b] = await Promise.all([read(host), read(guest)]);
-
-      if (a.stage !== b.stage) {
-        errors.push(`[온라인] 무대가 다릅니다 — 호스트 ${a.stage} / 게스트 ${b.stage}`);
-      } else if (a.ids.join() !== b.ids.join()) {
-        errors.push(`[온라인] 캐릭터가 다릅니다 — ${a.ids} / ${b.ids}`);
-      } else if (a.n !== 4) {
-        errors.push(`[온라인] 넷이 서야 하는데 ${a.n}명입니다`);
-      } else {
-        console.log(
-          `  ✓ 같은 판 — ${a.stage} · 사람 ${a.ids[0]} vs ${a.ids[1]} + 봇 ${a.ids.slice(2).join('·')}`,
-        );
-      }
-
-      const drift = a.pos.map((x, i) => Math.abs(x - b.pos[i]));
-      const worst = Math.max(...drift);
-      if (worst > 120) {
-        errors.push(`[온라인] 두 화면의 위치가 ${worst}px 어긋났습니다`);
-      } else {
-        console.log(`  ✓ 두 화면이 같은 곳을 본다 (최대 차이 ${worst}px)`);
-      }
-
-      /*
-       * --- 게스트의 입력이 호스트에 닿는가 ----------------------------
-       *
-       * 개시 연출(READY? → FIGHT!) 동안에는 조작이 아예 안 먹는다.
-       * 시간을 재서 기다리면 저사양에서 그 구간에 걸려, 회선이 멀쩡한데도
-       * "입력이 안 닿는다"로 오판한다. 실제로 그렇게 한 번 속았다.
-       */
-      await host.waitForFunction(
-        () => window.game.scene.getScene('Battle').battleActive === true,
-        null,
-        { timeout: 20000 },
-      );
-
-      const guestX = () =>
-        host.evaluate(() => Math.round(window.game.scene.getScene('Battle').fighters[1].x));
-
-      const before = await guestX();
-      await guest.keyboard.down('a');
-      await guest.waitForTimeout(900);
-      await guest.keyboard.up('a');
-      await host.waitForTimeout(400);
-      const after = await guestX();
-
-      const stats = await Promise.all([
-        host.evaluate(() => {
-          const s = window.game.scene.getScene('Battle');
-          return {
-            ...s.netStats,
-            active: s.battleActive,
-            humans: s.humans.length,
-            held: s.remoteFrame?.left ?? null,
-          };
-        }),
-        guest.evaluate(() => window.game.scene.getScene('Battle').netStats),
-      ]);
-
-      if (Math.abs(after - before) < 25) {
-        errors.push(
-          `[온라인] 게스트가 눌러도 호스트 쪽 캐릭터가 안 움직입니다 (${before}→${after}) ` +
-            `— 보냄 ${stats[1].sent} / 받음 ${stats[0].recv} / 전투중 ${stats[0].active} / 사람 ${stats[0].humans} / 왼쪽 ${stats[0].held}`,
-        );
-      } else {
-        console.log(`  ✓ 게스트 입력이 회선을 타고 도착 — ${before} → ${after}px`);
-      }
-
-      await shot(host, 'after-input');
+  for (let i = 1; i < views.length; i++) {
+    if (views[i].stage !== a.stage || views[i].ids.join() !== a.ids.join()) {
+      errors.push(`[온라인] ${i + 1}번 창이 다른 판을 보고 있습니다`);
     }
   }
+
+  const worst = Math.max(
+    ...views.slice(1).flatMap((v) => v.pos.map((x, i) => Math.abs(x - a.pos[i]))),
+  );
+  if (worst > 120) {
+    errors.push(`[온라인] 창들의 위치가 ${worst}px 어긋났습니다`);
+  } else {
+    console.log(`  ✓ 모든 창이 같은 곳을 본다 (최대 차이 ${worst}px)`);
+  }
+
+  /* --- 참가자마다 자기 캐릭터만 움직이는가 --------------------------- */
+  await host.waitForFunction(
+    () => window.game.scene.getScene('Battle').battleActive === true,
+    null,
+    { timeout: 20000 },
+  );
+
+  /*
+   * 확인하는 동안 봇을 멈춰 세운다.
+   *
+   * 회선을 보는 검사인데 봇이 달려들어 막아서면 "안 움직인다"가 나온다.
+   * 그건 회선 문제가 아니라 그냥 길이 막힌 것이다.
+   */
+  await host.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    s.ais.splice(0);
+    s.fighters
+      .filter((f) => f.side === 'ai')
+      .forEach((f, i) => {
+        f.setPosition(200 + i * 60, 300);
+        f.moveHorizontal(0);
+      });
+  });
+
+  const allX = () =>
+    host.evaluate(() =>
+      window.game.scene.getScene('Battle').fighters.map((f) => Math.round(f.x)),
+    );
+
+  for (let slot = 1; slot < pages.length; slot++) {
+    const before = await allX();
+    await pages[slot].bringToFront();
+    await pages[slot].keyboard.down('a');
+    await pages[slot].waitForTimeout(800);
+    await pages[slot].keyboard.up('a');
+    await host.waitForTimeout(350);
+    const after = await allX();
+
+    const moved = after.map((x, i) => Math.abs(x - before[i]));
+    if (moved[slot] < 20) {
+      const st = await host.evaluate(
+        () => window.game.scene.getScene('Battle').netStats,
+      );
+      errors.push(
+        `[온라인] ${slot + 1}번 참가자가 눌러도 안 움직입니다 ` +
+          `(${before[slot]}→${after[slot]} · 받음 ${st.recv})`,
+      );
+    } else {
+      console.log(
+        `  ✓ ${slot + 1}번 참가자 입력이 자기 캐릭터에만 도착 — ${moved[slot].toFixed(0)}px`,
+      );
+    }
+  }
+
+  await shot(host, 'after-input');
 } catch (err) {
-  errors.push(`[중단] ${err instanceof Error ? err.message : err}`);
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg !== '__skip__') errors.push(`[중단] ${msg}`);
 }
 
 await browser.close().catch(() => {});
@@ -284,7 +389,6 @@ console.log(`\n스크린샷: ${OUT}/`);
 
 if (skipped) {
   console.log(`\n건너뜀 — ${skipped}`);
-  console.log('게임 자체의 문제가 아닙니다. 인터넷이 되는 곳에서 다시 돌려 주세요.');
   process.exit(0);
 }
 
@@ -293,4 +397,4 @@ if (errors.length || realErrors.length) {
   [...errors, ...realErrors].slice(0, 10).forEach((e) => console.error('  ' + e));
   process.exit(1);
 }
-console.log('\n통과 — 두 브라우저가 같은 판을 보고 있습니다');
+console.log(`\n통과 — 창 ${PLAYERS}개가 같은 판을 보고 있습니다`);

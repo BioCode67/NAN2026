@@ -592,6 +592,13 @@ export interface BattleSceneData {
   /** 플레이어가 고른 캐릭터 */
   playerId: CharacterId;
   /**
+   * 온라인에서 자리 순서대로의 사람 캐릭터 (0번이 호스트).
+   * 있으면 이 목록이 playerId/player2Id 를 대신한다.
+   */
+  humanIds?: CharacterId[];
+  /** 온라인에서 내 자리 번호 (0 = 호스트) */
+  netSlot?: number;
+  /**
    * 2P가 고른 캐릭터. 없으면 1인 플레이다.
    *
    * 한 키보드를 나눠 쓰는 로컬 2인 대전이다. 봇 성격을 아무리 갈라 놔도

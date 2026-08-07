@@ -50,7 +50,7 @@ import { StockSystem } from '../systems/StockSystem';
 import { BannerLanes } from '../ui/BannerLanes';
 import { closePromptOverlay, openPromptOverlay } from '../ui/PromptOverlay';
 import { StockTier } from '../types';
-import type { AIDifficulty, AttackDir, BattleSceneData } from '../types';
+import type { AIDifficulty, AttackDir, BattleSceneData, CharacterId } from '../types';
 
 /** HUD 한 칸(파이터 1명분) */
 interface FighterHud {
@@ -171,8 +171,8 @@ export class BattleScene extends Phaser.Scene {
   private netSeq = 0;
   /** 마지막으로 상태를 보낸 시각 */
   private lastSnapAt = 0;
-  /** 게스트에게서 받은 최신 입력 (호스트) */
-  private remoteFrame: InputFrame = emptyFrame();
+  /** 자리별로 회선에서 받은 최신 입력 (호스트). 0번은 호스트 자신이라 안 쓴다 */
+  private remoteFrames: InputFrame[] = [];
   /** 전송 사이에 스쳐 간 내 눌림을 모아 둔다 (게스트) */
   private outTaps: InputFrame = emptyFrame();
   /** 이번 구간에 일어난 타격 — 게스트 화면에도 같은 연출을 보낸다 */
@@ -237,7 +237,7 @@ export class BattleScene extends Phaser.Scene {
     this.netRole = data.netRole;
     this.netEnded = false;
     this.netSeq = 0;
-    this.remoteFrame = emptyFrame();
+    this.remoteFrames = [];
     this.outTaps = emptyFrame();
     this.netHits = [];
 
@@ -715,47 +715,46 @@ export class BattleScene extends Phaser.Scene {
    */
   private spawnDuel(): void {
     const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
-    const hostId = this.battleData.playerId;
-    const guestId = this.battleData.player2Id ?? this.battleData.playerId;
-
-    const hostFighter = new BaseCharacter(
-      this,
-      STAGE.LEFT + 130,
-      spawnY,
-      CHARACTERS[hostId],
-      'player',
-      'P1',
-    );
-    hostFighter.facing = 1;
-
-    const guestFighter = new BaseCharacter(
-      this,
-      STAGE.RIGHT - 130,
-      spawnY,
-      CHARACTERS[guestId],
-      'player',
-      'P2',
-    );
-    guestFighter.facing = -1;
-
-    this.fighters.push(hostFighter, guestFighter);
 
     /*
-     * 봇도 함께 세운다.
+     * 사람들이 먼저, 그다음 봇.
      *
-     * 호스트가 이미 판 전체를 계산하고 있고, 보내는 상태에는 파이터 목록이
-     * 통째로 들어간다 — 봇을 늘려도 회선으로 갈 것이 여덟 개 늘 뿐이다.
-     * 사람 둘만 덩그러니 서 있는 판보다 넷이 뒤엉키는 쪽이 이 게임이다.
-     *
-     * 목록 순서는 사람 둘 다음에 봇이다. 양쪽 기계가 같은 순서로 세워야
-     * 번호로 주고받는 상태가 제자리를 찾는다.
+     * 목록 순서를 양쪽 기계에서 똑같이 맞춘다. 상태를 번호로 주고받으므로
+     * 순서가 어긋나면 상대 화면에서 두 캐릭터가 서로의 자리로 순간이동한다.
+     * "내 것"이 몇 번인지는 자리 번호(netSlot)가 알려준다.
      */
+    const humanIds =
+      this.battleData.humanIds ??
+      ([this.battleData.playerId, this.battleData.player2Id].filter(
+        Boolean,
+      ) as CharacterId[]);
     const botIds = this.battleData.aiIds ?? [];
-    const gap = (STAGE.RIGHT - STAGE.LEFT - 460) / (botIds.length + 1);
+    const total = humanIds.length + botIds.length;
+
+    /* 사람은 양 끝부터, 봇은 사이를 메운다 */
+    const span = STAGE.RIGHT - STAGE.LEFT - 260;
+    const gap = total > 1 ? span / (total - 1) : 0;
+    const startX = STAGE.LEFT + 130;
+
+    const humans = humanIds.map((id, i) => {
+      const f = new BaseCharacter(
+        this,
+        startX + gap * i,
+        spawnY,
+        CHARACTERS[id],
+        'player',
+        `P${i + 1}`,
+      );
+      // 서로를 마주 보게 — 왼쪽 절반은 오른쪽을, 오른쪽 절반은 왼쪽을
+      f.facing = i < humanIds.length / 2 ? 1 : -1;
+      this.fighters.push(f);
+      return f;
+    });
+
     botIds.forEach((id, i) => {
       const bot = new BaseCharacter(
         this,
-        STAGE.LEFT + 230 + gap * (i + 1),
+        startX + gap * (humans.length + i),
         spawnY,
         CHARACTERS[id],
         'ai',
@@ -766,9 +765,9 @@ export class BattleScene extends Phaser.Scene {
     });
 
     /* 화면마다 "내 것"이 1P 자리에 온다 — 카메라와 HUD가 나를 따라야 한다 */
-    const iAmGuest = this.netRole === 'guest';
-    this.player = iAmGuest ? guestFighter : hostFighter;
-    this.player2 = iAmGuest ? hostFighter : guestFighter;
+    const mySlot = this.battleData.netSlot ?? 0;
+    this.player = humans[mySlot] ?? humans[0]!;
+    this.player2 = humans.find((f) => f !== this.player);
 
     this.fighters.forEach((f) => {
       this.physics.add.collider(f, this.ground);
@@ -779,29 +778,24 @@ export class BattleScene extends Phaser.Scene {
     /*
      * 누가 무엇을 조종하는가.
      *
-     * 호스트 — 자기 것은 키보드로, 상대 것은 회선으로 들어온 입력으로.
-     * 게스트 — 아무것도 직접 조종하지 않는다. 입력은 보내기만 하고,
-     *          화면에 보이는 것은 전부 호스트가 계산해 돌려준 결과다.
-     *          그래야 두 화면이 절대 어긋나지 않는다.
+     * 호스트 — 자기 것은 키보드로, 나머지 사람 자리는 회선으로 온 입력으로.
+     * 참가자 — 아무것도 직접 조종하지 않는다. 입력은 보내기만 하고, 화면에
+     *          보이는 것은 전부 호스트가 계산해 돌려준 결과다. 그래야
+     *          모든 화면이 절대 어긋나지 않는다.
      */
     if (this.netRole === 'host') {
-      this.humans = [
-        { fighter: hostFighter, keys: this.keys, tap: { dir: 0, at: 0 } },
-        {
-          fighter: guestFighter,
-          keys: {},
-          tap: { dir: 0, at: 0 },
-          remote: () => this.takeRemoteFrame(),
-        },
-      ];
+      this.humans = humans.map((f, slot) => ({
+        fighter: f,
+        keys: slot === 0 ? this.keys : {},
+        tap: { dir: 0, at: 0 },
+        remote: slot === 0 ? undefined : () => this.takeRemoteFrame(slot),
+      }));
     } else if (this.netRole === 'guest') {
       /*
-       * 게스트는 아무것도 직접 조종하지 않지만, **자기 캐릭터가 누구인지는**
-       * 씬이 알아야 한다. 카메라가 따라갈 대상과 화면 밖 표시가 이 목록에서
-       * 나오기 때문이다. 비워 두면 카메라가 전원의 한가운데만 보게 되는데,
-       * 1:1에서 둘이 양 끝에 서 있으면 **둘 다 화면 밖**이 된다.
-       *
-       * 입력은 빈 프레임을 돌려준다 — 조종은 회선 너머 호스트가 한다.
+       * 참가자도 **자기 캐릭터가 누구인지는** 씬이 알아야 한다.
+       * 카메라가 따라갈 대상과 화면 밖 표시가 이 목록에서 나오기 때문이다.
+       * 비워 두면 카메라가 전원의 한가운데만 보게 되는데, 양 끝에 서 있으면
+       * 정작 자기 캐릭터가 화면 밖이 된다.
        */
       this.humans = [
         {
@@ -812,11 +806,12 @@ export class BattleScene extends Phaser.Scene {
         },
       ];
     } else {
-      // 온라인이 아닌 1:1 — 한 키보드로 둘이 (연습용)
-      this.humans = [
-        { fighter: hostFighter, keys: this.keys, tap: { dir: 0, at: 0 } },
-        { fighter: guestFighter, keys: this.keys2, tap: { dir: 0, at: 0 } },
-      ];
+      // 온라인이 아닌 결투 — 한 키보드로 둘이
+      this.humans = humans.slice(0, 2).map((f, i) => ({
+        fighter: f,
+        keys: i === 0 ? this.keys : this.keys2,
+        tap: { dir: 0, at: 0 },
+      }));
     }
   }
 
@@ -828,12 +823,13 @@ export class BattleScene extends Phaser.Scene {
   private bindNet(): void {
     if (!this.netRole) return;
 
-    net.onInput = (held, taps) => {
+    net.onInput = (slot, held, taps) => {
       this.netStats.recv++;
       const f = unpackFrame(held, taps);
       // 눌림은 덮어쓰지 않고 쌓는다 — 전송 사이에 스쳐 간 탭이 사라지지 않게
-      mergeTaps(f, this.remoteFrame);
-      this.remoteFrame = f;
+      const prev = this.remoteFrames[slot];
+      if (prev) mergeTaps(f, prev);
+      this.remoteFrames[slot] = f;
     };
 
     net.onSnapshot = (snap) => this.applySnapshot(snap);
@@ -868,9 +864,9 @@ export class BattleScene extends Phaser.Scene {
    * 읽고 나면 눌림은 비운다 — 안 비우면 한 번 누른 점프가 회선이 잠깐
    * 멎을 때까지 매 프레임 다시 발동한다.
    */
-  private takeRemoteFrame(): InputFrame {
-    const f = this.remoteFrame;
-    this.remoteFrame = {
+  private takeRemoteFrame(slot: number): InputFrame {
+    const f = this.remoteFrames[slot] ?? emptyFrame();
+    this.remoteFrames[slot] = {
       ...emptyFrame(),
       left: f.left,
       right: f.right,

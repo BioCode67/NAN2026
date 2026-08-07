@@ -4,7 +4,7 @@ import type { CharacterId } from '../types';
 import type { StageId } from '../config/stages';
 
 /**
- * 온라인 1:1 결투 — 회선.
+ * 온라인 대전 — 회선.
  *
  * ── 왜 이 구조인가 ─────────────────────────────────────────────────
  * 격투 게임의 정석은 롤백 넷코드다. 그런데 롤백은 **결정론적 시뮬레이션**을
@@ -12,17 +12,23 @@ import type { StageId } from '../config/stages';
  * 이 게임은 무작위와 물리에 기대고 있어서 그 조건을 못 맞추고, 맞추려면
  * 전투를 처음부터 다시 써야 한다.
  *
- * 그래서 **호스트가 판 전체를 계산한다.** 게스트는 자기 입력만 보내고
- * 돌아온 상태를 그린다. 게스트 쪽 입력에는 왕복 시간만큼 지연이 생기지만,
+ * 그래서 **호스트가 판 전체를 계산한다.** 참가자는 자기 입력만 보내고
+ * 돌아온 상태를 그린다. 참가자 쪽 입력에는 왕복 시간만큼 지연이 생기지만,
  * 어긋나는 일은 절대 없다 — 판이 한 군데에서만 계산되기 때문이다.
- * 3일 안에 "가끔 두 화면이 다른 게임을 하는" 것보다 이쪽이 낫다.
+ *
+ * 이 구조의 좋은 점은 **사람이 늘어도 구조가 그대로**라는 것이다.
+ * 호스트는 이미 넷을 다 계산하고 있고, 보내는 상태에는 파이터 목록이 통째로
+ * 들어간다. 봇 자리를 사람으로 바꾸는 것은 "그 자리의 입력을 어디서
+ * 받는가"만 달라지는 일이라, 둘이든 넷이든 같은 코드가 돈다.
  *
  * ── 왜 서버가 없는가 ───────────────────────────────────────────────
  * 배포가 GitHub Pages(정적)라 우리 서버를 둘 수 없다. PeerJS 공개 브로커로
  * **연결만** 맺어 주고, 그 뒤 오가는 것은 전부 브라우저끼리 직접(P2P)이다.
- * 브로커가 죽어 있어도 게임은 로컬 모드로 멀쩡히 돌아간다 —
- * 온라인은 있으면 좋은 것이지 없으면 안 되는 것이 아니다.
+ * 브로커가 죽어 있어도 게임은 로컬 모드로 멀쩡히 돌아간다.
  */
+
+/** 한 판에 설 수 있는 인원 */
+export const MAX_PLAYERS = 4;
 
 /** 방 코드 길이 — 사람이 불러 주기 좋은 만큼 */
 const CODE_LEN = 5;
@@ -32,118 +38,16 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const ROOM_PREFIX = 'delisting-brawl-';
 /** 이 시간 안에 연결되지 않으면 실패로 본다 */
 const CONNECT_TIMEOUT = 15000;
-/** 상대 소식이 이만큼 끊기면 연결이 끊긴 것으로 본다 */
-export const NET_TIMEOUT = 6000;
 
 export type NetRole = 'host' | 'guest';
 
-/**
- * 회선의 실체.
- *
- * 인터넷 너머(PeerJS)와 같은 컴퓨터의 다른 탭(BroadcastChannel)을
- * 같은 껍데기로 다룬다. 위쪽 게임 코드는 어느 쪽인지 알 필요가 없다.
- */
-interface Transport {
-  send(msg: unknown): void;
-  close(): void;
-  readonly open: boolean;
-  onMessage?: (m: unknown) => void;
-  onClose?: (reason: string) => void;
-}
-
-/**
- * 같은 컴퓨터의 탭 두 개를 잇는다.
- *
- * ── 왜 이게 필요한가 ───────────────────────────────────────────────
- * 온라인은 상대가 있어야 시험할 수 있다. 혼자 확인할 방법이 없으면
- * "되는 것 같다"에서 멈추고, 정작 사람 앞에서 안 되는 것을 그때 안다.
- *
- * 같은 컴퓨터에서 탭 두 개를 붙이면 인터넷도 상대도 없이 전 과정을
- * 그대로 밟을 수 있다. 검사도 이 길로 돌리고, 보여 줄 때도 이 길이면
- * 회선 사정에 기대지 않는다. 회선 종류만 다를 뿐 위의 게임 코드는 같다.
- */
-class LocalTransport implements Transport {
-  private ch: BroadcastChannel;
-  private readonly me = Math.random().toString(36).slice(2);
-  private peerSeen = false;
-
-  open = true;
-  onMessage?: (m: unknown) => void;
-  onClose?: (reason: string) => void;
-
-  constructor(
-    room: string,
-    private readonly role: NetRole,
-    private readonly onLink: () => void,
-  ) {
-    this.ch = new BroadcastChannel(`delisting-brawl-local-${room}`);
-    this.ch.onmessage = (e) => this.receive(e.data as LocalEnvelope);
-
-    // 들어온 쪽이 먼저 손을 든다. 방 주인은 그 소리를 듣고 답한다
-    if (role === 'guest') this.announce('knock');
-    else this.announce('here');
-  }
-
-  private announce(kind: 'knock' | 'here' | 'bye'): void {
-    this.ch.postMessage({ from: this.me, role: this.role, kind });
-  }
-
-  private receive(env: LocalEnvelope): void {
-    // 내가 보낸 것은 나에게도 돌아온다 — 그건 무시한다
-    if (env.from === this.me) return;
-    // 같은 역할끼리는 상대가 아니다 (탭 셋을 열었을 때)
-    if (env.role === this.role) return;
-
-    if (env.kind === 'knock') {
-      this.link();
-      this.announce('here');
-      return;
-    }
-    if (env.kind === 'here') {
-      this.link();
-      return;
-    }
-    if (env.kind === 'bye') {
-      this.open = false;
-      this.onClose?.('상대가 나갔습니다.');
-      return;
-    }
-    if (env.kind === 'msg') this.onMessage?.(env.body);
-  }
-
-  private link(): void {
-    if (this.peerSeen) return;
-    this.peerSeen = true;
-    this.onLink();
-  }
-
-  send(msg: unknown): void {
-    if (!this.open) return;
-    this.ch.postMessage({ from: this.me, role: this.role, kind: 'msg', body: msg });
-  }
-
-  close(): void {
-    if (!this.open) return;
-    this.open = false;
-    this.announce('bye');
-    this.ch.close();
-  }
-}
-
-interface LocalEnvelope {
-  from: string;
-  role: NetRole;
-  kind: 'knock' | 'here' | 'bye' | 'msg';
-  body?: unknown;
-}
-
-/** 호스트가 판을 열며 알려주는 것 — 게스트는 이걸로 같은 판을 세운다 */
+/** 호스트가 판을 열며 알려주는 것 — 참가자는 이걸로 같은 판을 세운다 */
 export interface NetStart {
-  hostChar: CharacterId;
-  guestChar: CharacterId;
+  /** 자리 순서대로의 캐릭터 (0번이 호스트) */
+  chars: CharacterId[];
+  /** 빈자리를 메우는 봇들 */
+  bots: CharacterId[];
   stageId: StageId;
-  /** 함께 설 봇들. 호스트가 정해 알려준다 — 양쪽이 따로 뽑으면 판이 달라진다 */
-  botIds?: CharacterId[];
 }
 
 /** 호스트가 매 전송마다 보내는 판 상태 */
@@ -154,109 +58,267 @@ export interface NetSnapshot {
   f: number[][];
   /** 이번 구간에 일어난 타격 [x, y, 색, 마무리인가] */
   hit?: number[][];
-  /** 판이 끝났으면 이긴 쪽 (0=호스트, 1=게스트, -1=무승부) */
+  /** 판이 끝났으면 이긴 자리 번호 (-1 = 전원 탈락) */
   over?: number;
 }
 
+/** 로비 현황 — 누가 들어와 있고 누가 골랐는가 */
+export interface NetLobby {
+  /** 자리별 고른 캐릭터 (아직 안 골랐으면 null, 빈자리는 undefined) */
+  picks: (CharacterId | null)[];
+}
+
 type Message =
-  | { t: 'pick'; c: CharacterId }
+  | { t: 'hello' }
+  | { t: 'welcome'; slot: number }
+  | { t: 'full' }
+  | { t: 'pick'; slot: number; c: CharacterId }
+  | { t: 'lobby'; d: NetLobby }
   | { t: 'start'; d: NetStart }
-  | { t: 'in'; h: number; k: number }
+  | { t: 'in'; slot: number; h: number; k: number }
   | { t: 'snap'; d: NetSnapshot }
-  | { t: 'bye' };
+  | { t: 'bye'; slot: number };
+
+/**
+ * 회선의 실체.
+ *
+ * 인터넷 너머(PeerJS)와 같은 컴퓨터의 다른 창(BroadcastChannel)을
+ * 같은 껍데기로 다룬다. 위쪽 게임 코드는 어느 쪽인지 알 필요가 없다.
+ */
+interface Transport {
+  /** to 를 주면 그 사람에게만, 없으면 전원에게 */
+  send(msg: Message, to?: string): void;
+  close(): void;
+  readonly open: boolean;
+  onMessage?: (m: Message, from: string) => void;
+  /** 누군가 들어왔다 (호스트에서만) */
+  onJoin?: (id: string) => void;
+  onLeave?: (id: string, reason: string) => void;
+}
+
+/* ================================================================== */
+/* 같은 컴퓨터 — 창 여러 개를 잇는다                                    */
+/* ================================================================== */
+
+interface LocalEnvelope {
+  from: string;
+  to?: string;
+  role: NetRole;
+  kind: 'knock' | 'here' | 'bye' | 'msg';
+  body?: Message;
+}
+
+/**
+ * 같은 컴퓨터의 창 여러 개를 잇는다.
+ *
+ * ── 왜 이게 필요한가 ───────────────────────────────────────────────
+ * 온라인은 상대가 있어야 시험할 수 있다. 혼자 확인할 방법이 없으면
+ * "되는 것 같다"에서 멈추고, 정작 사람 앞에서 안 되는 것을 그때 안다.
+ *
+ * 창 여러 개를 붙이면 인터넷도 상대도 없이 전 과정을 그대로 밟을 수 있다.
+ * 검사도 이 길로 돌리고, 보여 줄 때도 이 길이면 회선 사정에 기대지 않는다.
+ * 회선 종류만 다를 뿐 위의 게임 코드는 완전히 같다.
+ */
+class LocalTransport implements Transport {
+  private ch: BroadcastChannel;
+  private readonly me = Math.random().toString(36).slice(2);
+  /** 호스트가 본 참가자들 / 참가자가 본 호스트 */
+  private known = new Set<string>();
+
+  open = true;
+  onMessage?: (m: Message, from: string) => void;
+  onJoin?: (id: string) => void;
+  onLeave?: (id: string, reason: string) => void;
+
+  constructor(
+    room: string,
+    private readonly role: NetRole,
+  ) {
+    this.ch = new BroadcastChannel(`delisting-brawl-local-${room}`);
+    this.ch.onmessage = (e) => this.receive(e.data as LocalEnvelope);
+
+    // 들어온 쪽이 먼저 손을 든다. 방 주인은 그 소리를 듣고 답한다
+    this.announce(role === 'guest' ? 'knock' : 'here');
+  }
+
+  private announce(kind: 'knock' | 'here' | 'bye', to?: string): void {
+    this.ch.postMessage({ from: this.me, to, role: this.role, kind });
+  }
+
+  private receive(env: LocalEnvelope): void {
+    // 내가 보낸 것은 나에게도 돌아온다 — 그건 무시한다
+    if (env.from === this.me) return;
+    // 같은 역할끼리는 상대가 아니다 (참가자끼리는 직접 말하지 않는다)
+    if (env.role === this.role) return;
+    // 누구에게 보낸 것인지 적혀 있으면 그 사람만 받는다
+    if (env.to && env.to !== this.me) return;
+
+    if (env.kind === 'knock') {
+      // 새로 들어온 사람에게만 답한다 — 이미 있던 사람에게 또 보내면 중복이다
+      this.announce('here', env.from);
+      this.link(env.from);
+      return;
+    }
+    if (env.kind === 'here') {
+      this.link(env.from);
+      return;
+    }
+    if (env.kind === 'bye') {
+      if (!this.known.delete(env.from)) return;
+      this.onLeave?.(env.from, '상대가 나갔습니다.');
+      return;
+    }
+    if (env.kind === 'msg' && env.body) this.onMessage?.(env.body, env.from);
+  }
+
+  private link(id: string): void {
+    if (this.known.has(id)) return;
+    this.known.add(id);
+    this.onJoin?.(id);
+  }
+
+  send(msg: Message, to?: string): void {
+    if (!this.open) return;
+    this.ch.postMessage({ from: this.me, to, role: this.role, kind: 'msg', body: msg });
+  }
+
+  close(): void {
+    if (!this.open) return;
+    this.open = false;
+    this.announce('bye');
+    this.ch.close();
+  }
+}
+
+/* ================================================================== */
 
 export class NetSystem {
   private peer?: Peer;
-  private conn?: DataConnection;
-  /** 같은 컴퓨터의 다른 탭과 이어졌을 때 쓰는 회선 */
+  /** 인터넷 너머 회선들. 호스트는 여럿, 참가자는 하나 */
+  private conns = new Map<string, DataConnection>();
   private local?: LocalTransport;
 
   role: NetRole = 'host';
-  /** 방 코드 (호스트가 만들어 알려준다) */
+  /** 방 코드 */
   code = '';
+  /** 내 자리 번호 (0 = 호스트) */
+  slot = 0;
   /** 연결이 살아 있는가 */
   connected = false;
   /** 마지막으로 상대 소식을 들은 시각 */
   lastHeard = 0;
 
+  /** 호스트만: 자리 번호 → 회선 상대 id */
+  private slots: (string | null)[] = [];
+  /** 자리별 고른 캐릭터 */
+  private picks: (CharacterId | null)[] = [];
+
   /* --- 바깥에서 꽂는 처리기 --------------------------------------- */
-  onPick?: (c: CharacterId) => void;
+  /** 로비 인원·선택이 바뀌었다 */
+  onLobby?: (lobby: NetLobby) => void;
   onStart?: (d: NetStart) => void;
-  onInput?: (held: number, taps: number) => void;
+  onInput?: (slot: number, held: number, taps: number) => void;
   onSnapshot?: (d: NetSnapshot) => void;
   onClose?: (reason: string) => void;
 
+  /** 지금 방에 들어와 있는 사람 수 (호스트 포함) */
+  get playerCount(): number {
+    if (this.role === 'guest') return 0;
+    return 1 + this.slots.filter(Boolean).length;
+  }
+
+  /** 자리별 선택 현황 (로비 표시용) */
+  get lobby(): NetLobby {
+    return { picks: this.picks.slice() };
+  }
+
+  /* ================================================================ */
+  /* 방 열기 · 들어가기                                                */
   /* ================================================================ */
 
-  /**
-   * 방을 연다. 돌아오는 코드를 상대에게 불러 주면 된다.
-   * 상대가 들어올 때까지 기다리지 않고 코드부터 돌려준다.
-   */
+  private resetRoom(role: NetRole): void {
+    this.role = role;
+    this.slot = role === 'host' ? 0 : -1;
+    this.slots = [];
+    this.picks = [null];
+    this.connected = role === 'host';
+  }
+
+  /** 같은 컴퓨터의 다른 창과 잇는다 (인터넷·상대 없이 시험·시연) */
+  connectLocal(role: NetRole, room = 'demo'): Promise<void> {
+    this.resetRoom(role);
+    this.code = room.toUpperCase();
+
+    return new Promise((resolve, reject) => {
+      const t = new LocalTransport(room, role);
+      this.local = t;
+
+      t.onMessage = (m, from) => {
+        this.lastHeard = Date.now();
+        this.handle(m, from);
+      };
+      t.onJoin = (id) => {
+        if (role === 'host') {
+          this.admit(id);
+        } else {
+          // 참가자는 호스트를 찾은 것이다 — 자리 배정을 요청한다
+          this.connected = true;
+          t.send({ t: 'hello' });
+        }
+      };
+      t.onLeave = (id, reason) => this.dropGuest(id, reason);
+
+      if (role === 'host') {
+        // 방을 여는 것은 곧바로 끝난다 — 사람은 나중에 들어온다
+        this.lastHeard = Date.now();
+        resolve();
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        t.close();
+        this.local = undefined;
+        reject(new Error('방을 연 창이 없습니다. 다른 창에서 먼저 "방 만들기"를 눌러 주세요.'));
+      }, 30000);
+
+      // 자리를 받아야 진짜로 들어간 것이다
+      const tick = setInterval(() => {
+        if (this.slot < 0) return;
+        clearInterval(tick);
+        clearTimeout(timer);
+        resolve();
+      }, 80);
+    });
+  }
+
+  /** 인터넷 너머로 방을 연다. 돌아오는 코드를 상대에게 알려주면 된다 */
   async host(): Promise<string> {
-    this.role = 'host';
+    this.resetRoom('host');
     this.code = randomCode();
 
     await this.openPeer(ROOM_PREFIX + this.code);
 
     this.peer!.on('connection', (conn) => {
-      // 이미 한 명 들어와 있으면 더 받지 않는다 (1:1이다)
-      if (this.conn) {
-        conn.close();
-        return;
-      }
-      this.bind(conn);
+      conn.on('open', () => {
+        if (this.playerCount >= MAX_PLAYERS) {
+          conn.send({ t: 'full' } satisfies Message);
+          setTimeout(() => conn.close(), 200);
+          return;
+        }
+        this.conns.set(conn.peer, conn);
+        this.bindConn(conn);
+        this.admit(conn.peer);
+      });
     });
 
     return this.code;
   }
 
-  /**
-   * 같은 컴퓨터의 다른 탭과 잇는다 (인터넷·상대 없이 시험·시연).
-   *
-   * 코드는 고정이라 외울 것이 없다. 탭 하나에서 "이 컴퓨터에서 둘이"를
-   * 호스트로, 다른 탭에서 게스트로 고르면 그대로 붙는다.
-   */
-  connectLocal(role: NetRole, room = 'demo'): Promise<void> {
-    this.role = role;
-    this.code = room.toUpperCase();
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.local?.close();
-        this.local = undefined;
-        reject(
-          new Error(
-            role === 'host'
-              ? '다른 탭이 들어오지 않았습니다. 같은 주소를 새 탭에서 열고 "참가"를 눌러 주세요.'
-              : '방을 연 탭이 없습니다. 다른 탭에서 먼저 "방 만들기"를 눌러 주세요.',
-          ),
-        );
-      }, 30000);
-
-      this.local = new LocalTransport(room, role, () => {
-        clearTimeout(timer);
-        this.connected = true;
-        this.lastHeard = Date.now();
-        resolve();
-      });
-
-      this.local.onMessage = (m) => {
-        this.lastHeard = Date.now();
-        this.handle(m as Message);
-      };
-      this.local.onClose = (reason) => {
-        this.connected = false;
-        this.onClose?.(reason);
-      };
-    });
-  }
-
   /** 코드로 방에 들어간다 */
   async join(code: string): Promise<void> {
-    this.role = 'guest';
+    this.resetRoom('guest');
     this.code = code.trim().toUpperCase();
 
-    // 게스트는 아무 이름으로나 등록해도 된다 — 남이 찾아올 일이 없다
     await this.openPeer();
 
     const conn = this.peer!.connect(ROOM_PREFIX + this.code, {
@@ -270,9 +332,18 @@ export class NetSystem {
         CONNECT_TIMEOUT,
       );
       conn.on('open', () => {
-        clearTimeout(timer);
-        this.bind(conn);
-        resolve();
+        this.conns.set(conn.peer, conn);
+        this.bindConn(conn);
+        this.connected = true;
+        conn.send({ t: 'hello' } satisfies Message);
+
+        // 자리를 받아야 진짜로 들어간 것이다
+        const tick = setInterval(() => {
+          if (this.slot < 0) return;
+          clearInterval(tick);
+          clearTimeout(timer);
+          resolve();
+        }, 60);
       });
       conn.on('error', (err) => {
         clearTimeout(timer);
@@ -281,73 +352,99 @@ export class NetSystem {
     });
   }
 
-  /** 상대가 들어올 때까지 기다린다 (호스트) */
-  waitForGuest(timeoutMs = 120000): Promise<void> {
-    if (this.connected) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error('아무도 들어오지 않았습니다.')),
-        timeoutMs,
-      );
-      const tick = setInterval(() => {
-        if (!this.connected) return;
-        clearInterval(tick);
-        clearTimeout(timer);
-        resolve();
-      }, 120);
-    });
+  /** 호스트: 새 사람에게 자리를 준다 */
+  private admit(id: string): void {
+    if (this.slots.includes(id)) return;
+    if (this.playerCount >= MAX_PLAYERS) return;
+
+    const slot = this.slots.length + 1;
+    this.slots.push(id);
+    this.picks[slot] = null;
+
+    this.transportSend({ t: 'welcome', slot }, id);
+    this.broadcastLobby();
   }
 
-  /* --- 보내기 ------------------------------------------------------ */
+  private dropGuest(id: string, reason: string): void {
+    if (this.role === 'guest') {
+      this.connected = false;
+      this.onClose?.(reason);
+      return;
+    }
+    const i = this.slots.indexOf(id);
+    if (i < 0) return;
+    this.slots[i] = null;
+    this.picks[i + 1] = null;
+    this.broadcastLobby();
+  }
 
-  /** 내가 고른 캐릭터를 알린다 (선택 화면) */
+  private broadcastLobby(): void {
+    const d = this.lobby;
+    this.transportSend({ t: 'lobby', d });
+    this.onLobby?.(d);
+  }
+
+  /* ================================================================ */
+  /* 보내기                                                            */
+  /* ================================================================ */
+
+  /** 내가 고른 캐릭터를 알린다 */
   sendPick(c: CharacterId): void {
-    this.send({ t: 'pick', c });
+    if (this.role === 'host') {
+      this.picks[0] = c;
+      this.broadcastLobby();
+      return;
+    }
+    this.transportSend({ t: 'pick', slot: this.slot, c });
   }
 
+  /** 호스트: 판을 연다 */
   sendStart(d: NetStart): void {
-    this.send({ t: 'start', d });
+    this.transportSend({ t: 'start', d });
   }
 
-  /** 게스트 → 호스트. 누르고 있는 것과 스쳐 간 눌림을 함께 보낸다 */
+  /** 참가자 → 호스트. 누르고 있는 것과 스쳐 간 눌림을 함께 */
   sendInput(held: number, taps: number): void {
-    this.send({ t: 'in', h: held, k: taps });
+    this.transportSend({ t: 'in', slot: this.slot, h: held, k: taps });
   }
 
-  /** 호스트 → 게스트. 판 전체의 현재 모습 */
+  /** 호스트 → 전원. 판 전체의 현재 모습 */
   sendSnapshot(d: NetSnapshot): void {
-    this.send({ t: 'snap', d });
+    this.transportSend({ t: 'snap', d });
   }
 
   close(): void {
     try {
-      this.send({ t: 'bye' });
+      this.transportSend({ t: 'bye', slot: this.slot });
     } catch {
       /* 이미 끊겼으면 그만이다 */
     }
     this.connected = false;
     this.local?.close();
-    this.conn?.close();
+    for (const c of this.conns.values()) c.close();
     this.peer?.destroy();
     this.local = undefined;
-    this.conn = undefined;
+    this.conns.clear();
     this.peer = undefined;
-  }
-
-  /** 상대 소식이 끊긴 지 오래됐는가 */
-  isStale(now: number): boolean {
-    return this.connected && this.lastHeard > 0 && now - this.lastHeard > NET_TIMEOUT;
+    this.slots = [];
+    this.picks = [];
   }
 
   /* ================================================================ */
 
-  private send(msg: Message): void {
+  private transportSend(msg: Message, to?: string): void {
     if (this.local?.open) {
-      this.local.send(msg);
+      this.local.send(msg, to);
       return;
     }
-    if (!this.conn?.open) return;
-    this.conn.send(msg);
+    if (to) {
+      const c = this.conns.get(to);
+      if (c?.open) c.send(msg);
+      return;
+    }
+    for (const c of this.conns.values()) {
+      if (c.open) c.send(msg);
+    }
   }
 
   private async openPeer(id?: string): Promise<void> {
@@ -375,9 +472,7 @@ export class NetSystem {
 
       peer.on('error', (err) => {
         clearTimeout(timer);
-        const msg = String((err as { type?: string }).type ?? err);
-        // 같은 코드가 이미 쓰이고 있으면 다른 코드로 다시 열면 된다
-        reject(new Error(friendlyError(msg)));
+        reject(new Error(friendlyError(String((err as { type?: string }).type ?? err))));
       });
 
       peer.on('disconnected', () => {
@@ -387,47 +482,57 @@ export class NetSystem {
     });
   }
 
+  private bindConn(conn: DataConnection): void {
+    conn.on('data', (raw) => {
+      this.lastHeard = Date.now();
+      this.handle(raw as Message, conn.peer);
+    });
+    conn.on('close', () => {
+      this.conns.delete(conn.peer);
+      this.dropGuest(conn.peer, '연결이 끊어졌습니다.');
+    });
+    conn.on('error', () => {
+      this.conns.delete(conn.peer);
+      this.dropGuest(conn.peer, '연결에 문제가 생겼습니다.');
+    });
+  }
+
   /** 어느 회선으로 왔든 받은 것은 여기서 갈린다 */
-  private handle(msg: Message): void {
+  private handle(msg: Message, from: string): void {
     switch (msg.t) {
+      case 'hello':
+        // 인터넷 너머에서는 연결이 열린 뒤 이 인사로 자리를 요청한다
+        if (this.role === 'host') this.admit(from);
+        break;
+      case 'welcome':
+        this.slot = msg.slot;
+        this.connected = true;
+        break;
+      case 'full':
+        this.onClose?.('방이 가득 찼습니다 (최대 4명).');
+        break;
       case 'pick':
-        this.onPick?.(msg.c);
+        if (this.role !== 'host') break;
+        this.picks[msg.slot] = msg.c;
+        this.broadcastLobby();
+        break;
+      case 'lobby':
+        this.picks = msg.d.picks;
+        this.onLobby?.(msg.d);
         break;
       case 'start':
         this.onStart?.(msg.d);
         break;
       case 'in':
-        this.onInput?.(msg.h, msg.k);
+        this.onInput?.(msg.slot, msg.h, msg.k);
         break;
       case 'snap':
         this.onSnapshot?.(msg.d);
         break;
       case 'bye':
-        this.connected = false;
-        this.onClose?.('상대가 나갔습니다.');
+        this.dropGuest(from, '상대가 나갔습니다.');
         break;
     }
-  }
-
-  private bind(conn: DataConnection): void {
-    this.conn = conn;
-    this.connected = true;
-    this.lastHeard = Date.now();
-
-    conn.on('data', (raw) => {
-      this.lastHeard = Date.now();
-      this.handle(raw as Message);
-    });
-
-    conn.on('close', () => {
-      this.connected = false;
-      this.onClose?.('연결이 끊어졌습니다.');
-    });
-
-    conn.on('error', () => {
-      this.connected = false;
-      this.onClose?.('연결에 문제가 생겼습니다.');
-    });
   }
 }
 

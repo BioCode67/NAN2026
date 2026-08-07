@@ -686,6 +686,35 @@ if (!(gravityAfter < gravityBefore)) {
 await shot('orb-moon');
 
 /*
+ * 한 문장에 두 가지 — 이 게임의 축이 실제로 두 번 작동하는가.
+ *
+ * 해석기 단위 검사(test:prompt)는 "둘로 읽는다"까지만 본다. 실제로 둘 다
+ * 걸리는지는 다른 문제다 — 둘째는 배너가 겹치지 않도록 늦춰 걸리므로,
+ * 그 지연 경로가 끊어져도 단위 검사는 통과한다.
+ */
+await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  s.orbs.onBreak(s.player);
+});
+await page.waitForSelector('[data-testid="prompt-overlay"]', { timeout: 8000 }).catch(() => {});
+await page.locator('[data-testid="prompt-input"]').fill('전부 거대하게 만들고 느리게');
+await page.keyboard.press('Enter');
+// 둘째는 650ms 뒤에 걸린다 — 넉넉히 기다린다
+await page.waitForTimeout(2200);
+
+const combo = await page.evaluate(() =>
+  window.game.scene.getScene('Battle').gimmicks.getActive().map((a) => a.spec.id),
+);
+if (!combo.includes('rule_giant') || !combo.includes('rule_slow')) {
+  errors.push(
+    `[기믹] 한 문장에 두 가지를 썼는데 둘 다 걸리지 않았습니다: ${JSON.stringify(combo)}`,
+  );
+} else {
+  console.log('  ✓ 한 문장 → 기믹 둘 (거대화 + 슬로우 모션)');
+}
+await shot('orb-combo');
+
+/*
  * 캐릭터 고유 메커니즘.
  *
  * 다섯 캐릭터가 각자 다른 조작 규칙을 갖는 것이 이 게임에서 캐릭터를

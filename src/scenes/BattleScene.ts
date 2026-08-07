@@ -14,7 +14,7 @@ import {
 } from '../config/gameConfig';
 import { BaseCharacter, resetQuoteThrottle } from '../characters/BaseCharacter';
 import { buildPortrait } from '../characters/CharacterArt';
-import { AI_PROMPTS, interpretPrompt } from '../config/gimmicks';
+import { AI_PROMPTS, readPrompt } from '../config/gimmicks';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
@@ -998,8 +998,25 @@ export class BattleScene extends Phaser.Scene {
       breaker.say(text, breaker.cfg.colors.accent);
     }
 
-    const spec = interpretPrompt(text);
-    this.gimmicks.activate(spec, text, this.time.now);
+    /*
+     * 한 문장에 두 가지가 들어 있으면 둘 다 건다.
+     *
+     * "달에서 한방에 끝내자"는 장소와 규칙을 동시에 말하고 있다.
+     * 하나만 골라 버리면 플레이어가 쓴 말의 절반을 흘린 것이고,
+     * 그러면 다음부터는 짧게만 쓰게 된다 — 길게 쓸 이유가 없어지므로.
+     */
+    const reading = readPrompt(text);
+    const note =
+      `AI 해석: ${reading.reason} · 확신 ${Math.round(reading.confidence * 100)}%`;
+
+    this.gimmicks.activate(reading.primary, text, this.time.now, note);
+    if (reading.secondary) {
+      // 조금 늦춰 건다 — 같은 순간에 두 배너가 겹쳐 뜨면 둘 다 안 읽힌다
+      this.time.delayedCall(650, () => {
+        if (!this.battleActive) return;
+        this.gimmicks.activate(reading.secondary!, text, this.time.now, '함께 읽은 것');
+      });
+    }
 
     this.prompting = false;
   }

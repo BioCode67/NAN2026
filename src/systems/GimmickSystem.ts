@@ -94,17 +94,18 @@ export class GimmickSystem {
   /**
    * 기믹을 발동한다.
    * @param prompt 플레이어가 입력한 원문 (연출에 그대로 보여준다)
+   * @param note   AI가 문장을 어떻게 읽었는지 한 줄 (없으면 안 띄운다)
    */
-  activate(spec: GimmickSpec, prompt: string, time: number): void {
+  activate(spec: GimmickSpec, prompt: string, time: number, note?: string): void {
     // 같은 기믹이 이미 돌고 있으면 시간만 늘린다 (중첩 적용은 되돌리기가 꼬인다)
     const existing = this.active.find((a) => a.spec.id === spec.id);
     if (existing) {
       existing.endAt = time + spec.duration;
-      this.announce(spec, prompt, true);
+      this.announce(spec, prompt, true, note);
       return;
     }
 
-    this.announce(spec, prompt, false);
+    this.announce(spec, prompt, false, note);
     sound.play('skill');
 
     const handle = this.run(spec, time);
@@ -386,11 +387,15 @@ export class GimmickSystem {
 
   /** 전원이 커진다 — 히트박스와 물리 바디까지 함께 커진다 */
   private applyGiant(scale: number) {
-    const targets = this.ctx.fighters();
-    targets.forEach((f) => f.setSizeScale(scale));
+    this.ctx.fighters().forEach((f) => f.setSizeScale(scale));
 
     return {
-      cleanup: () => targets.forEach((f) => f.setSizeScale(1)),
+      /*
+       * 되돌릴 때 목록을 다시 읽는다.
+       * 발동 시점의 배열을 붙잡아 두면, 그 사이에 판이 갈렸을 때
+       * 이미 없는 파이터들에게 되돌리기를 걸고 지금 커져 있는 쪽은 놓친다.
+       */
+      cleanup: () => this.ctx.fighters().forEach((f) => f.setSizeScale(1)),
     };
   }
 
@@ -435,22 +440,39 @@ export class GimmickSystem {
    * 입력한 문장을 그대로 크게 보여준다 — "내가 쓴 말이 판을 바꿨다"가
    * 전달되지 않으면 이 기능은 그냥 랜덤 이벤트로 읽힌다.
    */
-  private announce(spec: GimmickSpec, prompt: string, extended: boolean): void {
+  private announce(
+    spec: GimmickSpec,
+    prompt: string,
+    extended: boolean,
+    note?: string,
+  ): void {
     const hex = `#${spec.color.toString(16).padStart(6, '0')}`;
     const cam = this.scene.cameras.main;
 
+    /*
+     * 해석 줄이 붙으면 판이 한 줄만큼 커진다.
+     * 고정 높이로 두면 글자가 테두리를 뚫고 나간다.
+     */
     const panel = this.scene.add
-      .rectangle(cam.centerX, 250, 760, 150, 0x0b1020, 0.9)
+      .rectangle(cam.centerX, 250, 760, note ? 182 : 150, 0x0b1020, 0.9)
       .setStrokeStyle(3, spec.color)
       .setDepth(DEPTH.OVERLAY)
       .setScrollFactor(0);
 
     const quoted = prompt ? `“${prompt}”` : '(입력 없음)';
+    /*
+     * 해석을 보여 주는 이유.
+     *
+     * 이 게임의 축은 "문장으로 판을 바꾼다"다. 그런데 결과만 뜨면
+     * 알아들은 것인지 아무거나 고른 것인지 플레이어가 구별할 수 없고,
+     * 구별이 안 되면 축이 작동한다는 사실 자체가 전달되지 않는다.
+     */
+    const head = note ? `${quoted}\n${note}` : quoted;
     const text = this.scene.add
       .text(
         cam.centerX,
         250,
-        `${quoted}\n\n${spec.icon} ${spec.name}${extended ? ' (연장)' : ''}\n${spec.desc}`,
+        `${head}\n\n${spec.icon} ${spec.name}${extended ? ' (연장)' : ''}\n${spec.desc}`,
         {
           fontFamily: GAME.FONT,
           fontSize: '20px',

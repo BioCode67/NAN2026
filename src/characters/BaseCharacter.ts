@@ -377,6 +377,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 그림·히트박스·물리 바디가 함께 커진다.
    */
   setSizeScale(scale: number): void {
+    /*
+     * 이미 파괴된 파이터에게도 불릴 수 있다.
+     *
+     * 거대화 기믹이 도는 중에 R로 판을 새로 시작하면, GimmickSystem.reset()이
+     * 되돌리기를 실행하는 시점에는 그때의 파이터들이 이미 없다.
+     * (파괴된 GameObject 는 body 를 잃는다)
+     */
+    if (!this.body) return;
+
     this.sizeScale = scale;
 
     const w = FIGHTER.BODY_W * scale;

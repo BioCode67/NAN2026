@@ -68,7 +68,13 @@ export function openPromptOverlay(
     } satisfies Partial<CSSStyleDeclaration>);
 
     const guide = document.createElement('div');
-    guide.textContent = '무엇이든 입력하세요. 판이 그대로 바뀝니다.';
+    /*
+     * 두 가지를 한 번에 쓸 수 있다는 사실을 여기서 알린다.
+     * 안내가 없으면 아무도 두 개를 쓰지 않고, 안 쓰면 그런 규칙이 있다는
+     * 것도 모른 채 게임이 끝난다.
+     */
+    guide.textContent =
+      '무엇이든 입력하세요. 판이 그대로 바뀝니다. (두 가지를 한 문장에 쓰면 둘 다 걸립니다)';
     Object.assign(guide.style, {
       fontSize: '15px',
       color: '#8fa6d8',

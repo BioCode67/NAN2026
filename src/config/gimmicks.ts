@@ -125,7 +125,7 @@ export const GIMMICKS: GimmickSpec[] = [
     color: 0x94a3b8,
     duration: 18000,
     keywords: [
-      '붕괴', '무너', '좁', '발판', '없애', '떨어뜨', '지워', '파괴',
+      '붕괴', '무너', '좁', '발판', '없애', '지워', '파괴',
       'collapse', 'narrow', 'destroy', 'remove', 'platform',
     ],
   },
@@ -234,7 +234,12 @@ export const PROMPT_EXAMPLES: string[] = [
   '폭탄을 뿌려라',
   '전부 거대해져라',
   '불을 꺼버려',
-  '한 방이면 끝나게',
+  /*
+   * 두 가지를 한 문장에 담은 예시를 꼭 하나 넣는다.
+   * 짧은 예시만 보여 주면 플레이어는 끝까지 짧게만 쓰고,
+   * 그러면 "둘 다 걸린다"는 규칙을 영영 발견하지 못한다.
+   */
+  '달에서 한 방에 끝내자',
 ];
 
 /**
@@ -267,17 +272,94 @@ function hash(text: string): number {
 }
 
 /**
- * 프롬프트를 기믹 하나로 해석한다.
+ * 프롬프트를 읽은 결과.
  *
- * 1) 키워드가 가장 많이 맞는 기믹을 고른다
- * 2) 갈래만 말했으면(“맵 바꿔”) 그 갈래 안에서 고른다
- * 3) 아무것도 안 걸리면 문장 해시로 고른다
+ * ── 왜 기믹 하나만 돌려주지 않는가 ────────────────────────────────
+ * 예전에는 문장을 받아 기믹 하나를 돌려주고 끝이었다. 두 가지가 아쉬웠다.
  *
- * 3번이 중요하다. 못 알아들었다고 아무 일도 안 일어나면 플레이어는
+ * 첫째, **플레이어가 왜 그렇게 됐는지 몰랐다.** "달에서 한방에 끝내자"라고
+ * 썼는데 용암이 나오면, 알아들은 것인지 아무거나 고른 것인지 구별할 수 없다.
+ * 이 게임의 축이 "문장으로 판을 바꾼다"인데, 그 축이 작동하는지가 안 보였다.
+ * 그래서 **무슨 말이 걸렸는지**와 **얼마나 확신하는지**를 함께 돌려준다.
+ *
+ * 둘째, 문장에는 보통 두 가지가 들어 있다. "달에서 한방에 끝내자"는
+ * 장소(달)와 규칙(한방)을 동시에 말하고 있는데, 하나만 골라 버리면
+ * 나머지 절반을 흘린 것이다. 갈래가 다르면 **둘 다 건다.**
+ */
+export interface PromptReading {
+  /** 이 문장의 중심 */
+  primary: GimmickSpec;
+  /** 갈래가 달라 함께 걸리는 것 (없을 수 있다) */
+  secondary?: GimmickSpec;
+  /** 실제로 걸린 말들 — 화면에 그대로 보여준다 */
+  matched: string[];
+  /** 0~1. 걸린 말이 없으면 0에 가깝다 */
+  confidence: number;
+  /** 어떻게 읽었는지 한 줄 — 플레이어에게 보여줄 문장 */
+  reason: string;
+}
+
+/**
+ * 받침 유무에 맞는 조사를 고른다.
+ *
+ * 해석 문구는 화면에 그대로 뜨는 한국어 문장이다. "'달' 를 읽었다"처럼
+ * 조사가 어긋나면 그 한 글자 때문에 문장 전체가 기계가 쓴 것처럼 읽힌다.
+ */
+function josa(word: string, withFinal: string, withoutFinal: string): string {
+  const last = word[word.length - 1] ?? '';
+  const code = last.charCodeAt(0);
+  // 한글 음절이 아니면(영어·숫자) 받침 없는 쪽이 대체로 자연스럽다
+  if (code < 0xac00 || code > 0xd7a3) return withoutFinal;
+  return (code - 0xac00) % 28 ? withFinal : withoutFinal;
+}
+
+/** 기믹 하나가 이 문장에서 얼마나 걸렸는가 */
+interface Score {
+  spec: GimmickSpec;
+  score: number;
+  matched: string[];
+}
+
+/**
+ * 문장에서 각 기믹이 몇 점을 받는지 전부 센다.
+ *
+ * 점수는 "몇 개가 맞았나"가 먼저고 길이는 동점을 가르는 용도다.
+ * 길이를 먼저 보면 '뿌려'(2자)가 '폭탄'(2자)을 이기는 식으로,
+ * 더 구체적인 말이 범용어에 밀린다.
+ */
+function scoreAll(text: string, compact: string): Score[] {
+  const out: Score[] = [];
+
+  for (const g of GIMMICKS) {
+    let score = 0;
+    const matched: string[] = [];
+
+    for (const k of g.keywords) {
+      const key = k.toLowerCase();
+      if (text.includes(key) || compact.includes(key.replace(/\s+/g, ''))) {
+        score += 1 + key.length / 100;
+        matched.push(k);
+      }
+    }
+    if (score > 0) out.push({ spec: g, score, matched });
+  }
+
+  return out.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * 프롬프트를 읽는다.
+ *
+ * 1) 키워드가 걸린 기믹들을 점수순으로 세운다
+ * 2) 1등을 중심으로 삼고, **갈래가 다른** 2등이 있으면 함께 건다
+ * 3) 아무것도 안 걸렸으면 갈래 힌트("맵 바꿔")를 본다
+ * 4) 그래도 없으면 문장 해시로 고른다
+ *
+ * 4번이 중요하다. 못 알아들었다고 아무 일도 안 일어나면 플레이어는
  * "고장났나?" 라고 생각한다. 무엇을 쓰든 판은 반드시 바뀌어야 하고,
  * 같은 문장은 늘 같은 결과여야 우연이 아니라 규칙으로 느껴진다.
  */
-export function interpretPrompt(raw: string): GimmickSpec {
+export function readPrompt(raw: string): PromptReading {
   const text = raw.toLowerCase().replace(/\s+/g, ' ').trim();
 
   /*
@@ -288,41 +370,77 @@ export function interpretPrompt(raw: string): GimmickSpec {
   const compact = text.replace(/\s+/g, '');
 
   if (text.length > 0) {
-    /*
-     * 1) 키워드 매칭.
-     *
-     * 점수는 "몇 개가 맞았나"가 먼저고 길이는 동점을 가르는 용도다.
-     * 길이를 먼저 보면 '뿌려'(2자)가 '폭탄'(2자)을 이기는 식으로,
-     * 더 구체적인 말이 범용어에 밀린다.
-     */
-    let best: GimmickSpec | null = null;
-    let bestScore = 0;
+    const scored = scoreAll(text, compact);
 
-    for (const g of GIMMICKS) {
-      let score = 0;
-      for (const k of g.keywords) {
-        const key = k.toLowerCase();
-        if (text.includes(key) || compact.includes(key.replace(/\s+/g, ''))) {
-          score += 1 + key.length / 100;
-        }
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        best = g;
-      }
+    if (scored.length) {
+      const top = scored[0]!;
+
+      /*
+       * 함께 걸 둘째를 찾는다.
+       *
+       * 막는 것은 **맵 두 개**뿐이다. 지형·중력·배경을 동시에 두 번 바꾸면
+       * 나중 것이 앞의 것을 덮어써 되돌리기가 꼬인다. 그 외 조합은 서로
+       * 간섭하지 않는다 — 달로 보내면서 서든데스를 켜거나, 전부 거대하게
+       * 만들면서 느리게 하는 것은 문제없이 겹친다.
+       *
+       * 기준은 비율이 아니라 **몇 개 뒤졌는가**다. 점수는 사실상 걸린
+       * 키워드 개수이므로, 비율로 자르면 1등이 두 개 맞은 순간 한 개짜리
+       * 둘째가 통째로 잘린다 — "달에서 한방에 끝내자"의 '달'이 그렇게 잘렸다.
+       * 한 개는 뒤져도 되고, 두 개 넘게 뒤지면 지나가는 말로 본다.
+       */
+      const second = scored.find(
+        (s) =>
+          s.spec.id !== top.spec.id &&
+          !(s.spec.kind === 'map' && top.spec.kind === 'map') &&
+          s.score >= top.score - 1.2,
+      );
+
+      const matched = [...top.matched, ...(second?.matched ?? [])];
+      /* 걸린 말이 많을수록 확신이 커진다. 셋이면 거의 확실하다고 본다 */
+      const confidence = Math.min(1, 0.45 + matched.length * 0.18);
+
+      return {
+        primary: top.spec,
+        secondary: second?.spec,
+        matched,
+        confidence,
+        reason: second
+          ? `'${top.matched[0]}'${josa(top.matched[0]!, '과', '와')} ` +
+            `'${second.matched[0]}'${josa(second.matched[0]!, '을', '를')} 함께 읽었다`
+          : `'${top.matched[0]}'${josa(top.matched[0]!, '으로', '로')} 읽었다`,
+      };
     }
-    if (best) return best;
 
-    /* 2) 갈래만 지목한 경우 — 그 갈래 안에서 문장 해시로 고른다 */
+    /* 갈래만 지목한 경우 — 그 갈래 안에서 문장 해시로 고른다 */
     for (const hint of KIND_HINTS) {
-      if (!hint.words.some((w) => text.includes(w))) continue;
+      const word = hint.words.find((w) => text.includes(w));
+      if (!word) continue;
       const pool = GIMMICKS.filter((g) => g.kind === hint.kind);
-      return pool[hash(text) % pool.length]!;
+      return {
+        primary: pool[hash(text) % pool.length]!,
+        matched: [word],
+        confidence: 0.4,
+        reason: `'${word}'${josa(word, '만', '만')} 알아들어 그 갈래에서 골랐다`,
+      };
     }
   }
 
-  /* 3) 못 알아들었어도 반드시 무언가는 일어난다 */
-  return GIMMICKS[hash(text || 'empty') % GIMMICKS.length]!;
+  /* 못 알아들었어도 반드시 무언가는 일어난다 */
+  return {
+    primary: GIMMICKS[hash(text || 'empty') % GIMMICKS.length]!,
+    matched: [],
+    confidence: 0.15,
+    reason: '모르는 말이라 아무거나 골랐다',
+  };
+}
+
+/**
+ * 문장을 기믹 하나로 해석한다.
+ *
+ * readPrompt 의 중심 결과만 필요한 곳(검사·디버그)을 위해 남겨 둔다.
+ */
+export function interpretPrompt(raw: string): GimmickSpec {
+  return readPrompt(raw).primary;
 }
 
 /** id로 기믹을 찾는다 (테스트·디버그용) */

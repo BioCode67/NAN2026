@@ -11,7 +11,13 @@
  * 별도 빌드 단계나 테스트 러너 의존성을 늘리지 않기 위함이다.
  */
 
-import { interpretPrompt, GIMMICKS, AI_PROMPTS, PROMPT_EXAMPLES } from '../src/config/gimmicks.ts';
+import {
+  interpretPrompt,
+  readPrompt,
+  GIMMICKS,
+  AI_PROMPTS,
+  PROMPT_EXAMPLES,
+} from '../src/config/gimmicks.ts';
 
 let failed = 0;
 const fail = (msg) => {
@@ -126,6 +132,77 @@ for (const g of GIMMICKS) {
   }
 }
 if (!failed) console.log(`✓ 카탈로그 ${GIMMICKS.length}종 정합성`);
+
+/* ------------------------------------------------------------------ */
+/* 5. 한 문장에 두 가지가 들어 있으면 둘 다 읽는가                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * "달에서 한방에 끝내자"는 장소와 규칙을 동시에 말한다. 하나만 골라 버리면
+ * 플레이어가 쓴 말의 절반을 흘린 것이고, 그러면 다음부터는 짧게만 쓰게 된다 —
+ * 길게 쓸 이유가 없어지므로. 이 게임의 축이 "문장으로 판을 바꾼다"이니
+ * 문장이 길어질 이유를 없애면 안 된다.
+ */
+
+{
+  const before = failed;
+
+  const COMBOS = [
+    '달에서 한방에 끝내자',
+    '용암 위에서 조작을 뒤집어',
+    '폭탄 뿌리고 저중력으로',
+    // 같은 갈래(룰)라도 서로 간섭하지 않으면 함께 걸린다
+    '전부 거대하게 만들고 느리게',
+  ];
+
+  for (const text of COMBOS) {
+    const r = readPrompt(text);
+    if (!r.secondary) {
+      fail(`"${text}" — 두 가지를 말했는데 하나만 읽었다 (${r.primary.id})`);
+      continue;
+    }
+    // 맵 두 개를 동시에 걸면 나중 것이 앞의 것을 덮어써 되돌리기가 꼬인다
+    if (r.secondary.kind === 'map' && r.primary.kind === 'map') {
+      fail(`"${text}" — 맵을 둘 걸었다 (${r.primary.id} + ${r.secondary.id})`);
+    }
+    if (r.secondary.id === r.primary.id) {
+      fail(`"${text}" — 같은 기믹을 둘 걸었다 (${r.primary.id})`);
+    }
+  }
+
+  /* 하나만 말한 문장에 억지로 둘째를 붙이면 안 된다 */
+  const SINGLES = ['폭탄 떨어뜨려', '리듬 배틀'];
+  for (const text of SINGLES) {
+    const r = readPrompt(text);
+    if (r.secondary) {
+      fail(`"${text}" — 하나만 말했는데 ${r.secondary.id} 까지 걸렸다`);
+    }
+  }
+
+  /* 확신도는 알아들었을 때 높고 못 알아들었을 때 낮아야 한다 */
+  const known = readPrompt('달에서 한방에 끝내자');
+  const unknown = readPrompt('asdfasdf');
+  if (!(known.confidence > unknown.confidence + 0.3)) {
+    fail(
+      `확신도가 구별되지 않는다 (알아들음 ${known.confidence.toFixed(2)} / 모름 ${unknown.confidence.toFixed(2)})`,
+    );
+  }
+
+  /* 화면에 그대로 뜨는 문장이므로 비어 있으면 안 된다 */
+  for (const text of [...COMBOS, ...SINGLES, 'asdfasdf', '']) {
+    const r = readPrompt(text);
+    if (!r.reason || !r.reason.trim()) fail(`"${text}" — 해석 설명이 비어 있다`);
+    if (r.confidence < 0 || r.confidence > 1) {
+      fail(`"${text}" — 확신도가 0~1 밖이다 (${r.confidence})`);
+    }
+  }
+
+  if (failed === before) {
+    console.log(
+      `✓ 복합 문장 ${COMBOS.length}건 — 갈래가 다른 둘을 함께 읽고, 단일 문장은 하나만`,
+    );
+  }
+}
 
 /* ------------------------------------------------------------------ */
 

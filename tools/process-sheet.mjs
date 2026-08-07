@@ -784,11 +784,41 @@ if (words.length >= 4) {
   clusters = mergeBoxes(alive, 26, 26, (a, b) => !separated(a, b));
 }
 
-/* 라벨 텍스트 제거 — 캐릭터에 비해 낮고 납작하다 */
-const MIN_SPRITE_H = 120;
+/*
+ * 라벨 텍스트 제거 — 캐릭터에 비해 낮고 납작하다.
+ *
+ * ── 왜 절대 높이로 자르면 안 되는가 ──────────────────────────────
+ * 예전에는 "120px보다 낮으면 라벨"이었다. 그런데 원래 낮은 포즈들이 있다.
+ *
+ *   PORTRAIT — 전신이 아니라 얼굴만 그리는 칸이다 (7묶음 마지막)
+ *   DOWN     — 바닥에 누워 있다 (6묶음 마지막)
+ *   GUARD · LAND · DIZZY — 몸을 확실히 낮추라고 프롬프트에 적어 두었다
+ *
+ * 이것들이 라벨로 걸러지면 **그 칸부터 포즈가 통째로 밀린다.** 그림은
+ * 멀쩡한데 게임에서 걷기 자리에 대기 그림이 나오고, 원인은 이 한 줄에 있다.
+ * 생성 이미지의 해상도도 제각각이라 절대 픽셀값은 애초에 기준이 될 수 없다.
+ *
+ * 그래서 **이 이미지 안의 다른 덩어리들과 비교한다.** 라벨은 캐릭터보다
+ * 압도적으로 낮다(글자 높이 대 전신 높이). 웅크린 포즈는 서 있는 포즈의
+ * 절반쯤이지 1/3 아래로 내려가지 않는다.
+ */
+const heights = clusters.map((c) => c.y1 - c.y0 + 1).sort((a, b) => a - b);
+const median = heights[Math.floor(heights.length / 2)] ?? 0;
+// 바닥값 20px — 덩어리가 한둘뿐이라 중앙값을 못 믿을 때 라벨만 걸러낸다
+const MIN_SPRITE_H = Math.max(20, Math.round(median * 0.35));
+
 const labels = clusters.filter((c) => c.y1 - c.y0 + 1 < MIN_SPRITE_H);
 const sprites = clusters.filter((c) => c.y1 - c.y0 + 1 >= MIN_SPRITE_H);
-console.log(`덩어리 ${clusters.length}개 → 스프라이트 ${sprites.length}개, 라벨 ${labels.length}개 제외`);
+console.log(
+  `덩어리 ${clusters.length}개 → 스프라이트 ${sprites.length}개, ` +
+    `라벨 ${labels.length}개 제외 (기준 높이 ${MIN_SPRITE_H}px, 중앙값 ${median}px)`,
+);
+if (labels.length) {
+  // 무엇을 버렸는지 남긴다 — 칸이 하나 모자랄 때 여기부터 본다
+  console.log(
+    `  버린 덩어리 높이: ${labels.map((c) => c.y1 - c.y0 + 1).join(', ')}px`,
+  );
+}
 
 /* 읽는 순서(위→아래, 왼→오른)로 정렬 */
 const ROW_TOL = 160;

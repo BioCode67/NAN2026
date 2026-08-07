@@ -24,7 +24,8 @@
     "art:opt": "node tools/optimize-art.mjs",
     "docs": "node tools/make-pdf.mjs",
     "sheet:merge": "node tools/merge-sheets.mjs",
-    "balance": "node --experimental-transform-types --no-warnings --import ./tools/ts-resolve.mjs tools/balance.mjs"
+    "balance": "node --experimental-transform-types --no-warnings --import ./tools/ts-resolve.mjs tools/balance.mjs",
+    "art:check": "node tools/art-check.mjs"
   },
   "keywords": [
     "phaser",

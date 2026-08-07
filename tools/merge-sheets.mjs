@@ -199,6 +199,14 @@ const meta = {
    * 프레임 수만으로는 "1·3·7 묶음 18칸"과 "옛 V1 15칸"을 구별할 수 없다.
    */
   batches: parts.map((p) => p.index),
+  /*
+   * 묶음마다 몇 칸이 들어왔는지.
+   *
+   * 6칸이 아니면 그 묶음부터 포즈가 한 칸씩 밀린다 — 걷기 자리에 대기
+   * 그림이 오고 마지막 포즈는 빈다. 합친 시트만 놓고 보면 어느 묶음이
+   * 모자랐는지 알 길이 없으므로, 아는 사람이 여기 적어 둔다(art-check 가 읽는다).
+   */
+  batchCounts: Object.fromEntries(parts.map((p) => [p.index, p.meta.count])),
 };
 writeFileSync(outPng.replace(/\.png$/, '.json'), JSON.stringify(meta, null, 2));
 
@@ -208,6 +216,29 @@ console.log(
   `\n완료: ${outPng}\n` +
     `프레임 ${totalFrames}개, 격자 ${COLS}x${rows}, 칸 크기 ${cellW}x${cellH}\n`,
 );
+
+/*
+ * 낡은 webp 를 곧바로 갈아 끼운다.
+ *
+ * 게임은 가벼운 webp 를 먼저 집는다(artAssets.ts resolveArtPath).
+ * 새 시트를 만들어 놓고 webp 를 그대로 두면 화면은 **옛 그림 그대로**다.
+ * 파일은 분명히 새것인데 게임만 안 바뀌니, 원인을 코드에서 찾게 된다.
+ *
+ * 여기서 자동으로 하는 이유: 잊어버릴 수 있는 단계이고, 잊었을 때의 증상이
+ * 원인과 전혀 닮지 않았다. 사람이 판단할 것도 없다 — 늘 갱신하는 것이 맞다.
+ */
+if (existsSync(`public/sprites/${key}.webp`)) {
+  console.log('낡은 webp 를 갱신합니다…');
+  const r = spawnSync(process.execPath, ['tools/optimize-art.mjs'], {
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) {
+    console.log(
+      `\n주의: webp 갱신에 실패했습니다. 직접 돌려 주세요 — npm run art:opt\n` +
+        `      그대로 두면 게임이 옛 그림을 계속 씁니다.`,
+    );
+  }
+}
 
 const perBatch = parts.filter((p) => p.meta.count !== 6);
 if (perBatch.length) {

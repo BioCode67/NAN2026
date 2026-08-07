@@ -13,6 +13,17 @@ const ORB_HP = 55;
 const ORB_RADIUS = 34;
 /** 첫 등장까지 */
 const FIRST_SPAWN_DELAY = 13000;
+/**
+ * 아주 첫 판에서의 첫 등장까지.
+ *
+ * 프롬프트 오브는 이 게임의 핵심 기믹인데, 13초는 처음 켠 사람이
+ * 조작을 익히다 놓치기 좋은 길이다. 심사자가 2분을 써 본다면 그중
+ * 앞의 13초는 "그냥 대난투"로 보이고, 그 인상이 남는다.
+ *
+ * 이미 한 판이라도 해 본 뒤(연승 도전 2판째부터)에는 원래 간격으로 돌아간다 —
+ * 아는 사람에게까지 서두를 이유는 없다.
+ */
+const FIRST_ROUND_DELAY = 7000;
 /** 다음 오브까지 */
 const SPAWN_INTERVAL = 26000;
 /** 이 시간 안에 못 깨면 달아난다 */
@@ -77,8 +88,12 @@ export class PromptOrbSystem {
   }
 
   /** 전투 시작 시 첫 등장 타이머를 건다 */
-  start(): void {
-    this.nextSpawnAt = this.scene.time.now + FIRST_SPAWN_DELAY;
+  /**
+   * @param firstEver 이번이 이 사람의 첫 판인가 (연승 0판째)
+   */
+  start(firstEver = false): void {
+    this.nextSpawnAt =
+      this.scene.time.now + (firstEver ? FIRST_ROUND_DELAY : FIRST_SPAWN_DELAY);
   }
 
   /** 지금 오브가 떠 있는가 (HUD 안내용) */

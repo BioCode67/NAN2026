@@ -913,7 +913,7 @@ export class BattleScene extends Phaser.Scene {
       this.announce('FIGHT!', '#ff5a5a');
       this.battleActive = true;
       this.items.start();
-      this.orbs.start();
+      this.orbs.start(this.streak === 0);
       this.player.say(this.player.pickQuote('intro'), this.player.cfg.colors.accent);
     });
 

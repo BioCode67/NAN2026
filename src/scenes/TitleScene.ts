@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { addBackdrop, hasArt } from '../config/artAssets';
 import { DEPTH, GAME } from '../config/gameConfig';
+import { CHARACTER_ORDER } from '../config/characters';
+import { STAGES } from '../config/stages';
 import { sound } from '../systems/SoundSystem';
 
 /**
@@ -176,9 +178,26 @@ export class TitleScene extends Phaser.Scene {
     this.add
       .text(
         GAME.WIDTH / 2,
-        556,
+        552,
         '1P vs 3AI 대난투 · 프롬프트를 입력해 판을 바꾼다',
         { fontFamily: GAME.FONT, fontSize: '16px', color: '#8fa6d8' },
+      )
+      .setOrigin(0.5)
+      .setDepth(DEPTH.HUD);
+
+    /*
+     * 규모를 한 줄로 알린다.
+     *
+     * 처음 켠 사람은 이 화면에서 "얼마나 만든 게임인가"를 판단한다.
+     * 캐릭터가 스무 명이라는 사실은 선택 화면에 가야 보이는데,
+     * 거기까지 안 가고 닫는 사람도 있다. 숫자는 여기서 말해야 한다.
+     */
+    this.add
+      .text(
+        GAME.WIDTH / 2,
+        580,
+        `캐릭터 ${CHARACTER_ORDER.length}명 · 무대 ${STAGES.length}곳 · 기술 ${CHARACTER_ORDER.length * 14}개 · 이기면 다음 상대`,
+        { fontFamily: GAME.FONT, fontSize: '15px', color: '#6c86c4' },
       )
       .setOrigin(0.5)
       .setDepth(DEPTH.HUD);
@@ -186,7 +205,7 @@ export class TitleScene extends Phaser.Scene {
     this.add
       .text(
         GAME.WIDTH / 2,
-        606,
+        620,
         'A/D 이동 · SPACE 점프 · J 약공격 · K 강공격 · L 스킬 · S 방어',
         { fontFamily: GAME.FONT, fontSize: '14px', color: '#5d739f' },
       )

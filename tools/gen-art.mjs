@@ -26,13 +26,13 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { PRICE_PER_IMAGE, loadEnvFile, resolveModel } from './gemini.mjs';
 import {
-  PRICE_PER_IMAGE,
-  generateImage,
-  loadEnvFile,
-  requireApiKey,
-  resolveModel,
-} from './gemini.mjs';
+  PROVIDERS,
+  checkProvider,
+  generate,
+  resolveProvider,
+} from './image-providers.mjs';
 import { buildCatalog } from './art-catalog.mjs';
 import { CHARACTERS } from './art-characters.mjs';
 
@@ -103,11 +103,28 @@ const skipped = selected.length - todo.length;
 /* 보여주기                                                            */
 /* ------------------------------------------------------------------ */
 
+const provider = resolveProvider();
+const info = PROVIDERS[provider];
 const model = resolveModel();
-const price = PRICE_PER_IMAGE[model];
+const price = info.free ? 0 : PRICE_PER_IMAGE[model];
 
-console.log(`모델: ${model}`);
+console.log(`제공자: ${info.label}${provider === 'gemini' ? ` · ${model}` : ''}`);
+if (info.free) console.log('무료 — 대신 느리고 가끔 실패합니다');
 if (skipped) console.log(`이미 있어서 건너뜀: ${skipped}장 (다시 뽑으려면 --force)`);
+
+/*
+ * 캐릭터 시트를 무료 모델로 뽑으려 하면 미리 말린다.
+ * 여섯 칸을 세고 일곱 묶음 내내 같은 인물을 유지하는 것은 그림 실력이 아니라
+ * 지시를 따르는 능력이라, 글→그림 모델은 거의 실패한다.
+ * 모르고 열네 장을 버리는 것보다 지금 한 줄 읽는 편이 싸다.
+ */
+if (!info.reference && todo.some((i) => i.group !== 'scenes')) {
+  console.log(
+    '\n주의: 캐릭터 시트는 "같은 인물 · 정확히 여섯 칸"을 지켜야 하는데\n' +
+      `      ${info.label} 은(는) 참조 이미지를 못 받아 묶음마다 다른 사람이 나옵니다.\n` +
+      '      배경·UI(scenes)에만 쓰시길 권합니다.\n',
+  );
+}
 
 if (!todo.length) {
   console.log('만들 것이 없습니다.');
@@ -130,25 +147,56 @@ if (DRY) {
 /* 생성                                                                */
 /* ------------------------------------------------------------------ */
 
-const apiKey = requireApiKey();
+checkProvider(provider);
 
 let done = 0;
 const failed = [];
 
+/**
+ * 캐릭터별 기준 그림 — 1번 묶음 결과를 들고 있다가 2~7번에 함께 보낸다.
+ *
+ * 글로만 시키면 묶음마다 다른 사람이 나온다. 옷 색이 바뀌고 무기가 사라지고
+ * 얼굴이 딴사람이 된다. 그걸 이어 붙이면 시트가 아니라 여러 명이 번갈아
+ * 나오는 애니메이션이 된다.
+ */
+const anchors = new Map();
+
+/** 이미 뽑아 둔 1번 묶음이 있으면 그것을 기준으로 쓴다 (이어서 돌릴 때) */
+const anchorFor = (item) => {
+  if (!info.reference || item.group === 'scenes') return undefined;
+  if (anchors.has(item.group)) return anchors.get(item.group);
+
+  const first = catalog.find((i) => i.group === item.group && i.id.endsWith('-b1'));
+  if (first && existsSync(first.out)) {
+    const bytes = readFileSync(first.out);
+    anchors.set(item.group, bytes);
+    return bytes;
+  }
+  return undefined;
+};
+
 console.log('');
 for (const item of todo) {
   const prompt = readFileSync(item.prompt, 'utf8');
-  process.stdout.write(`[${done + failed.length + 1}/${todo.length}] ${item.label} … `);
+  const reference = anchorFor(item);
+  const mark = reference ? ' (기준 그림 참조)' : '';
+  process.stdout.write(
+    `[${done + failed.length + 1}/${todo.length}] ${item.label}${mark} … `,
+  );
 
   try {
-    const bytes = await generateImage(prompt, {
-      apiKey,
-      model,
+    const bytes = await generate(prompt, {
+      provider,
       aspectRatio: item.ratio,
+      reference,
     });
 
     mkdirSync(dirname(item.out), { recursive: true });
     writeFileSync(item.out, bytes);
+
+    // 1번 묶음은 이 캐릭터의 기준이 된다 — 뒤 묶음들이 이 그림을 보고 그린다
+    if (item.id.endsWith('-b1')) anchors.set(item.group, bytes);
+
     done++;
     console.log(`${(bytes.length / 1024).toFixed(0)}KB → ${item.out}`);
   } catch (err) {

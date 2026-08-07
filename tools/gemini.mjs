@@ -98,11 +98,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *
  * @param prompt 보낼 문장
  * @param opts.aspectRatio '16:9' 같은 비율. 모델이 지원하지 않으면 알아서 뺀다
+ * @param opts.reference 참조 이미지 바이트 — 이 그림과 같은 인물로 그리라는 뜻
  * @param opts.retries 429·5xx 재시도 횟수
  * @returns PNG/JPEG 바이트
  */
 export async function generateImage(prompt, opts = {}) {
-  const { apiKey, model = resolveModel(), aspectRatio, retries = 3 } = opts;
+  const { apiKey, model = resolveModel(), aspectRatio, reference, retries = 3 } = opts;
+
+  /*
+   * 참조 이미지.
+   *
+   * 캐릭터 시트는 일곱 묶음으로 나눠 뽑는다. 글로만 시키면 묶음마다 다른
+   * 사람이 나온다 — 옷 색이 바뀌고 무기가 사라지고 얼굴이 딴사람이 된다.
+   * 그걸 이어 붙이면 시트가 아니라 다섯 명이 번갈아 나오는 애니메이션이 된다.
+   *
+   * 첫 묶음 결과를 함께 보내면 "이 사람"을 붙잡아 준다.
+   * 프롬프트에도 사람 손으로 첨부하라고 적어 뒀는데, 자동으로 부를 때는
+   * 그 안내를 읽을 사람이 없으므로 여기서 대신 붙인다.
+   */
+  const parts = [];
+  if (reference) {
+    parts.push({
+      inlineData: { mimeType: 'image/png', data: Buffer.from(reference).toString('base64') },
+    });
+  }
+  parts.push({ text: prompt });
 
   /*
    * 이미지 모델은 요청 형식이 세대마다 조금씩 다르다.
@@ -134,7 +154,7 @@ export async function generateImage(prompt, opts = {}) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            contents: [{ role: 'user', parts }],
             ...extra,
           }),
         });

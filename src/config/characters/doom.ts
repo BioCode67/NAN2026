@@ -15,6 +15,8 @@ export const doom: CharacterConfig = {
     hairColor: 0x4b5563,
     glasses: 'round',
     glassesColor: 0x1f2937,
+    prop: 'doc',
+    propColor: 0x94a3b8,
     beard: true,
     beardColor: 0x6b7280,
     mouth: 'flat',

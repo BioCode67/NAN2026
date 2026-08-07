@@ -18,6 +18,8 @@ export const satoshi: CharacterConfig = {
     headgearColor: 0x18181b,
     glasses: 'none',
     glassesColor: 0x000000,
+    prop: 'pickaxe',
+    propColor: 0xf7931a,
     beard: false,
     beardColor: 0x000000,
     mouth: 'flat',

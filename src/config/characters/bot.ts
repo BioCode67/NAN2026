@@ -17,6 +17,8 @@ export const bot: CharacterConfig = {
     headgearColor: 0x22d3ee,
     glasses: 'rect',
     glassesColor: 0x22d3ee,
+    prop: 'board',
+    propColor: 0x22d3ee,
     beard: false,
     beardColor: 0x000000,
     mouth: 'flat',

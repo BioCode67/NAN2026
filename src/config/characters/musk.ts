@@ -15,6 +15,7 @@ export const musk: CharacterConfig = {
     hairColor: 0x3f2d20,
     glasses: 'none',
     glassesColor: 0x000000,
+    prop: 'gun',
     beard: false,
     beardColor: 0x000000,
     mouth: 'smirk',

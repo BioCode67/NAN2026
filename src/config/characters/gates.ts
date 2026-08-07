@@ -15,6 +15,8 @@ export const gates: CharacterConfig = {
     hairColor: 0x8b6b4a,
     glasses: 'round',
     glassesColor: 0xd4a843,
+    prop: 'hammer',
+    propColor: 0x86efac,
     beard: false,
     beardColor: 0x000000,
     mouth: 'smile',

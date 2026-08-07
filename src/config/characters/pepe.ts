@@ -16,6 +16,8 @@ export const pepe: CharacterConfig = {
     hairColor: 0xdc2626,
     glasses: 'none',
     glassesColor: 0x000000,
+    prop: 'pickaxe',
+    propColor: 0xdc2626,
     beard: false,
     beardColor: 0x000000,
     mouth: 'wide',

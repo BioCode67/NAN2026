@@ -17,6 +17,8 @@ export const bezos: CharacterConfig = {
     // 민머리 + 짙은 선글라스 — 이 둘만으로 알아본다
     glasses: 'rect',
     glassesColor: 0x0b0f18,
+    prop: 'box',
+    propColor: 0xff9900,
     beard: false,
     beardColor: 0x000000,
     mouth: 'wide',

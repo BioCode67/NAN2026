@@ -30,6 +30,11 @@ export interface FighterArt {
   head: Phaser.GameObjects.Arc;
   /** 공격 시 앞으로 뻗는 팔 */
   armFront: Phaser.GameObjects.Arc;
+  /**
+   * 앞손에 든 것. 팔과 같은 자리에 놓이므로 **팔과 함께 움직여야 한다.**
+   * 무기만 제자리에 남으면 손에서 빠진 것처럼 보인다.
+   */
+  handProp?: Phaser.GameObjects.Container;
   armBack: Phaser.GameObjects.Arc;
   legL: Phaser.GameObjects.Ellipse;
   legR: Phaser.GameObjects.Ellipse;
@@ -78,6 +83,15 @@ export function buildFighterArt(
   back.push(armFront);
   flashParts.push(armFront);
 
+  /*
+   * 손에 든 것.
+   *
+   * 팔보다 앞(=화면상 위)에 그린다. 팔 뒤에 두면 몸통에 가려 안 보이는
+   * 각도가 생기고, 그러면 무기를 붙인 의미가 절반으로 준다.
+   */
+  const handProp = buildHandProp(scene, art, cfg.colors.accent, outline);
+  if (handProp) back.push(handProp);
+
   /* --- 머리 ------------------------------------------------------- */
   const head = scene.add.circle(0, HEAD_CY, FIGHTER.HEAD_R, skin);
   head.setStrokeStyle(3, outline, 0.45);
@@ -115,6 +129,7 @@ export function buildFighterArt(
     torso,
     head,
     armFront,
+    handProp: handProp ?? undefined,
     armBack,
     legL,
     legR,
@@ -177,6 +192,135 @@ function buildHair(
   }
 
   return out;
+}
+
+/**
+ * 앞손에 든 것.
+ *
+ * 컨테이너로 감싸는 이유 — 공격할 때 팔과 **같은 좌표로 함께 움직여야** 한다.
+ * 조각들을 따로 두면 팔 트윈에 맞춰 각각의 오프셋을 다시 계산해야 하고,
+ * 그러면 무기를 하나 늘릴 때마다 애니메이션 코드를 손대게 된다.
+ * 컨테이너 하나면 뷰는 "팔과 이것을 같이 옮겨라"만 알면 된다.
+ */
+function buildHandProp(
+  scene: Phaser.Scene,
+  art: ArtConfig,
+  accent: number,
+  outline: number,
+): Phaser.GameObjects.Container | null {
+  const kind = art.prop ?? 'none';
+  if (kind === 'none') return null;
+
+  const c = art.propColor ?? accent;
+  const dark = shade(c, -0.35);
+  const parts: Phaser.GameObjects.GameObject[] = [];
+
+  /** 자루 — 여러 무기가 공유한다 */
+  const shaft = (len: number, thick = 5) => {
+    const r = scene.add.rectangle(len / 2 - 4, 0, len, thick, dark);
+    r.setStrokeStyle(1.5, outline, 0.5);
+    return r;
+  };
+
+  switch (kind) {
+    case 'hammer':
+      parts.push(shaft(26), (() => {
+        const head = scene.add.rectangle(26, -2, 20, 22, c);
+        head.setStrokeStyle(2, outline, 0.55);
+        return head;
+      })());
+      break;
+
+    case 'stick': {
+      const rod = scene.add.rectangle(14, 4, 42, 4.5, dark);
+      rod.setStrokeStyle(1.5, outline, 0.5);
+      rod.setRotation(-0.35);
+      const tip = scene.add.circle(31, -1, 5, c);
+      tip.setStrokeStyle(1.5, outline, 0.5);
+      parts.push(rod, tip);
+      break;
+    }
+
+    case 'board': {
+      const plate = scene.add.rectangle(16, -2, 30, 20, c);
+      plate.setStrokeStyle(2, outline, 0.55);
+      // 판 위의 무늬 — 이것이 있어야 그냥 사각형으로 안 보인다
+      parts.push(plate);
+      [-6, 0, 6].forEach((dy) => {
+        parts.push(scene.add.rectangle(16, dy, 22, 2, shade(c, 0.45)));
+      });
+      break;
+    }
+
+    case 'pickaxe': {
+      parts.push(shaft(24));
+      const blade = scene.add.triangle(26, -6, 0, 12, 14, -6, 22, 14, c);
+      blade.setStrokeStyle(2, outline, 0.55);
+      parts.push(blade);
+      break;
+    }
+
+    case 'box': {
+      const cube = scene.add.rectangle(18, -2, 26, 24, c);
+      cube.setStrokeStyle(2.5, outline, 0.55);
+      // 테이프 자국 — 상자로 읽히게 하는 최소 단서
+      parts.push(cube, scene.add.rectangle(18, -2, 26, 3, shade(c, -0.3)));
+      break;
+    }
+
+    case 'orb': {
+      const ball = scene.add.circle(18, -4, 11, c);
+      ball.setStrokeStyle(2, outline, 0.5);
+      const glint = scene.add.circle(14, -8, 3.5, 0xffffff, 0.7);
+      parts.push(ball, glint);
+      break;
+    }
+
+    case 'blade': {
+      const edge = scene.add.triangle(10, 0, 0, 6, 46, -4, 0, -6, c);
+      edge.setStrokeStyle(2, outline, 0.55);
+      parts.push(scene.add.rectangle(6, 0, 12, 5, dark), edge);
+      break;
+    }
+
+    case 'phone': {
+      const body = scene.add.rectangle(15, -3, 13, 22, dark);
+      body.setStrokeStyle(2, outline, 0.55);
+      parts.push(body, scene.add.rectangle(15, -3, 9, 17, c));
+      break;
+    }
+
+    case 'doc': {
+      // 서류는 살짝 어긋나게 겹쳐야 뭉치로 보인다
+      [-2, 1, 4].forEach((dx, i) => {
+        const sheet = scene.add.rectangle(15 + dx, -2 - i, 20, 24, i === 2 ? c : shade(c, 0.3));
+        sheet.setStrokeStyle(1.5, outline, 0.45);
+        parts.push(sheet);
+      });
+      break;
+    }
+
+    case 'gun': {
+      const barrel = scene.add.rectangle(20, -4, 24, 7, c);
+      barrel.setStrokeStyle(2, outline, 0.55);
+      parts.push(barrel, scene.add.rectangle(11, 3, 7, 12, dark));
+      break;
+    }
+
+    case 'claw': {
+      [-8, 0, 8].forEach((dy) => {
+        const nail = scene.add.triangle(14, dy, 0, 3, 18, 0, 0, -3, c);
+        nail.setStrokeStyle(1.5, outline, 0.5);
+        parts.push(nail);
+      });
+      break;
+    }
+
+    default:
+      return null;
+  }
+
+  return scene.add.container(ARM_X, ARM_Y, parts);
 }
 
 /**
@@ -465,9 +609,18 @@ export function buildCardArt(
 
   if (!sheet || !pose) {
     const art = buildFighterArt(scene, cfg);
-    // 도형 아트는 전투 기준 크기라, 카드 높이에 맞춰 키운다
-    const scale = height / FIGHTER.BODY_H;
-    return scene.add.container(0, 0, art.parts).setScale(scale);
+    /*
+     * 도형 아트는 전투 기준 크기라 카드 높이에 맞춰 키운다.
+     *
+     * 손에 무기를 든 캐릭터는 실루엣이 옆으로 넓어져, 세로만 맞추면
+     * 무기가 카드 밖으로 삐져나와 옆 칸을 침범한다. 그만큼 줄인다 —
+     * 무기가 잘린 캐릭터보다 조금 작은 캐릭터가 낫다.
+     */
+    const wide = (cfg.art.prop ?? 'none') !== 'none';
+    const scale = (height / FIGHTER.BODY_H) * (wide ? 0.86 : 1);
+    // 무기 쪽으로 치우친 무게중심을 되돌려 카드 가운데에 앉힌다
+    const shift = wide ? -14 * scale : 0;
+    return scene.add.container(shift, 0, art.parts).setScale(scale);
   }
 
   const frame = Array.isArray(pose.frames) ? pose.frames[0]! : pose.frames;

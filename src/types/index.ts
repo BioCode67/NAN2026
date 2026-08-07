@@ -407,6 +407,42 @@ export type Headgear =
   /** 챙 모자 */
   | 'cap';
 
+/**
+ * 앞손에 든 것.
+ *
+ * ── 왜 필요한가 ────────────────────────────────────────────────────
+ * 머리 위(headgear)를 더해 카드에서는 구분이 됐는데, 전투 화면에서는 여전히
+ * 비슷했다. 싸우는 동안 눈이 따라가는 것은 머리가 아니라 **움직이는 팔**이고,
+ * 그 손이 전부 비어 있으면 스무 명이 같은 동작을 한다.
+ *
+ * 무기는 공격할 때 팔과 함께 뻗으므로, 상단기·하단기·광역기의 궤적 차이까지
+ * 같이 드러난다 — 한 조각으로 "누구인가"와 "무엇을 하는가"가 동시에 읽힌다.
+ */
+export type HandProp =
+  | 'none'
+  /** 해머 — 자루 끝에 육중한 머리 */
+  | 'hammer'
+  /** 지팡이·골프채 — 긴 막대 */
+  | 'stick'
+  /** 판때기 — 그래픽카드·차트판 */
+  | 'board'
+  /** 곡괭이 */
+  | 'pickaxe'
+  /** 상자 */
+  | 'box'
+  /** 구슬 — 수정 구슬·에너지구 */
+  | 'orb'
+  /** 칼날 — 광선검·대검 */
+  | 'blade'
+  /** 휴대폰 */
+  | 'phone'
+  /** 서류 뭉치 */
+  | 'doc'
+  /** 총 */
+  | 'gun'
+  /** 발톱 — 세 갈래 */
+  | 'claw';
+
 export interface ArtConfig {
   /** 머리 모양 */
   hair: 'side-part' | 'short' | 'swept' | 'messy' | 'none';
@@ -415,6 +451,10 @@ export interface ArtConfig {
   headgear?: Headgear;
   /** headgear 색. 적지 않으면 포인트 색(colors.accent)을 쓴다 */
   headgearColor?: number;
+  /** 앞손에 든 것. 적지 않으면 빈손이다 */
+  prop?: HandProp;
+  /** prop 색. 적지 않으면 포인트 색(colors.accent)을 쓴다 */
+  propColor?: number;
   /** 안경 */
   glasses: 'round' | 'rect' | 'none';
   glassesColor: number;

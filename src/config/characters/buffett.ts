@@ -16,6 +16,8 @@ export const buffett: CharacterConfig = {
     hairColor: 0xe5e7eb,
     glasses: 'rect',
     glassesColor: 0x1f2937,
+    prop: 'stick',
+    propColor: 0xd4a017,
     beard: false,
     beardColor: 0x000000,
     mouth: 'smile',

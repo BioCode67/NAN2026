@@ -15,6 +15,8 @@ export const jensen: CharacterConfig = {
     hairColor: 0x111827,
     glasses: 'rect',
     glassesColor: 0x0f172a,
+    prop: 'board',
+    propColor: 0x76b900,
     beard: false,
     beardColor: 0x000000,
     mouth: 'smirk',

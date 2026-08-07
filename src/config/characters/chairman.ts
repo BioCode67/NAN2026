@@ -17,6 +17,8 @@ export const chairman: CharacterConfig = {
     headgearColor: 0xd4af37,
     glasses: 'rect',
     glassesColor: 0xd4af37,
+    prop: 'stick',
+    propColor: 0xd4af37,
     beard: false,
     beardColor: 0x000000,
     mouth: 'flat',

@@ -15,6 +15,8 @@ export const son: CharacterConfig = {
     hairColor: 0x000000,
     glasses: 'rect',
     glassesColor: 0x111827,
+    prop: 'box',
+    propColor: 0xf59e0b,
     beard: false,
     beardColor: 0x000000,
     mouth: 'smile',

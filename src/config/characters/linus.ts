@@ -15,6 +15,8 @@ export const linus: CharacterConfig = {
     hairColor: 0x7c6244,
     glasses: 'rect',
     glassesColor: 0x1f2937,
+    prop: 'blade',
+    propColor: 0x4ade80,
     beard: true,
     beardColor: 0x8a7050,
     mouth: 'flat',

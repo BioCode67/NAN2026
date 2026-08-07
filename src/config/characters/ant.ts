@@ -18,6 +18,8 @@ export const ant: CharacterConfig = {
     headgearColor: 0xfacc15,
     glasses: 'round',
     glassesColor: 0x374151,
+    prop: 'phone',
+    propColor: 0xef4444,
     beard: false,
     beardColor: 0x000000,
     mouth: 'wide',

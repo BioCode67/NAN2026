@@ -15,6 +15,8 @@ export const zuck: CharacterConfig = {
     hairColor: 0x8b5a3c,
     glasses: 'none',
     glassesColor: 0x000000,
+    prop: 'board',
+    propColor: 0x1877f2,
     beard: false,
     beardColor: 0x000000,
     // 각도가 늘 똑같은 웃음 — 표정 근육이 하나뿐인 것처럼

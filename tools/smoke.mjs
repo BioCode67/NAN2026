@@ -692,6 +692,14 @@ await shot('orb-moon');
  * 걸리는지는 다른 문제다 — 둘째는 배너가 겹치지 않도록 늦춰 걸리므로,
  * 그 지연 경로가 끊어져도 단위 검사는 통과한다.
  */
+/*
+ * 오브를 깨기 전에 플레이어가 살아 있는지 확인한다.
+ *
+ * runPrompt 는 전투가 끝났으면 입력창을 아예 열지 않는다. 앞 단계에서
+ * 셋에게 둘러싸여 상장폐지됐으면 여기서 "입력창이 안 뜬다"로 멈추는데,
+ * 그건 기믹이 고장난 게 아니라 죽어서다.
+ */
+await waitGrounded();
 await page.evaluate(() => {
   const s = window.game.scene.getScene('Battle');
   s.orbs.onBreak(s.player);

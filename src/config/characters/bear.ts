@@ -17,6 +17,8 @@ export const bear: CharacterConfig = {
     headgearColor: 0x6b5344,
     glasses: 'rect',
     glassesColor: 0x0f172a,
+    prop: 'claw',
+    propColor: 0x8b6b52,
     beard: true,
     beardColor: 0x2b211a,
     mouth: 'flat',

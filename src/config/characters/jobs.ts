@@ -15,6 +15,8 @@ export const jobs: CharacterConfig = {
     hairColor: 0x6b7280,
     glasses: 'round',
     glassesColor: 0x111827,
+    prop: 'blade',
+    propColor: 0xffffff,
     beard: true,
     beardColor: 0x9ca3af,
     mouth: 'smirk',

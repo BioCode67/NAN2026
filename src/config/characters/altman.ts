@@ -15,6 +15,8 @@ export const altman: CharacterConfig = {
     hairColor: 0x6b4a2f,
     glasses: 'none',
     glassesColor: 0x000000,
+    prop: 'orb',
+    propColor: 0x10a37f,
     beard: false,
     beardColor: 0x000000,
     mouth: 'smirk',

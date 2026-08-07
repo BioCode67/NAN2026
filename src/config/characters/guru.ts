@@ -17,6 +17,8 @@ export const guru: CharacterConfig = {
     headgearColor: 0x111827,
     glasses: 'round',
     glassesColor: 0xfacc15,
+    prop: 'orb',
+    propColor: 0xfacc15,
     beard: true,
     beardColor: 0x9ca3af,
     mouth: 'smirk',

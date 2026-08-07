@@ -421,10 +421,22 @@ class ShapeView implements FighterView {
         break;
     }
 
-    this.scene.tweens.killTweensOf(arm);
+    /*
+     * 손에 든 것도 함께 보낸다.
+     *
+     * 무기 컨테이너는 팔과 같은 자리에서 시작하므로 목표 좌표도 같다.
+     * 팔만 뻗으면 무기가 제자리에 남아 손에서 빠진 것처럼 보인다.
+     */
+    const targets: Phaser.GameObjects.GameObject[] = [arm];
+    const prop = this.art.handProp;
+    if (prop) targets.push(prop);
+
+    this.scene.tweens.killTweensOf(targets);
     arm.setPosition(ARM_X, this.armHomeY);
+    prop?.setPosition(ARM_X, this.armHomeY);
+
     this.scene.tweens.add({
-      targets: arm,
+      targets,
       x: ARM_X + dx,
       y: this.armHomeY + dy,
       duration: Math.max(60, durationMs * 0.5),

@@ -399,17 +399,27 @@ export function applyLayout(def: SpriteSheetDef, frameCount: number): string {
  * 그림 자체로는 알 수 없는 것 — 표시 높이, 재생 속도, 바라보는 방향뿐이다.
  * 등록하지 않은 캐릭터는 코드로 그린 도형 아트(CharacterArt)로 자동 대체된다.
  */
+/**
+ * 캐릭터 표시 높이(px).
+ *
+ * 116으로 시작했는데, 배경이 실제 그림으로 바뀌자 화면 대비 너무 작아졌다.
+ * 웅장한 거래소 안에서 손가락만 한 사람들이 싸우는 꼴이라, 공격 동작이
+ * 아무리 달라도 눈에 안 들어온다. 발판 간격과 점프 높이는 그대로 두고
+ * 보이는 크기만 키운다 — 물리 바디는 FIGHTER.BODY_H 가 따로 잡고 있다.
+ */
+const SD_HEIGHT = 152;
+
 export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
   gates: {
     key: 'billgates',
-    displayHeight: 116,
+    displayHeight: SD_HEIGHT,
     frameRate: 9,
     poses: LAYOUT_V1,
   },
 
   pepe: {
     key: 'pennywise',
-    displayHeight: 116,
+    displayHeight: SD_HEIGHT,
     frameRate: 10,
     poses: LAYOUT_V1,
     // 옛 시트의 8번은 캐릭터 없이 도끼 에너지만 있는 프레임이다
@@ -418,7 +428,7 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
 
   musk: {
     key: 'elonmusk',
-    displayHeight: 116,
+    displayHeight: SD_HEIGHT,
     frameRate: 10,
     poses: LAYOUT_V1,
     // 옛 시트의 8번은 폭발 단독 → 로켓 드롭 착지 충격파로 쓴다
@@ -427,7 +437,7 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
 
   jobs: {
     key: 'stevejobs',
-    displayHeight: 116,
+    displayHeight: SD_HEIGHT,
     frameRate: 9,
     poses: LAYOUT_V1,
     // 옛 시트는 SKILL_L2 에도 캐릭터가 있어 2프레임으로 이어 재생한다
@@ -436,7 +446,7 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
 
   linus: {
     key: 'linustorvalds',
-    displayHeight: 116,
+    displayHeight: SD_HEIGHT,
     frameRate: 9,
     poses: LAYOUT_V1,
     // 8 = 캐릭터 없이 커널 패닉 에너지만 있는 프레임 → 투사체로 쓴다

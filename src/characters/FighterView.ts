@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { FIGHTER, IMPACT } from '../config/gameConfig';
+import { DEPTH, FIGHTER, IMPACT } from '../config/gameConfig';
 import { SPRITE_SHEETS, animKey, metaKey, resolvePose } from '../config/spriteSheets';
 import type { Pose, SheetMeta, SpriteSheetDef } from '../config/spriteSheets';
 import { ARM_X, buildFighterArt } from './CharacterArt';
@@ -36,12 +36,114 @@ export interface FighterView {
 /* 스프라이트 시트 기반                                                */
 /* ================================================================== */
 
+/**
+ * 기술 하나가 몸으로 그리는 궤적.
+ *
+ * ── 왜 필요한가 ────────────────────────────────────────────────────
+ * 15프레임 시트에는 공격 그림이 두 장(약·강)뿐이다. 커맨드는 열넷인데
+ * 그림은 둘이라, 상단기도 하단기도 돌진기도 **같은 그림 한 장**이 뜬다.
+ * 기술 이름과 피해량만 다르고 보이는 것은 같으니 "계속 같은 동작만 한다"가
+ * 된다. 실제로 그렇다.
+ *
+ * 그래서 그림 대신 **몸의 움직임**으로 가른다. 위로 치는 기술은 몸이 솟구쳐
+ * 뒤로 젖혀지고, 내려찍는 기술은 낮게 깔리고, 돌진기는 크게 기울며 잔상을
+ * 남긴다. 같은 그림 한 장이어도 전혀 다른 동작으로 읽힌다.
+ *
+ * 42프레임 시트가 들어오면 이 움직임이 그 그림 위에 그대로 얹혀 더 살아난다.
+ * 버리는 작업이 아니다.
+ */
+interface Motion {
+  /** 앞으로(양수) 나가는 거리 — 컨테이너가 방향에 따라 뒤집어 준다 */
+  dx: number;
+  /** 위(음수) / 아래(양수) */
+  dy: number;
+  /** 기울기(도). 양수면 앞으로 숙인다 */
+  angle: number;
+  /** 가로/세로 늘이기 */
+  sx: number;
+  sy: number;
+  /** 한 바퀴 돈다 (회전 기술) */
+  spin?: boolean;
+  /** 남길 잔상 수 */
+  ghosts: number;
+}
+
+const NO_MOTION: Motion = { dx: 0, dy: 0, angle: 0, sx: 1, sy: 1, ghosts: 0 };
+
+/**
+ * 기술의 성격에서 궤적을 정한다.
+ *
+ * 캐릭터마다 표를 따로 두지 않는다. 판정이 어디에 서는지(hitAnchor)와
+ * 어떤 이펙트를 쓰는지(fx)는 이미 기술마다 정해져 있으므로, 거기서 끌어내면
+ * 캐릭터를 추가해도 저절로 따라온다.
+ */
+function motionFor(atk: AttackConfig): Motion {
+  const anchor = atk.hitAnchor ?? 'front';
+  const heavy = atk.type !== 'light';
+
+  /* 도는 기술 — 한 바퀴 */
+  if (atk.fx === 'spin' || anchor === 'around') {
+    return { dx: 0, dy: -4, angle: 0, sx: 1.08, sy: 1.02, spin: true, ghosts: 4 };
+  }
+
+  /* 위로 쳐올리는 기술 — 몸이 솟구치며 뒤로 젖혀진다 */
+  if (atk.fx === 'rising' || anchor === 'up') {
+    return { dx: 2, dy: -24, angle: -24, sx: 0.94, sy: 1.14, ghosts: 3 };
+  }
+
+  /* 내려찍는 기술 — 낮게 깔리거나 앞으로 처박는다 */
+  if (atk.fx === 'slam' || anchor === 'down') {
+    // 공중 급강하는 앞으로 곤두박질친다. 지상 하단기는 몸을 낮춘다
+    const dive = atk.slot === 'airDive';
+    return dive
+      ? { dx: 10, dy: 16, angle: 42, sx: 1.06, sy: 1.06, ghosts: 5 }
+      : { dx: 8, dy: 12, angle: 10, sx: 1.14, sy: 0.8, ghosts: 2 };
+  }
+
+  /* 돌진기 — 몸을 크게 기울여 밀고 들어간다 */
+  if (atk.slot === 'dashAttack') {
+    return { dx: 28, dy: 2, angle: 20, sx: 1.16, sy: 0.94, ghosts: 5 };
+  }
+
+  /* 스킬 — 크게 젖혔다 내지른다 */
+  if (atk.type === 'skill') {
+    return { dx: 12, dy: -10, angle: -8, sx: 1.12, sy: 1.08, ghosts: 4 };
+  }
+
+  /* 찌르기 — 앞으로 쭉 늘어난다 */
+  if (atk.fx === 'thrust') {
+    return { dx: 22, dy: 0, angle: 6, sx: 1.18, sy: 0.96, ghosts: heavy ? 3 : 1 };
+  }
+
+  /*
+   * 연속기는 타마다 각도를 바꾼다.
+   * 1타 · 2타 · 3타가 같은 각도로 나가면 세 번 친 것이 아니라
+   * 한 번을 세 번 되감은 것으로 보인다.
+   */
+  switch (atk.chainStep) {
+    case 2:
+      return { dx: 12, dy: -4, angle: -12, sx: 1.06, sy: 1.04, ghosts: 1 };
+    case 3:
+      return { dx: 20, dy: 2, angle: 18, sx: 1.14, sy: 0.98, ghosts: 3 };
+  }
+
+  return heavy
+    ? { dx: 16, dy: -2, angle: 14, sx: 1.1, sy: 1.02, ghosts: 2 }
+    : { dx: 9, dy: -2, angle: 7, sx: 1.04, sy: 1.02, ghosts: 0 };
+}
+
 class SpriteView implements FighterView {
   readonly parts: Phaser.GameObjects.GameObject[];
 
   private readonly sprite: Phaser.GameObjects.Sprite;
   private readonly def: SpriteSheetDef;
   private current: Pose | null = null;
+
+  /** 공격 전 자세 — 모션이 끝나면 여기로 돌아온다 */
+  private readonly homeX = 0;
+  private readonly homeY: number;
+  private readonly homeScaleX: number;
+  private readonly homeScaleY: number;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -60,6 +162,10 @@ class SpriteView implements FighterView {
 
     // 시트가 왼쪽을 보고 그려졌다면 기본 방향을 뒤집는다
     if (def.facesLeft) this.sprite.setFlipX(true);
+
+    this.homeY = this.sprite.y;
+    this.homeScaleX = this.sprite.scaleX;
+    this.homeScaleY = this.sprite.scaleY;
 
     this.parts = [this.sprite];
     this.setPose('idle');
@@ -89,8 +195,129 @@ class SpriteView implements FighterView {
     // 스프라이트는 Phaser 애니메이션이 알아서 갱신한다
   }
 
-  triggerAttack(): void {
-    // 공격 모션은 setPose가 담당한다
+  /**
+   * 기술을 몸으로 그린다.
+   *
+   * 뻗을 때는 빠르게(35%), 돌아올 때는 느리게(65%). 사람이 힘을 쓰는 순서가
+   * 그렇고, 그렇게 해야 "쳤다"가 읽힌다. 같은 시간을 반으로 나누면
+   * 왔다 갔다 하는 인형처럼 보인다.
+   */
+  triggerAttack(atk: AttackConfig, durationMs: number): void {
+    const m = motionFor(atk);
+    if (m === NO_MOTION) return;
+
+    const total = Math.max(180, durationMs);
+    const out = total * 0.35;
+    const back = total * 0.65;
+
+    const s = this.sprite;
+    this.scene.tweens.killTweensOf(s);
+    this.resetMotion();
+
+    if (m.ghosts > 0) this.spawnGhosts(m.ghosts, out);
+
+    if (m.spin) {
+      // 회전은 되돌아올 것이 없다 — 한 바퀴 돌고 0도에서 끝난다
+      s.angle = 0;
+      this.scene.tweens.add({
+        targets: s,
+        angle: 360,
+        duration: total,
+        ease: 'Cubic.easeOut',
+        onComplete: () => this.resetMotion(),
+      });
+    } else {
+      this.scene.tweens.add({
+        targets: s,
+        x: this.homeX + m.dx,
+        y: this.homeY + m.dy,
+        angle: m.angle,
+        duration: out,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          if (!s.active) return;
+          this.scene.tweens.add({
+            targets: s,
+            x: this.homeX,
+            y: this.homeY,
+            angle: 0,
+            duration: back,
+            ease: 'Back.easeOut',
+          });
+        },
+      });
+    }
+
+    /* 늘어났다 돌아오는 것은 따로 — 각도와 리듬이 달라야 몸이 살아난다 */
+    this.scene.tweens.add({
+      targets: s,
+      scaleX: this.homeScaleX * m.sx,
+      scaleY: this.homeScaleY * m.sy,
+      duration: out,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /** 공격 전 자세로 되돌린다 */
+  private resetMotion(): void {
+    const s = this.sprite;
+    if (!s.active) return;
+    s.setPosition(this.homeX, this.homeY);
+    s.setAngle(0);
+    s.setScale(this.homeScaleX, this.homeScaleY);
+  }
+
+  /**
+   * 잔상 — 지나간 자리에 흐릿한 자기 모습을 남긴다.
+   *
+   * 빠른 동작은 프레임 사이에서 사라진다. 60프레임에서 12프레임짜리 돌진은
+   * 눈에 "한 번 번쩍"으로만 남는다. 지나온 자리를 잠깐 남겨 두면
+   * 어디서 어디로 갔는지가 보이고, 그게 곧 속도감이 된다.
+   *
+   * 시트 그림을 그대로 복제하므로 어떤 캐릭터에도 통한다.
+   */
+  private spawnGhosts(count: number, spanMs: number): void {
+    const gap = spanMs / count;
+
+    for (let i = 0; i < count; i++) {
+      this.scene.time.delayedCall(gap * i, () => {
+        const src = this.sprite;
+        if (!src.active) return;
+
+        // 컨테이너 안에 있으므로 화면 기준 위치·크기를 직접 뽑아 온다
+        const mat = src.getWorldTransformMatrix();
+        const d = mat.decomposeMatrix() as {
+          translateX: number;
+          translateY: number;
+          scaleX: number;
+          scaleY: number;
+          rotation: number;
+        };
+
+        const ghost = this.scene.add
+          .image(d.translateX, d.translateY, src.texture.key, src.frame.name)
+          .setOrigin(src.originX, src.originY)
+          .setScale(d.scaleX, d.scaleY)
+          .setRotation(d.rotation)
+          .setFlipX(src.flipX)
+          .setDepth(DEPTH.FIGHTER - 1)
+          .setAlpha(0.38)
+          /*
+           * 가산 합성(ADD)은 쓰지 않는다. 밝은 캐릭터가 하얗게 날아가
+           * 잔상이 아니라 유령 덩어리로 보인다 — 실제로 그렇게 나왔다.
+           * 색만 푸르게 눌러 두면 형태가 남아 궤적으로 읽힌다.
+           */
+          .setTint(0x7aa2e8);
+
+        this.scene.tweens.add({
+          targets: ghost,
+          alpha: 0,
+          duration: 190,
+          onComplete: () => ghost.destroy(),
+        });
+      });
+    }
   }
 
   flash(): void {
@@ -101,11 +328,14 @@ class SpriteView implements FighterView {
   }
 
   setDefeated(): void {
+    this.scene.tweens.killTweensOf(this.sprite);
+    this.resetMotion();
     this.sprite.anims.stop();
     this.sprite.setTint(0x6b7280);
   }
 
   destroy(): void {
+    this.scene.tweens.killTweensOf(this.sprite);
     this.sprite.destroy();
   }
 }

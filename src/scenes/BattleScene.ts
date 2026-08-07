@@ -63,6 +63,8 @@ export class BattleScene extends Phaser.Scene {
 
   private ground!: Phaser.GameObjects.Rectangle;
   private platforms: Phaser.GameObjects.Rectangle[] = [];
+  /** 발판의 겉모습 — 판정 사각형과 함께 켜고 끈다 */
+  private platformSkins: Phaser.GameObjects.GameObject[] = [];
   /** 생성한 스테이지 그림 레이어 (없으면 보이지 않는다) */
   private bgArt?: Phaser.GameObjects.Image;
   /** 배경 위에 까는 어둠 막 — 밝은 그림 위에서도 캐릭터가 읽히게 한다 */
@@ -89,6 +91,8 @@ export class BattleScene extends Phaser.Scene {
   private muteLabel!: Phaser.GameObjects.Text;
   /** 연속기 안내 — 지금 이어 칠 수 있는 다음 타를 알려준다 */
   private chainHint!: Phaser.GameObjects.Text;
+  /** 방금 낸 기술 이름 */
+  private moveName!: Phaser.GameObjects.Text;
   /** 진행 중인 프롬프트 기믹 표시 */
   private gimmickHud!: Phaser.GameObjects.Text;
   /**
@@ -124,6 +128,7 @@ export class BattleScene extends Phaser.Scene {
     this.ais = [];
     this.huds = [];
     this.platforms = [];
+    this.platformSkins = [];
     this.stageArtStack = [];
     this.announceLabel = undefined;
     this.disposers = [];
@@ -330,29 +335,70 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({ targets: this.bgArt, alpha: 1, duration: 260 });
   }
 
+  /**
+   * 발판 무늬를 한 번 구워 둔다.
+   *
+   * 밋밋한 파란 막대는 배경이 도형이던 시절의 것이다. 실제 그림 배경이
+   * 들어오자 "게임 오브젝트만 따로 논다"가 눈에 띈다. 거래소답게 전광판
+   * 눈금을 새겨 넣으면 같은 세계의 물건으로 읽힌다.
+   */
+  private stageTexture(key: string, w: number, h: number, tick: number): string {
+    if (this.textures.exists(key)) return key;
+
+    const g = this.make.graphics({ x: 0, y: 0 }, false);
+
+    // 몸통 — 위가 밝고 아래로 갈수록 어두운 금속
+    const bands = [0x46598f, 0x3a4c80, 0x2e3d6b, 0x25325a];
+    bands.forEach((c, i) => {
+      g.fillStyle(c, 1);
+      g.fillRect(0, (h / bands.length) * i, w, h / bands.length + 1);
+    });
+
+    // 전광판 눈금 — 촘촘한 세로선
+    g.fillStyle(0x93c5fd, 0.22);
+    for (let x = 6; x < w; x += tick) g.fillRect(x, h * 0.45, 2, h * 0.4);
+
+    // 착지선 — 여기가 밟히는 자리다
+    g.fillStyle(0xbfdbfe, 1);
+    g.fillRect(0, 0, w, 3);
+    g.fillStyle(0x60a5fa, 0.85);
+    g.fillRect(0, 3, w, 2);
+
+    // 아래 그림자
+    g.fillStyle(0x141d38, 1);
+    g.fillRect(0, h - 3, w, 3);
+
+    g.generateTexture(key, w, h);
+    g.destroy();
+    return key;
+  }
+
   private buildStage(): void {
     const width = STAGE.RIGHT - STAGE.LEFT;
     const cx = (STAGE.LEFT + STAGE.RIGHT) / 2;
 
-    // 배경 밴드(0x1b2748)와 확실히 구분되는 밝기라야 발판이 눈에 들어온다
+    /* 판정용 사각형은 그대로 두고 보이는 것만 무늬로 덮는다 */
     this.ground = this.add
       .rectangle(cx, STAGE.GROUND_Y + STAGE.GROUND_H / 2, width, STAGE.GROUND_H, 0x3a4c80)
-      .setDepth(DEPTH.STAGE);
+      .setDepth(DEPTH.STAGE)
+      .setVisible(false);
     this.physics.add.existing(this.ground, true);
 
-    // 상단 하이라이트 — 착지 지점을 명확히 보여준다
     this.add
-      .rectangle(cx, STAGE.GROUND_Y + 3, width, 6, 0x93c5fd)
-      .setDepth(DEPTH.STAGE + 1);
+      .image(cx, STAGE.GROUND_Y, this.stageTexture('stage-ground', 64, STAGE.GROUND_H, 9))
+      .setOrigin(0.5, 0)
+      .setDisplaySize(width, STAGE.GROUND_H)
+      .setDepth(DEPTH.STAGE);
 
-    // 하단 그림자 라인 — 두께감
+    /* 착지선 위로 새어 나오는 빛 — 바닥이 발광하는 물건처럼 보이게 한다 */
     this.add
-      .rectangle(cx, STAGE.GROUND_Y + STAGE.GROUND_H - 3, width, 6, 0x1b2444)
-      .setDepth(DEPTH.STAGE + 1);
+      .rectangle(cx, STAGE.GROUND_Y - 3, width, 10, 0x60a5fa, 0.28)
+      .setDepth(DEPTH.STAGE + 1)
+      .setBlendMode(Phaser.BlendModes.ADD);
 
     // 아래로 뻗은 지지대
     this.add
-      .rectangle(cx, STAGE.GROUND_Y + STAGE.GROUND_H + 60, width - 120, 120, 0x202c52)
+      .rectangle(cx, STAGE.GROUND_Y + STAGE.GROUND_H + 60, width - 120, 120, 0x1c2749)
       .setDepth(DEPTH.STAGE - 1);
 
     // 장외 경고선
@@ -372,10 +418,18 @@ export class BattleScene extends Phaser.Scene {
    * (막혀 있으면 점프로 올라갈 수 없어 발판이 벽이 되어버린다)
    */
   private buildPlatforms(): void {
+    const tex = this.stageTexture('stage-plat', 48, STAGE.PLATFORM_H, 7);
+
     for (const p of STAGE.PLATFORMS) {
+      /*
+       * 판정은 사각형이 맡고 겉모습은 무늬 이미지가 맡는다.
+       * 발판 붕괴 기믹이 이 사각형의 visible을 끄므로, 무늬도 같이 붙여 두고
+       * 함께 사라지게 컨테이너로 묶는다.
+       */
       const plat = this.add
         .rectangle(p.x, p.y, p.w, STAGE.PLATFORM_H, 0x3a4c80)
-        .setDepth(DEPTH.STAGE);
+        .setDepth(DEPTH.STAGE)
+        .setVisible(false);
       this.physics.add.existing(plat, true);
 
       const body = plat.body as Phaser.Physics.Arcade.StaticBody;
@@ -383,10 +437,24 @@ export class BattleScene extends Phaser.Scene {
       body.checkCollision.left = false;
       body.checkCollision.right = false;
 
-      this.add
-        .rectangle(p.x, p.y - STAGE.PLATFORM_H / 2 + 2, p.w, 4, 0x93c5fd)
-        .setDepth(DEPTH.STAGE + 1);
+      const skin = this.add
+        .image(p.x, p.y - STAGE.PLATFORM_H / 2, tex)
+        .setOrigin(0.5, 0)
+        .setDisplaySize(p.w, STAGE.PLATFORM_H)
+        .setDepth(DEPTH.STAGE);
 
+      const glow = this.add
+        .rectangle(p.x, p.y - STAGE.PLATFORM_H / 2 - 2, p.w, 8, 0x60a5fa, 0.25)
+        .setDepth(DEPTH.STAGE + 1)
+        .setBlendMode(Phaser.BlendModes.ADD);
+
+      /*
+       * 무늬를 판정 사각형에 매달아 둔다.
+       * 발판 붕괴 기믹이 발판을 지울 때, 겉모습만 남아 떠 있으면
+       * "있는데 안 밟히는 발판"이 되어 조작이 고장난 것처럼 보인다.
+       */
+      plat.setData('skins', [skin, glow]);
+      this.platformSkins.push(skin, glow);
       this.platforms.push(plat);
     }
   }
@@ -1057,6 +1125,27 @@ export class BattleScene extends Phaser.Scene {
     this.chainHint.setStroke('#0b1020', 5);
 
     /*
+     * 방금 낸 기술 이름.
+     *
+     * 커맨드가 열넷인데 화면에 이름이 안 뜨니, 플레이어는 자기가 무엇을
+     * 냈는지 모르고 버튼만 누른다. "W+K를 눌렀더니 Ctrl+Alt+Del이 나갔다"가
+     * 보여야 기술이 많다는 사실이 전달된다.
+     * 연속기 안내 바로 위에 둬서 시선이 한 군데 머물게 한다.
+     */
+    this.moveName = ui(
+      this.add
+        .text(GAME.WIDTH / 2, HUD_Y - 62, '', {
+          fontFamily: GAME.FONT,
+          fontSize: '20px',
+          color: '#ffffff',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5)
+        .setAlpha(0),
+    );
+    this.moveName.setStroke('#0b1020', 6);
+
+    /*
      * 진행 중인 기믹 배너.
      * 중력이나 룰이 바뀐 채로 안내가 없으면 플레이어는 조작이 고장난 줄 안다.
      * 남은 시간까지 같이 보여준다.
@@ -1201,6 +1290,7 @@ export class BattleScene extends Phaser.Scene {
 
 
   private updateHud(): void {
+    this.updateMoveName();
     this.updateChainHint();
     this.updateGimmickHud();
 
@@ -1232,6 +1322,36 @@ export class BattleScene extends Phaser.Scene {
       hud.percent.setAlpha(hud.fighter.alive ? 1 : 0.4);
       hud.bar.setAlpha(hud.fighter.alive ? 1 : 0.4);
     }
+  }
+
+  /**
+   * 방금 낸 기술 이름을 띄운다.
+   *
+   * 같은 기술을 이어 내면 다시 튀지 않게 두고, 기술이 바뀔 때만 튕겨 올린다.
+   * 매번 튀면 연타할 때 글자가 요동쳐 오히려 안 읽힌다.
+   */
+  private updateMoveName(): void {
+    const name = this.player.alive ? this.player.getRecentMoveName() : null;
+
+    if (!name) {
+      if (this.moveName.alpha > 0 && !this.tweens.isTweening(this.moveName)) {
+        this.tweens.add({ targets: this.moveName, alpha: 0, duration: 200 });
+      }
+      return;
+    }
+
+    if (this.moveName.text !== name) {
+      this.moveName.setText(name);
+      this.tweens.killTweensOf(this.moveName);
+      this.moveName.setScale(1.3);
+      this.tweens.add({
+        targets: this.moveName,
+        scale: 1,
+        duration: 170,
+        ease: 'Back.easeOut',
+      });
+    }
+    this.moveName.setAlpha(1);
   }
 
   /** 플레이어가 지금 이어 칠 수 있는 다음 타를 하단에 띄운다 */

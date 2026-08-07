@@ -98,6 +98,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 스쿼시 계수. facing 반전과 충돌하지 않도록 별도 보관한다. */
   private readonly squash = { x: 1, y: 1 };
+  /** 방금 낸 기술 이름 — HUD가 읽어 간다 */
+  private lastMove = '';
+  private lastMoveAt = -99999;
   /**
    * 몸 크기 배율 (거대화 룰).
    *
@@ -438,6 +441,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /* 캐릭터 고유 메커니즘                                             */
   /* ================================================================ */
 
+  /**
+   * 최근 windowMs 안에 낸 기술 이름 (없으면 null).
+   * HUD가 매 프레임 물어보므로 여기서 시간까지 판단해 준다.
+   */
+  getRecentMoveName(windowMs = 900): string | null {
+    return this.scene.time.now - this.lastMoveAt <= windowMs ? this.lastMove : null;
+  }
+
   /** HUD가 읽어가는 현재 자원량 */
   getSignatureStacks(): number {
     return this.sigStacks;
@@ -701,6 +712,16 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.attackTimer = atk.startup;
     this.hitTargets.clear();
     this.body.setAccelerationX(0);
+
+    /*
+     * 방금 낸 기술을 적어 둔다.
+     *
+     * 커맨드가 열넷인데 화면에는 이름이 안 나오니, 플레이어는 자기가 무엇을
+     * 냈는지 모른 채 버튼만 누르게 된다. 눌러서 뭐가 나왔는지 보여야
+     * "이 캐릭터엔 기술이 많다"가 전달된다.
+     */
+    this.lastMove = atk.name;
+    this.lastMoveAt = this.scene.time.now;
 
     // 새 모션이 시작되면 이전 타의 여운은 무효가 된다
     // (선입력은 호출부가 남은 개수를 되돌려 놓는다)
@@ -1345,7 +1366,12 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */
   private spawnSwing(atk: AttackConfig): void {
     sound.play('whiff');
-    this.view.triggerAttack(atk, atk.active);
+    /*
+     * 모션 길이는 판정 시간이 아니라 **눈에 보이는 꼬리**로 준다.
+     * 판정은 60~120ms 남짓이라 그 길이로 움직이면 깜빡하고 끝난다.
+     * 후딜까지가 한 동작으로 읽히는 구간이다.
+     */
+    this.view.triggerAttack(atk, atk.active + atk.recovery);
 
     // 돌진기 — 판정이 켜지는 순간 앞으로 치고 나간다
     if (atk.lunge) this.body.setVelocityX(this.facing * atk.lunge);

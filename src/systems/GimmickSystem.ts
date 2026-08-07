@@ -287,8 +287,13 @@ export class GimmickSystem {
   private applyNarrow() {
     const plats = this.ctx.platforms();
 
+    /** 발판의 겉모습(무늬·발광) — 판정과 함께 켜고 꺼야 한다 */
+    const skinsOf = (p: Phaser.GameObjects.Rectangle) =>
+      (p.getData('skins') as Phaser.GameObjects.GameObject[] | undefined) ?? [];
+
     for (const p of plats) {
       p.setVisible(false);
+      skinsOf(p).forEach((o) => (o as Phaser.GameObjects.Image).setVisible(false));
       const body = p.body as Phaser.Physics.Arcade.StaticBody | null;
       if (body) body.enable = false;
 
@@ -310,7 +315,12 @@ export class GimmickSystem {
     return {
       cleanup: () => {
         for (const p of plats) {
-          p.setVisible(true);
+          /*
+           * 판정 사각형은 다시 보이게 하지 않는다.
+           * 이제 겉모습은 무늬 이미지가 맡고 사각형은 판정만 맡으므로,
+           * 되살리면 밋밋한 파란 막대가 무늬 위에 겹쳐 뜬다.
+           */
+          skinsOf(p).forEach((o) => (o as Phaser.GameObjects.Image).setVisible(true));
           const body = p.body as Phaser.Physics.Arcade.StaticBody | null;
           if (body) body.enable = true;
         }

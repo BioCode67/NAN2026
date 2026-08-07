@@ -343,6 +343,82 @@ export const LAYOUT_V3_FX = {
 } as const;
 
 /* ------------------------------------------------------------------ */
+/* 묶음 일부만 뽑은 시트                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * V3 42칸이 어떤 순서로 무엇을 담는가.
+ *
+ * ── 왜 이런 표가 따로 필요한가 ────────────────────────────────────
+ * 캐릭터 스무 명 × 7묶음 = 140장이다. 한 장 뽑는 데 마음에 들 때까지
+ * 몇 번씩 다시 돌리는 것을 생각하면, 전원 완성은 현실적인 목표가 아니다.
+ *
+ * 그런데 42칸 중에는 없어도 티가 덜 나는 것들이 있다. 도발·아이템·기절은
+ * 한 판에 몇 번 안 나오고, 포즈 대체 사슬(POSE_FALLBACK)이 비슷한 그림으로
+ * 메워 준다. 반대로 대기·달리기·연속기·초상은 늘 화면에 있다.
+ *
+ * 그래서 "1·3·7 묶음만 뽑은 18칸 시트"를 정식으로 받아들인다.
+ * 스무 명을 60장으로 그럴듯하게 채울 수 있다 — 도형 아트로 두는 것보다
+ * 비교가 안 되게 낫다. 나머지 묶음은 시간이 남을 때 채워 넣으면
+ * 게임 쪽은 손댈 것 없이 자동으로 늘어난다.
+ *
+ * 'fx:' 로 시작하는 칸은 포즈가 아니라 이펙트·초상으로 쓴다.
+ */
+const V3_CELLS: string[] = [
+  /* 1묶음 이동 */ 'idle', 'walk', 'run', 'run', 'run', 'dash',
+  /* 2묶음 공중 */ 'jump', 'fall', 'land', 'airJ', 'airK', 'dive',
+  /* 3묶음 연속기 */ 'attackJ', 'attackJ2', 'attackJ3', 'attackK', 'attackK2', 'dashAttack',
+  /* 4묶음 방향기 */ 'attackJUp', 'attackJDown', 'attackKUp', 'attackKDown', 'guard', 'dizzy',
+  /* 5묶음 스킬 */ 'skillCharge', 'skill', 'skill', 'fx:skill', 'promptCast', 'fx:prompt',
+  /* 6묶음 아이템 */ 'itemGet', 'itemHold', 'itemThrow', 'itemSwing', 'taunt', 'down',
+  /* 7묶음 결과 */ 'hit', 'hitAir', 'knockback', 'win', 'lose', 'fx:portrait',
+];
+
+/** 한 묶음에 들어가는 칸 수 */
+const V3_BATCH_SIZE = 6;
+
+interface BuiltLayout {
+  poses: Partial<Record<Pose, PoseFrames>>;
+  explosionFrame?: number;
+  promptFrame?: number;
+  portraitFrame?: number;
+}
+
+/**
+ * 뽑은 묶음 번호만 가지고 배치표를 만든다.
+ *
+ * 빠진 묶음의 포즈는 아예 등록하지 않는다 — 없는 포즈는 resolvePose 가
+ * 대체 사슬을 타고 비슷한 그림으로 대신한다. 여기서 억지로 0번 칸 같은 것을
+ * 넣어 두면 모든 기술이 대기 자세로 나가서, 오히려 없느니만 못하다.
+ */
+export function buildV3Layout(batches: number[]): BuiltLayout {
+  const out: BuiltLayout = { poses: {} };
+  let frame = 0;
+
+  for (const b of batches) {
+    const start = (b - 1) * V3_BATCH_SIZE;
+    for (const tag of V3_CELLS.slice(start, start + V3_BATCH_SIZE)) {
+      if (tag.startsWith('fx:')) {
+        const which = tag.slice(3);
+        if (which === 'skill') out.explosionFrame = frame;
+        if (which === 'prompt') out.promptFrame = frame;
+        if (which === 'portrait') out.portraitFrame = frame;
+      } else {
+        const pose = tag as Pose;
+        const prev = out.poses[pose];
+        // 같은 태그가 연달아 나오면 여러 칸짜리 애니메이션이다 (run, skill)
+        if (prev === undefined) out.poses[pose] = frame;
+        else if (Array.isArray(prev)) prev.push(frame);
+        else out.poses[pose] = [prev, frame];
+      }
+      frame++;
+    }
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* 규격 자동 판별                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -370,7 +446,25 @@ const LAYOUTS = [
  *
  * @returns 적용한 규격 이름 (로그용)
  */
-export function applyLayout(def: SpriteSheetDef, frameCount: number): string {
+export function applyLayout(
+  def: SpriteSheetDef,
+  frameCount: number,
+  batches?: number[],
+): string {
+  /*
+   * 시트가 "어느 묶음을 담았는지" 직접 말해 주면 프레임 수로 추측할 필요가 없다.
+   * 1·3·7 묶음만 뽑은 18칸 시트는 프레임 수만 보면 V1(15칸)으로 오인되어
+   * 전혀 다른 칸이 나온다 — 그림은 멀쩡한데 게임에서 캐릭터가 망가진다.
+   */
+  if (batches?.length && batches.length * V3_BATCH_SIZE === frameCount) {
+    const built = buildV3Layout(batches);
+    def.poses = built.poses;
+    def.explosionFrame = built.explosionFrame;
+    def.promptFrame = built.promptFrame;
+    def.portraitFrame = built.portraitFrame;
+    return batches.length === 7 ? 'V3' : `V3-부분(${batches.join('·')}묶음)`;
+  }
+
   const spec = LAYOUTS.find((l) => frameCount >= l.minFrames) ?? LAYOUTS[LAYOUTS.length - 1]!;
 
   def.poses = spec.poses;
@@ -452,6 +546,31 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
     // 8 = 캐릭터 없이 커널 패닉 에너지만 있는 프레임 → 투사체로 쓴다
     v1: { explosionFrame: 8 },
   },
+
+  /*
+   * ── 아래는 아직 그림이 없는 캐릭터들 ──────────────────────────
+   * 그래도 미리 등록해 둔다. 로딩 쪽이 파일이 실제로 있는지 먼저 확인하고
+   * 없으면 조용히 도형 아트로 넘어가므로, 등록해 둔다고 손해 볼 것이 없다.
+   *
+   * 얻는 것은 크다 — `npm run sheet:merge -- warrenbuffett` 한 줄로
+   * 나온 시트를 public/sprites/ 에 넣으면 코드를 한 글자도 안 고치고 붙는다.
+   * 규격(몇 묶음을 뽑았는지)도 시트가 스스로 알려준다.
+   */
+  buffett: { key: 'warrenbuffett', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
+  jensen: { key: 'jensenhuang', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  satoshi: { key: 'satoshinakamoto', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  zuck: { key: 'markzuckerberg', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
+  bezos: { key: 'jeffbezos', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
+  altman: { key: 'samaltman', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  son: { key: 'masayoshison', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  ant: { key: 'antinvestor', displayHeight: SD_HEIGHT, frameRate: 11, poses: LAYOUT_V1 },
+  bear: { key: 'shortseller', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
+  bull: { key: 'chargingbull', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  guru: { key: 'chartguru', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  bot: { key: 'chatbot', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
+  chairman: { key: 'chairman', displayHeight: SD_HEIGHT, frameRate: 8, poses: LAYOUT_V1 },
+  doom: { key: 'drdoom', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
+  whale: { key: 'whaleinvestor', displayHeight: SD_HEIGHT, frameRate: 8, poses: LAYOUT_V1 },
 };
 
 /** 로드해야 할 시트 목록 */
@@ -474,4 +593,9 @@ export interface SheetMeta {
   columns: number;
   rows: number;
   count: number;
+  /**
+   * 이 시트에 담긴 묶음 번호 (1~7).
+   * sheet:merge 가 적어 준다. 일부만 뽑은 시트에서 배치를 정확히 맞추는 근거다.
+   */
+  batches?: number[];
 }

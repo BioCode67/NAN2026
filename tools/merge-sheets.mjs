@@ -63,20 +63,27 @@ if (!inputs.length) {
   process.exit(1);
 }
 
-// 번호가 비어 있으면 프레임 순서가 통째로 밀린다 — 조용히 넘어가면 안 된다
+/*
+ * 묶음이 빠져 있어도 합친다.
+ *
+ * 예전에는 빠진 번호가 있으면 거부했다. 순서가 밀려 엉뚱한 칸에 매핑되기
+ * 때문인데, 이제는 **어느 묶음이 들어 있는지를 메타에 적어 보내므로**
+ * 게임 쪽이 정확한 자리를 안다(spriteSheets.ts buildV3Layout).
+ *
+ * 캐릭터 스무 명 × 7묶음 = 140장을 다 뽑는 것은 현실적이지 않다.
+ * 1(이동)·3(연속기)·7(피격·결과·초상) 세 묶음만 있어도 늘 화면에 보이는
+ * 그림은 전부 채워지고, 나머지는 포즈 대체 사슬이 메운다. 60장으로
+ * 스무 명을 채울 수 있는 길을 막아 둘 이유가 없다.
+ */
 const missing = [];
-for (let i = 1; i <= inputs[inputs.length - 1].index; i++) {
+for (let i = 1; i <= 7; i++) {
   if (!inputs.some((f) => f.index === i)) missing.push(i);
-}
-if (missing.length) {
-  console.error(
-    `배치 ${missing.join(', ')} 번이 빠져 있습니다.\n` +
-      `순서가 밀려 엉뚱한 프레임에 매핑되므로 먼저 채워 주세요.`,
-  );
-  process.exit(1);
 }
 
 console.log(`배치 ${inputs.length}개 발견: ${inputs.map((f) => `b${f.index}`).join(', ')}`);
+if (missing.length) {
+  console.log(`  (빠진 묶음: ${missing.map((i) => `b${i}`).join(', ')} — 해당 포즈는 대체 그림으로 나갑니다)`);
+}
 
 /* --- 2. 배치별 전처리 (배경 제거 + 균일 격자화) ---------------------- */
 
@@ -187,6 +194,11 @@ const meta = {
   columns: COLS,
   rows,
   count: totalFrames,
+  /*
+   * 어느 묶음이 들어 있는지. 게임이 배치표를 만들 때 쓴다 —
+   * 프레임 수만으로는 "1·3·7 묶음 18칸"과 "옛 V1 15칸"을 구별할 수 없다.
+   */
+  batches: parts.map((p) => p.index),
 };
 writeFileSync(outPng.replace(/\.png$/, '.json'), JSON.stringify(meta, null, 2));
 
@@ -196,6 +208,15 @@ console.log(
   `\n완료: ${outPng}\n` +
     `프레임 ${totalFrames}개, 격자 ${COLS}x${rows}, 칸 크기 ${cellW}x${cellH}\n`,
 );
+
+const perBatch = parts.filter((p) => p.meta.count !== 6);
+if (perBatch.length) {
+  console.log(
+    `\n주의: 칸이 6개가 아닌 묶음이 있습니다 — ` +
+      perBatch.map((p) => `b${p.index}(${p.meta.count}칸)`).join(', ') +
+      `\n묶음당 6칸이어야 포즈가 제자리에 들어갑니다. 해당 묶음만 다시 뽑으세요.`,
+  );
+}
 
 if (totalFrames === 42) {
   /*
@@ -210,8 +231,8 @@ if (totalFrames === 42) {
   );
 } else {
   console.log(
-    `주의: 42개가 아니라 ${totalFrames}개입니다.\n` +
-      `묶음별 칸 수가 6개씩 맞는지 확인하세요 — 개수가 어긋나면 포즈 매핑이 밀립니다.\n` +
-      `(30개 이상이면 V2, 그 아래면 V1 규격으로 읽힙니다)`,
+    `묶음 ${parts.map((p) => p.index).join('·')} 로 ${totalFrames}칸 시트를 만들었습니다.\n` +
+      `빠진 묶음의 포즈는 대체 그림으로 나갑니다 — 나중에 그 묶음만 뽑아\n` +
+      `다시 합치면 게임 쪽은 손댈 것 없이 자동으로 늘어납니다.`,
   );
 }

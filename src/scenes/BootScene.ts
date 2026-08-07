@@ -6,10 +6,20 @@ import {
   probeArt,
   queueOptionalArt,
   resolveArtPath,
+  jsonExists,
 } from '../config/artAssets';
 import { GAME } from '../config/gameConfig';
 import { SHEET_DEFS, animKey, applyLayout, metaKey } from '../config/spriteSheets';
-import type { Pose, SheetMeta } from '../config/spriteSheets';
+import type { Pose, SheetMeta, SpriteSheetDef } from '../config/spriteSheets';
+
+/** 그림과 메타가 둘 다 확인된 시트 하나 */
+interface SheetSource {
+  def: SpriteSheetDef;
+  /** 실제로 쓸 그림 경로 (webp 우선) */
+  png: string;
+  /** 메타(JSON) 경로 */
+  meta: string;
+}
 
 /**
  * 리소스 로딩 씬.
@@ -25,15 +35,6 @@ export class BootScene extends Phaser.Scene {
 
   preload(): void {
     this.buildLoadingUI();
-
-    /*
-     * 1단계: 스프라이트 시트 메타데이터.
-     * 프레임 크기가 캐릭터마다 다르므로 시트를 로드하기 전에 먼저 읽어야 한다.
-     * (메타는 tools/process-sheet.mjs 가 PNG와 함께 생성한다)
-     */
-    for (const def of SHEET_DEFS) {
-      this.load.json(metaKey(def.key), `sprites/${def.key}.json`);
-    }
   }
 
   create(): void {
@@ -42,76 +43,86 @@ export class BootScene extends Phaser.Scene {
   }
 
   /**
-   * 2단계: 실제 그림을 불러온다.
+   * 그림을 불러온다.
    *
    * 먼저 무엇이 있는지 확인하고(probeArt) 있는 것만 로더에 건다.
    * 없는 것을 걸어도 게임은 돌아가지만 Phaser가 파일마다 console.error를
    * 찍어 콘솔이 빨개진다 — 아직 안 그린 그림은 오류가 아니다.
+   *
+   * ── 왜 두 번에 나눠 부르는가 ──────────────────────────────────
+   * 시트는 프레임 크기가 캐릭터마다 달라서, 그림을 걸기 전에 메타(JSON)를
+   * 먼저 읽어야 한다. 그래서 1차로 메타와 배경류를, 2차로 시트를 건다.
+   *
+   * 스무 명 전원을 SPRITE_SHEETS 에 등록해 두었으므로(아직 안 그린 사람이
+   * 대부분이다), 메타 역시 있는 것만 골라 걸어야 콘솔이 조용하다.
    */
   private async loadArt(): Promise<void> {
-    const [available, sheetPaths] = await Promise.all([
+    const [available, sheets] = await Promise.all([
       probeArt([...ART_IMAGES, ...ART_STRIPS]),
-      this.resolveSheetPaths(),
+      this.findSheets(),
     ]);
 
     // 확인하는 사이 씬이 내려갔다면(새로고침 등) 더 진행하지 않는다
     if (!this.scene.isActive()) return;
 
     queueOptionalArt(this.load, available);
-    const queued = available.length + this.queueSpriteSheets(sheetPaths);
+    for (const s of sheets) this.load.json(metaKey(s.def.key), s.meta);
 
-    if (queued === 0) {
+    if (!available.length && !sheets.length) {
       this.finish();
       return;
     }
 
-    this.load.once(Phaser.Loader.Events.COMPLETE, () => this.finish());
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+      if (!this.scene.isActive()) return;
+      if (this.queueSpriteSheets(sheets) === 0) {
+        this.finish();
+        return;
+      }
+      this.load.once(Phaser.Loader.Events.COMPLETE, () => this.finish());
+      // COMPLETE 처리 중에 다시 start 하면 로더가 꼬인다 — 한 틱 뒤로 미룬다
+      this.time.delayedCall(0, () => this.load.start());
+    });
     this.load.start();
   }
 
   /**
-   * 각 캐릭터 시트를 어느 경로로 읽을지 정한다 (webp가 있으면 webp).
-   * 시트도 한 장에 1MB가 넘어 배경과 같은 이유로 가벼운 판을 우선한다.
+   * 그림과 메타가 **둘 다** 있는 시트만 골라낸다.
+   *
+   * 그림은 webp가 있으면 그쪽을 쓴다. 시트도 한 장에 1MB가 넘어
+   * 배경과 같은 이유로 가벼운 판을 우선한다.
    */
-  private async resolveSheetPaths(): Promise<Map<string, string>> {
-    const pairs = await Promise.all(
+  private async findSheets(): Promise<SheetSource[]> {
+    const found = await Promise.all(
       SHEET_DEFS.map(async (def) => {
-        const path = await resolveArtPath(`sprites/${def.key}.png`);
-        return [def.key, path] as const;
+        const meta = `sprites/${def.key}.json`;
+        const [png, hasMeta] = await Promise.all([
+          resolveArtPath(`sprites/${def.key}.png`),
+          jsonExists(meta),
+        ]);
+        return png && hasMeta ? { def, png, meta } : null;
       }),
     );
-
-    const out = new Map<string, string>();
-    for (const [key, path] of pairs) if (path) out.set(key, path);
-    return out;
+    return found.filter((s): s is SheetSource => s !== null);
   }
 
-  /** 메타와 그림이 둘 다 있는 캐릭터 시트만 로더에 건다. 건 개수를 돌려준다 */
-  private queueSpriteSheets(paths: Map<string, string>): number {
+  /** 메타를 읽어 규격을 정하고 시트를 로더에 건다. 건 개수를 돌려준다 */
+  private queueSpriteSheets(sheets: SheetSource[]): number {
     let queued = 0;
 
-    for (const def of SHEET_DEFS) {
+    for (const { def, png } of sheets) {
       const meta = this.cache.json.get(metaKey(def.key)) as SheetMeta | undefined;
-      if (!meta) {
-        console.warn(`[Boot] ${def.key} 메타데이터를 찾지 못해 도형 아트로 대체합니다.`);
-        continue;
-      }
-
-      const path = paths.get(def.key);
-      if (!path) {
-        console.warn(`[Boot] ${def.key} 시트 그림이 없어 도형 아트로 대체합니다.`);
-        continue;
-      }
+      if (!meta) continue;
 
       /*
        * 어느 규격인지는 시트 자신이 알려준다.
-       * 프레임 수만 보면 되므로, 새 시트를 폴더에 넣는 것만으로 갈아 끼워진다.
+       * 프레임 수와 묶음 번호만 보므로, 새 시트를 폴더에 넣는 것만으로 갈아 끼워진다.
        */
       const count = meta.count ?? meta.columns * meta.rows;
-      const version = applyLayout(def, count);
+      const version = applyLayout(def, count, meta.batches);
       console.info(`[Boot] ${def.key}: ${count}프레임 → ${version} 규격`);
 
-      this.load.spritesheet(def.key, path, {
+      this.load.spritesheet(def.key, png, {
         frameWidth: meta.frameWidth,
         frameHeight: meta.frameHeight,
       });

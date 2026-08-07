@@ -127,6 +127,22 @@ async function imageExists(path: string): Promise<boolean> {
  * 덕분에 "폴더에 넣기만 하면 붙는다"는 규칙은 그대로고,
  * 배포되는 무게만 줄어든다.
  */
+/**
+ * 이 경로에 JSON이 실제로 있는가.
+ *
+ * 시트 메타(<key>.json)를 확인하는 데 쓴다. 이미지와 마찬가지로 상태 코드만
+ * 봐서는 안 된다 — 개발 서버는 없는 경로에도 index.html 을 200으로 준다.
+ */
+export async function jsonExists(path: string): Promise<boolean> {
+  try {
+    const res = await fetch(new URL(path, document.baseURI), { method: 'HEAD' });
+    const type = res.headers.get('content-type') ?? '';
+    return res.ok && type.includes('json');
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveArtPath(path: string): Promise<string | null> {
   const light = path.replace(/\.png$/i, '.webp');
   if (light !== path && (await imageExists(light))) return light;

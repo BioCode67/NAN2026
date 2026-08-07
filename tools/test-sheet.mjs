@@ -27,6 +27,7 @@ import {
   LAYOUT_V2,
   LAYOUT_V3,
   LAYOUT_V3_FX,
+  buildV3Layout,
 } from '../src/config/spriteSheets.ts';
 
 const KEY = '__sheettest';
@@ -242,6 +243,137 @@ if (!empty.length && !wrong.length) {
 }
 
 cleanup();
+
+/* ------------------------------------------------------------------ */
+/* 3. 묶음 일부만 뽑은 시트                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 스무 명 × 7묶음 = 140장은 현실적인 목표가 아니다. 1·3·7 묶음만 뽑아
+ * 18칸으로 내는 길을 열어 뒀는데, 이 경로가 조용히 어긋나면 "그림은
+ * 멀쩡한데 걷는 자세로 주먹을 지르는" 상태가 된다 — 눈으로는 원인을 못 찾는다.
+ */
+
+console.log('\n묶음 일부만 뽑은 시트');
+{
+  const before = failed;
+
+  /* 전부 뽑으면 손으로 적어 둔 V3 표와 한 칸도 다르지 않아야 한다 */
+  const full = buildV3Layout([1, 2, 3, 4, 5, 6, 7]);
+  if (JSON.stringify(full.poses) !== JSON.stringify(LAYOUT_V3)) {
+    fail('7묶음을 다 넣었는데 손으로 적은 LAYOUT_V3 와 다릅니다');
+  }
+  if (full.explosionFrame !== LAYOUT_V3_FX.skill) fail('전체 묶음의 skillFx 위치가 다릅니다');
+  if (full.promptFrame !== LAYOUT_V3_FX.prompt) fail('전체 묶음의 promptFx 위치가 다릅니다');
+  if (full.portraitFrame !== LAYOUT_V3_FX.portrait) fail('전체 묶음의 초상 위치가 다릅니다');
+
+  /* 핵심 3묶음 — 늘 화면에 있는 그림들이 제자리에 오는가 */
+  const core = buildV3Layout([1, 3, 7]);
+  const want = {
+    idle: 0,
+    walk: 1,
+    run: [2, 3, 4],
+    dash: 5,
+    attackJ: 6,
+    attackJ2: 7,
+    attackJ3: 8,
+    attackK: 9,
+    attackK2: 10,
+    dashAttack: 11,
+    hit: 12,
+    hitAir: 13,
+    knockback: 14,
+    win: 15,
+    lose: 16,
+  };
+  for (const [pose, frames] of Object.entries(want)) {
+    if (JSON.stringify(core.poses[pose]) !== JSON.stringify(frames)) {
+      fail(`1·3·7 묶음에서 ${pose} 가 ${JSON.stringify(frames)} 이어야 하는데 ${JSON.stringify(core.poses[pose])}`);
+    }
+  }
+  if (core.portraitFrame !== 17) fail(`1·3·7 묶음의 초상이 17번이어야 하는데 ${core.portraitFrame}`);
+
+  /* 안 뽑은 묶음의 포즈는 등록되면 안 된다 — 대체 사슬이 메워야 하는 자리다 */
+  for (const pose of ['jump', 'guard', 'skill', 'taunt', 'itemHold']) {
+    if (core.poses[pose] !== undefined) {
+      fail(`안 뽑은 묶음의 ${pose} 가 ${core.poses[pose]} 번으로 등록됐습니다`);
+    }
+  }
+
+  /* applyLayout 이 묶음 정보를 우선하는가 — 18칸을 V1(15칸)으로 오인하면 안 된다 */
+  const def = { key: 'x', displayHeight: 100, poses: {} };
+  const version = applyLayout(def, 18, [1, 3, 7]);
+  if (!version.startsWith('V3-부분')) fail(`18칸 + 묶음정보 → V3 부분이어야 하는데 ${version}`);
+  if (def.poses.attackJ !== 6) fail(`18칸 시트의 attackJ 가 6번이어야 하는데 ${def.poses.attackJ}`);
+
+  /* 묶음 정보와 칸 수가 안 맞으면 믿지 않고 프레임 수로 되돌아가야 한다 */
+  const bad = { key: 'x', displayHeight: 100, poses: {} };
+  if (applyLayout(bad, 42, [1, 3, 7]) !== 'V3') {
+    fail('묶음 정보와 칸 수가 어긋나면 프레임 수 판별로 되돌아가야 합니다');
+  }
+
+  if (failed === before) {
+    pass('7묶음=LAYOUT_V3 · 1·3·7묶음 18칸도 제자리 · 빠진 포즈는 미등록');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. 빠진 묶음이 있는 채로 실제 합치기                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 위 3번은 배치표 계산만 봤다. 여기서는 도구를 실제로 돌린다 —
+ * 예전에는 번호가 비면 거부했으므로, 그 거부가 남아 있으면
+ * 사용자는 "60장으로 스무 명" 경로에서 그대로 막힌다.
+ */
+
+console.log('\n빠진 묶음이 있는 채로 합치기');
+{
+  const before = failed;
+  const use = [1, 3, 7];
+
+  const paths = use.map((b) => {
+    const path = `art-source/${KEY}_b${b}.png`;
+    // 색은 "몇 번째로 들어가는가"가 아니라 원래 묶음 번호 기준으로 심는다
+    writeFileSync(path, PNG.sync.write(makeBatch(b - 1, 280)));
+    return path;
+  });
+
+  const r = spawnSync(process.execPath, ['tools/merge-sheets.mjs', KEY], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    fail(`빠진 묶음이 있으면 합치기가 거부됩니다 (코드 ${r.status})`);
+    console.error(r.stdout, r.stderr);
+  } else {
+    const m = JSON.parse(readFileSync(outJson, 'utf8'));
+    if (m.count !== 18) fail(`3묶음이면 18칸이어야 하는데 ${m.count}칸`);
+    if (JSON.stringify(m.batches) !== JSON.stringify(use)) {
+      fail(`메타에 묶음 번호가 ${JSON.stringify(use)} 로 적혀야 하는데 ${JSON.stringify(m.batches)}`);
+    }
+
+    /* 칸 0 · 6 · 12 에 각 묶음의 첫 그림이 와야 한다 */
+    const sh = PNG.sync.read(readFileSync(outPng));
+    const first = (n) => {
+      const cx = (n % 6) * m.frameWidth + Math.floor(m.frameWidth / 2);
+      const cy = Math.floor(n / 6) * m.frameHeight + Math.floor(m.frameHeight / 2);
+      const i = (cy * sh.width + cx) * 4;
+      return Math.round((sh.data[i] - 40) / 5);
+    };
+    const wantFirst = use.map((b) => (b - 1) * CELLS);
+    [0, 6, 12].forEach((cell, k) => {
+      const got = first(cell);
+      if (got !== wantFirst[k]) {
+        fail(`${cell}번 칸에 원본 ${wantFirst[k]}번이 와야 하는데 ${got}번이 들어 있습니다`);
+      }
+    });
+
+    if (failed === before) pass('1·3·7 묶음 → 18칸 시트 + 메타에 묶음 번호 기록');
+  }
+
+  paths.forEach((path) => rmSync(path, { force: true }));
+  rmSync(outPng, { force: true });
+  rmSync(outJson, { force: true });
+  rmSync('art-source/.merge', { recursive: true, force: true });
+}
 
 console.log(failed ? `\n실패 ${failed}건` : '\n통과');
 process.exit(failed ? 1 : 0);

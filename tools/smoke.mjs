@@ -428,6 +428,13 @@ for (let i = 0; i < 60; i++) {
   if (await sceneAlive('Title')) {
     if (i === 0) await shot('title');
     await page.keyboard.press('Enter');
+    /*
+     * 한 번 누르고 페이드가 끝날 때까지 기다린다.
+     * 짧게 끊어 여러 번 누르면 그중 하나가 선택 화면으로 새어 들어가
+     * 캐릭터를 즉시 확정해 버려, 이후 단계가 통째로 엉뚱해진다.
+     */
+    await page.waitForTimeout(700);
+    continue;
   }
   await page.waitForTimeout(250);
 }
@@ -458,6 +465,41 @@ await shot('select');
   } else {
     console.log(`  ✓ 메뉴 곡 재생 중 (${a.step} → ${b.step} 스텝)`);
   }
+}
+
+/*
+ * 상세 보기 — 커맨드 열네 개를 펼쳐 보는 화면.
+ *
+ * 이 게임의 가장 큰 자산이 "스무 명 × 열네 개 = 280개의 서로 다른 기술
+ * 이름"인데, 그것을 실제로 보여주는 화면이 여기 하나뿐이다. 열리지 않으면
+ * 자산이 통째로 안 보이는 것이라, 눈으로 확인할 수 있어도 검사에 넣는다.
+ */
+const isDetailOpen = () =>
+  page.evaluate(() => !!window.game?.scene?.getScene('Select')?.detail);
+
+/*
+ * 키를 두 가지로 받는 이유는 UI 쪽과 같다 — TAB 은 브라우저가 먼저
+ * 가로챌 수 있어서, 막히면 기능 전체가 사라지지 않도록 I 도 받는다.
+ * 검사도 둘 다 눌러 보고 어느 쪽으로 열렸는지 남긴다.
+ */
+let openedBy = '';
+for (const key of ['Tab', 'i']) {
+  await page.keyboard.press(key);
+  await page.waitForTimeout(400);
+  if (await isDetailOpen()) {
+    openedBy = key;
+    break;
+  }
+}
+
+if (!openedBy) errors.push('[선택] TAB · I 어느 쪽으로도 상세 보기가 열리지 않았습니다');
+else console.log(`  ✓ ${openedBy.toUpperCase()} → 커맨드 상세`);
+await shot('detail');
+
+// 닫기 — 열려 있으면 다음 단계의 방향키가 안 먹는다
+for (let i = 0; i < 3 && (await isDetailOpen()); i++) {
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
 }
 
 for (let i = 0; i < PICK; i++) {
@@ -707,12 +749,20 @@ await page.evaluate(() => {
 await page.waitForSelector('[data-testid="prompt-overlay"]', { timeout: 8000 }).catch(() => {});
 await page.locator('[data-testid="prompt-input"]').fill('전부 거대하게 만들고 느리게');
 await page.keyboard.press('Enter');
-// 둘째는 650ms 뒤에 걸린다 — 넉넉히 기다린다
-await page.waitForTimeout(2200);
 
-const combo = await page.evaluate(() =>
-  window.game.scene.getScene('Battle').gimmicks.getActive().map((a) => a.spec.id),
-);
+/*
+ * 둘째는 배너가 겹치지 않도록 늦춰 걸린다. 고정 시간으로 기다리면 앞
+ * 단계에서 걸어 둔 슬로우 모션 같은 것이 시계를 늦출 때 놓친다 —
+ * 둘 다 걸릴 때까지 본다.
+ */
+let combo = [];
+for (let i = 0; i < 30; i++) {
+  combo = await page.evaluate(() =>
+    window.game.scene.getScene('Battle').gimmicks.getActive().map((a) => a.spec.id),
+  );
+  if (combo.includes('rule_giant') && combo.includes('rule_slow')) break;
+  await page.waitForTimeout(200);
+}
 if (!combo.includes('rule_giant') || !combo.includes('rule_slow')) {
   errors.push(
     `[기믹] 한 문장에 두 가지를 썼는데 둘 다 걸리지 않았습니다: ${JSON.stringify(combo)}`,

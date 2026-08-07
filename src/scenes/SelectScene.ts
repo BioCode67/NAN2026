@@ -5,7 +5,7 @@ import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
 import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
-import type { BattleSceneData, CharacterConfig, CharacterId } from '../types';
+import type { BattleSceneData, CharacterConfig, CharacterId, MoveSlot } from '../types';
 
 /** AI 봇 수 — 명세의 1P vs 3AI */
 const AI_COUNT = 3;
@@ -76,6 +76,8 @@ export class SelectScene extends Phaser.Scene {
   private confirmed = false;
   /** 이 시각 전의 입력은 앞 화면에서 넘어온 것이다 */
   private readyAt = 0;
+  /** 상세 보기 오버레이 (열려 있을 때만 존재한다) */
+  private detail?: Phaser.GameObjects.Container;
 
   private nameText!: Phaser.GameObjects.Text;
   private taglineText!: Phaser.GameObjects.Text;
@@ -92,6 +94,7 @@ export class SelectScene extends Phaser.Scene {
   create(): void {
     this.confirmed = false;
     this.cards = [];
+    this.detail = undefined;
 
     /*
      * 화면이 뜨자마자 들어오는 입력은 무시한다.
@@ -99,8 +102,12 @@ export class SelectScene extends Phaser.Scene {
      * 타이틀에서 "아무 키나" 눌러 넘어오는데, 그 키를 놓기 전에 선택 화면이
      * 뜨면 같은 Enter가 여기서 "결정"으로 한 번 더 먹는다. 그러면 캐릭터를
      * 고르기도 전에 첫 번째 캐릭터로 전투가 시작된다.
+     *
+     * 260ms 로 뒀더니 가끔 새어 들어왔다. 타이틀의 페이드아웃이 280ms 인데
+     * 그 사이에 눌린 키가 이쪽에 도착하기 때문이다. 페이드보다 확실히 길게 둔다 —
+     * 화면이 뜨자마자 0.5초는 아무도 결정을 누르지 않는다.
      */
-    this.readyAt = this.time.now + 260;
+    this.readyAt = this.time.now + 480;
 
     // 제목 화면과 같은 곡 — 이미 돌고 있으면 그대로 이어진다
     sound.startBgm('menu');
@@ -376,7 +383,7 @@ export class SelectScene extends Phaser.Scene {
         GAME.WIDTH / 2,
         676,
         `← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      ` +
-          `(총 ${CHARACTER_ORDER.length}명 — 고유 메커니즘이 서로 다른 ${AI_COUNT}명이 AI로 참전)`,
+          `TAB · I : 커맨드 14개 자세히      (총 ${CHARACTER_ORDER.length}명 — 고유 메커니즘이 서로 다른 ${AI_COUNT}명이 AI로 참전)`,
         {
           fontFamily: GAME.FONT,
           fontSize: '15px',
@@ -406,10 +413,182 @@ export class SelectScene extends Phaser.Scene {
     kb.on('keydown-S', () => this.move(this.cols));
     kb.on('keydown-ENTER', () => this.confirm());
     kb.on('keydown-SPACE', () => this.confirm());
+
+    /*
+     * 상세 보기.
+     *
+     * TAB 은 브라우저가 먼저 가로채 포커스를 캔버스 밖으로 옮긴다.
+     * addCapture 로 이 키만 게임 쪽에 묶어 둬야 눌린다.
+     * I(정보)도 함께 받는다 — TAB 을 캔버스가 먹는 것을 불편해하는 사람이 있고,
+     * 키 하나가 막혀도 기능 전체가 사라지지 않는 편이 낫다.
+     */
+    kb.addCapture('TAB');
+    kb.on('keydown-TAB', () => this.toggleDetail());
+    kb.on('keydown-I', () => this.toggleDetail());
+    kb.on('keydown-ESC', () => this.closeDetail());
+  }
+
+  /* ================================================================ */
+  /* 상세 보기                                                        */
+  /* ================================================================ */
+
+  /**
+   * 이 캐릭터의 커맨드 열네 개를 통째로 펼친다.
+   *
+   * ── 왜 필요한가 ────────────────────────────────────────────────
+   * 아래 설명 패널은 커맨드를 한 줄로 이어 붙여 보여준다. 다섯 명일 때는
+   * 그걸로 됐지만, 이 게임의 가장 큰 자산이 **스무 명 × 열네 개 = 280개의
+   * 서로 다른 기술 이름**이 된 지금은 그 한 줄이 자산을 감추고 있다.
+   *
+   * 처음 보는 사람은 "공격 몇 개 있겠지"로 지나가고, 실제로 열네 개가
+   * 전부 다른 이름이라는 것을 영영 모른 채 게임을 닫는다.
+   * 표로 펼쳐야 비로소 보인다.
+   */
+  private toggleDetail(): void {
+    if (this.detail) {
+      this.closeDetail();
+      return;
+    }
+    if (this.confirmed) return;
+
+    const cfg = CHARACTERS[CHARACTER_ORDER[this.selectedIndex]!];
+    const accent = `#${cfg.colors.accent.toString(16).padStart(6, '0')}`;
+    sound.play('uiMove');
+
+    const parts: Phaser.GameObjects.GameObject[] = [];
+
+    parts.push(
+      // 완전히 덮는다 — 아래 카드가 비치면 표의 글자가 그 위에서 읽히지 않는다
+      this.add.rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT, 0x060a16, 1).setOrigin(0),
+    );
+
+    parts.push(
+      this.add
+        .text(GAME.WIDTH / 2, 54, `${cfg.name}  —  ${cfg.realName}`, {
+          fontFamily: GAME.FONT,
+          fontSize: '34px',
+          color: accent,
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5),
+      this.add
+        .text(GAME.WIDTH / 2, 92, `"${cfg.tagline}"`, {
+          fontFamily: GAME.FONT,
+          fontSize: '16px',
+          color: '#9fb3dd',
+        })
+        .setOrigin(0.5),
+    );
+
+    /* 두 축 — 늘 유리한 것(패시브)과 다루는 법(고유 메커니즘) */
+    parts.push(
+      this.add.text(120, 132, `[패시브] ${cfg.passive.name}`, {
+        fontFamily: GAME.FONT,
+        fontSize: '17px',
+        color: '#e8eeff',
+        fontStyle: 'bold',
+      }),
+      this.add.text(120, 158, cfg.passive.desc, {
+        fontFamily: GAME.FONT,
+        fontSize: '15px',
+        color: '#9fb3dd',
+        wordWrap: { width: 500 },
+      }),
+      this.add.text(720, 132, `[고유] ${cfg.signature.icon} ${cfg.signature.name}`, {
+        fontFamily: GAME.FONT,
+        fontSize: '17px',
+        color: accent,
+        fontStyle: 'bold',
+      }),
+      this.add.text(720, 158, `${cfg.signature.desc}\n${cfg.signature.how}`, {
+        fontFamily: GAME.FONT,
+        fontSize: '15px',
+        color: '#9fb3dd',
+        lineSpacing: 4,
+        wordWrap: { width: 520 },
+      }),
+    );
+
+    /*
+     * 커맨드 열네 개 — 두 단으로 나눠 한 화면에 담는다.
+     *
+     * MOVE_COMMANDS 에는 연속기 후속타(J→J, J→J→J, K→K)가 빠져 있다.
+     * 그건 "다른 입력"이 아니라 "같은 입력을 이어서"라서 조작 안내에서는
+     * 따로 다루는 것이 맞지만, **기술 목록**에서 빼면 열네 개 중 셋이
+     * 통째로 사라진다. 여기서는 전부 보여야 하므로 이어 붙인다.
+     */
+    const CHAIN_ROWS: Array<{ slot: MoveSlot; keys: string }> = [
+      { slot: 'light2', keys: 'J → J' },
+      { slot: 'light3', keys: 'J → J → J' },
+      { slot: 'heavy2', keys: 'K → K' },
+    ];
+
+    const rows = [...MOVE_COMMANDS, ...CHAIN_ROWS].map((c) => ({
+      keys: c.keys,
+      move: cfg.moves[c.slot],
+    }));
+    const half = Math.ceil(rows.length / 2);
+    const TOP = 330;
+    const ROW_H = 34;
+
+    parts.push(
+      this.add
+        .text(GAME.WIDTH / 2, TOP - 36, `커맨드 ${rows.length}개 — 이름이 전부 다르다`, {
+          fontFamily: GAME.FONT,
+          fontSize: '15px',
+          color: '#6c86c4',
+        })
+        .setOrigin(0.5),
+    );
+
+    rows.forEach((r, i) => {
+      const col = i < half ? 0 : 1;
+      const y = TOP + (i % half) * ROW_H;
+      const x = 120 + col * 620;
+
+      parts.push(
+        this.add.text(x, y, r.keys, {
+          fontFamily: GAME.FONT,
+          fontSize: '15px',
+          color: '#ffd54a',
+          fontStyle: 'bold',
+        }),
+        this.add.text(x + 120, y, r.move.name, {
+          fontFamily: GAME.FONT,
+          fontSize: '16px',
+          color: '#e8eeff',
+        }),
+        // 수치는 옅게 — 이름이 주인공이고 숫자는 곁들이다
+        this.add
+          .text(x + 470, y, `${r.move.damage}`, {
+            fontFamily: GAME.FONT,
+            fontSize: '14px',
+            color: '#54608a',
+          })
+          .setOrigin(1, 0),
+      );
+    });
+
+    parts.push(
+      this.add
+        .text(GAME.WIDTH / 2, GAME.HEIGHT - 44, 'TAB · I · ESC : 닫기', {
+          fontFamily: GAME.FONT,
+          fontSize: '16px',
+          color: '#8fa6d8',
+        })
+        .setOrigin(0.5),
+    );
+
+    this.detail = this.add.container(0, 0, parts).setDepth(DEPTH.OVERLAY);
+  }
+
+  private closeDetail(): void {
+    this.detail?.destroy();
+    this.detail = undefined;
   }
 
   private move(delta: number): void {
-    if (this.confirmed) return;
+    if (this.confirmed || this.detail) return;
     const next = Phaser.Math.Wrap(
       this.selectedIndex + delta,
       0,
@@ -491,6 +670,11 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private confirm(): void {
+    // 상세를 보다가 Enter를 누르면 "닫기"로 읽히는 것이 자연스럽다
+    if (this.detail) {
+      this.closeDetail();
+      return;
+    }
     if (this.confirmed || this.time.now < this.readyAt) return;
     this.confirmed = true;
     sound.play('uiConfirm');

@@ -180,6 +180,8 @@ export class BattleScene extends Phaser.Scene {
     this.playIntro();
 
     sound.startBgm('battle');
+    // 무대마다 조와 템포가 달라진다 — 곡은 하나지만 장소는 넷이다
+    sound.setStageTone(this.stage.music.transpose, this.stage.music.bpmMul);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
 
     // 월드가 화면보다 넓다 — 카메라가 월드 밖을 비추지 않도록 경계를 준다

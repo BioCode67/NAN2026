@@ -169,6 +169,15 @@ class SoundSystem {
   private bgmTrack: BgmTrack | null = null;
   /** unlock 전에 들어온 재생 요청 */
   private pendingTrack: BgmTrack | null = null;
+  /**
+   * 무대가 곡을 비트는 정도 — 이조(반음)와 템포 배율.
+   *
+   * 무대마다 곡을 따로 쓰지 않는 이유: 네 곡을 쓰면 넷 다 어중간해진다.
+   * 같은 곡을 조만 옮겨도 "다른 곳에 왔다"는 인상은 충분히 나고,
+   * 곡 자체의 완성도는 하나에 몰아줄 수 있다.
+   */
+  private transpose = 0;
+  private bpmMul = 1;
   /*
    * 곡의 열기는 두 축에서 따로 올라온다.
    *   - 경기 진행(넷 → 둘 남음)
@@ -392,6 +401,9 @@ class SoundSystem {
     this.bgmTrack = track;
     this.matchHeat = 0;
     this.ruleHeat = 0;
+    // 무대 색은 곡을 새로 틀 때 초기화한다 (메뉴로 나가면 기준 조로 돌아온다)
+    this.transpose = 0;
+    this.bpmMul = 1;
     this.bgmStep = 0;
     this.bgmNextTime = this.ctx.currentTime + 0.1;
 
@@ -424,6 +436,17 @@ class SoundSystem {
     this.ruleHeat = level;
   }
 
+  /**
+   * 무대의 색을 곡에 입힌다.
+   *
+   * 곡이 도는 중에 바꿔도 된다 — 다음 스텝부터 반영되고, 화음 진행과
+   * 마디 구조는 그대로라 흐름이 끊기지 않는다.
+   */
+  setStageTone(transpose = 0, bpmMul = 1): void {
+    this.transpose = transpose;
+    this.bpmMul = bpmMul;
+  }
+
   private get heat(): number {
     return Math.max(this.matchHeat, this.ruleHeat);
   }
@@ -434,8 +457,20 @@ class SoundSystem {
    * 소리는 스크린샷에 안 찍힌다. 시퀀서가 멈춰 있어도 화면은 멀쩡하므로,
    * "곡이 실제로 돌고 있는가"는 이 값이 늘어나는지로만 확인할 수 있다.
    */
-  get bgmDebug(): { track: BgmTrack | null; step: number; heat: number } {
-    return { track: this.bgmTrack, step: this.bgmStep, heat: this.heat };
+  get bgmDebug(): {
+    track: BgmTrack | null;
+    step: number;
+    heat: number;
+    transpose: number;
+    bpmMul: number;
+  } {
+    return {
+      track: this.bgmTrack,
+      step: this.bgmStep,
+      heat: this.heat,
+      transpose: this.transpose,
+      bpmMul: this.bpmMul,
+    };
   }
 
   private scheduleBgm(): void {
@@ -444,7 +479,7 @@ class SoundSystem {
     if (!ctx || !track) return;
 
     // 뜨거워지면 조금 빨라진다. 크게 올리면 박자가 어긋난 것처럼 들린다
-    const bpm = track.bpm * (1 + this.heat * 0.045);
+    const bpm = track.bpm * this.bpmMul * (1 + this.heat * 0.045);
     const stepDur = 60 / bpm / 4;
 
     while (this.bgmNextTime < ctx.currentTime + BGM_LOOKAHEAD) {
@@ -489,7 +524,7 @@ class SoundSystem {
         // 마디 끝 두 칸은 한 옥타브 올려 다음 마디로 밀어 넣는다
         const note = s >= 14 ? chord.bass + 12 : chord.bass;
         this.tone({
-          freq: mtof(note),
+          freq: mtof(note + this.transpose),
           type: 'sawtooth',
           dur: stepDur * 1.5,
           gain: 0.15,
@@ -503,7 +538,7 @@ class SoundSystem {
     if (section.arp && s % 2 === 0) {
       const note = chord.tri[(s / 2) % 3]!;
       this.tone({
-        freq: mtof(note + 12),
+        freq: mtof(note + 12 + this.transpose),
         type: 'square',
         dur: stepDur * 0.9,
         gain: 0.035 + hot * 0.008,
@@ -518,7 +553,7 @@ class SoundSystem {
       const note = phrase[s];
       if (note) {
         this.tone({
-          freq: mtof(hot >= 2 ? note + 12 : note),
+          freq: mtof((hot >= 2 ? note + 12 : note) + this.transpose),
           type: 'triangle',
           dur: stepDur * 2.2,
           gain: 0.075,

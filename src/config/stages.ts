@@ -41,6 +41,19 @@ export interface StageConfig {
   accent: number;
   /** 중력 배율 (1 = 기본) */
   gravityMul: number;
+  /**
+   * 이 무대에서 곡을 어떻게 비틀 것인가.
+   *
+   * 곡을 무대마다 따로 쓰지 않는 이유 — 네 곡을 쓰면 넷 다 어중간해진다.
+   * 같은 곡을 조를 옮기고 템포를 바꾸는 것만으로도 "다른 곳에 왔다"는
+   * 인상은 충분히 나고, 곡 자체의 완성도는 하나에 몰아줄 수 있다.
+   */
+  music: {
+    /** 반음 단위 이조. 음수면 낮아진다 */
+    transpose: number;
+    /** 템포 배율 */
+    bpmMul: number;
+  };
   platforms: StagePlatform[];
 }
 
@@ -60,6 +73,8 @@ export const STAGES: StageConfig[] = [
     art: DEFAULT_STAGE_ART,
     accent: 0x60a5fa,
     gravityMul: 1,
+    // 기준 — 다른 무대는 이 곡을 비튼 것으로 들린다
+    music: { transpose: 0, bpmMul: 1 },
     platforms: [
       { x: 330, y: 440, w: 250 },
       { x: 1590, y: 440, w: 250 },
@@ -77,6 +92,8 @@ export const STAGES: StageConfig[] = [
     art: 'stage_storm',
     accent: 0x94a3b8,
     gravityMul: 1,
+    // 높고 위태로운 곳 — 조를 올리고 조금 몰아친다
+    music: { transpose: 3, bpmMul: 1.05 },
     platforms: [
       { x: 300, y: 420, w: 210 },
       { x: 1620, y: 420, w: 210 },
@@ -93,6 +110,8 @@ export const STAGES: StageConfig[] = [
     art: 'stage_server',
     accent: 0x4ade80,
     gravityMul: 1,
+    // 좁은 데서 계속 붙어 싸운다 — 낮게 깔고 가장 빠르게
+    music: { transpose: -2, bpmMul: 1.09 },
     platforms: [
       { x: 450, y: 470, w: 200 },
       { x: 1470, y: 470, w: 200 },
@@ -111,6 +130,8 @@ export const STAGES: StageConfig[] = [
     art: 'stage_moon',
     accent: 0xa5b4fc,
     gravityMul: 0.62,
+    // 천천히 떠다니는 곳 — 가장 낮고 가장 느리게
+    music: { transpose: -5, bpmMul: 0.88 },
     platforms: [
       { x: 380, y: 395, w: 150 },
       { x: 1540, y: 395, w: 150 },

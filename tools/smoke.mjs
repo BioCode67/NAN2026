@@ -1071,6 +1071,14 @@ console.log('연승 도전');
  */
 console.log('무대');
 {
+  /** 무대 → [이조(반음), 템포 배율] — stages.ts 와 맞춰 둔다 */
+  const TONES = {
+    exchange: [0, 1],
+    rooftop: [3, 1.05],
+    server: [-2, 1.09],
+    moon: [-5, 0.88],
+  };
+
   const WANT = [
     ['exchange', 5, 2200],
     ['rooftop', 3, 2200],
@@ -1113,9 +1121,29 @@ console.log('무대');
       errors.push(`[무대] ${info.name}: 중력이 ${gravity} 여야 하는데 ${info.gravity}`);
     }
 
+    /*
+     * 무대마다 곡이 달라지는가.
+     *
+     * 조와 템포는 눈으로 확인할 방법이 없다. 배선이 빠져도 화면은 멀쩡하고
+     * 소리는 스크린샷에 안 남으므로, 상태값으로만 잡을 수 있다.
+     */
+    const tone = await page.evaluate(() => window.sound?.bgmDebug ?? null);
+    const wantTone = TONES[id];
+    if (!tone) {
+      errors.push(`[무대] ${id} 곡 상태를 읽지 못했습니다`);
+    } else if (tone.transpose !== wantTone[0] || Math.abs(tone.bpmMul - wantTone[1]) > 0.001) {
+      errors.push(
+        `[무대] ${info.name}: 곡이 ${wantTone[0]}반음 · 템포 ${wantTone[1]}배여야 하는데 ` +
+          `${tone.transpose}반음 · ${tone.bpmMul}배`,
+      );
+    }
+
     await page.waitForTimeout(500);
     await shot(`stage-${id}`);
-    console.log(`  ✓ ${info.name} — 발판 ${info.platforms}개 · 중력 ${Math.round(info.gravity)}`);
+    console.log(
+      `  ✓ ${info.name} — 발판 ${info.platforms}개 · 중력 ${Math.round(info.gravity)} · ` +
+        `곡 ${tone?.transpose ?? '?'}반음 ${tone?.bpmMul ?? '?'}배`,
+    );
   }
 }
 } catch (err) {

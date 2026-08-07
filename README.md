@@ -375,6 +375,49 @@ npm run docs -- --open
 따로 두지 않는다 — 두 벌을 만들면 한쪽만 고치는 일이 반드시 생기고,
 그 차이는 제출 직전에 발견된다.
 
+## 함께 작업하기
+
+이 저장소는 **여러 대에서 같은 브랜치**로 작업한다 (노트북 VS Code + 클라우드 세션).
+서로 밀어내지 않으려면 두 가지만 지키면 된다.
+
+### 1. 올리기 전에 항상 당긴다
+
+```bash
+git config pull.rebase true    # 처음 한 번만. 작업 폴더마다 따로 해야 한다
+git pull                       # 커밋한 뒤, 밀기 전에
+npm test && npm run build      # 남의 변경과 합쳐진 상태로 한 번 확인
+git push
+```
+
+`pull.rebase` 를 켜 두면 "Merge branch…" 커밋이 쌓이지 않아 기록이 읽힌다.
+
+### 2. 같은 자리를 동시에 고치지 않는다
+
+| 영역 | 파일 |
+|---|---|
+| 전투·커맨드 | `src/characters/BaseCharacter.ts`, `src/systems/CombatSystem.ts` |
+| 프롬프트 기믹 | `src/systems/{PromptOrb,Gimmick,Rhythm}System.ts`, `src/config/gimmicks.ts` |
+| 캐릭터 데이터 | `src/config/characters.ts` |
+| 봇 | `src/systems/AISystem.ts`, `src/config/aiPersona.ts` |
+| 씬·UI | `src/scenes/*.ts`, `src/ui/*.ts` |
+| 아트 도구 | `tools/art-*.mjs`, `tools/gen-*.mjs`, `tools/*-sheet*.mjs` |
+
+`src/config/gameConfig.ts` 와 `src/types/index.ts` 는 누구나 건드리는 공용 파일이다.
+**추가만 하고 기존 줄은 옮기지 말 것.** 그러면 같은 파일을 둘이 고쳐도 자동으로 합쳐진다.
+
+### 3. 그림은 한 사람만 다시 만든다
+
+PNG·WebP는 줄 단위로 합칠 수 없다. 둘이 같은 그림을 새로 뽑으면 반드시 충돌한다.
+충돌하면 합치려 들지 말고 한쪽을 고른 뒤 다시 생성한다.
+
+```bash
+git checkout --theirs public/bg/stage_moon.png   # 상대 것으로
+npm run art:opt                                  # webp 다시 만들기
+```
+
+줄바꿈(CRLF/LF)과 이진 파일 처리는 `.gitattributes` 가 잡아 준다 — 윈도우와
+리눅스를 오갈 때 파일 전체가 바뀐 것처럼 보이는 사고를 막기 위한 것이다.
+
 ## 개발
 
 ```bash

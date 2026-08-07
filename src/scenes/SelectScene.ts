@@ -41,6 +41,44 @@ function layoutRoster(n: number) {
   const w = Math.min(CARD_MAX_W, byWidth, byHeight);
   return { cols, rows, w, h: w * CARD_RATIO, compact: n >= COMPACT_FROM };
 }
+
+/**
+ * 상대 셋을 고른다.
+ *
+ * ── 왜 그냥 무작위로 뽑지 않는가 ──────────────────────────────────
+ * 다섯 명일 때는 고유 메커니즘도 다섯 종이라, 아무나 뽑아도 셋이 전부 달랐다.
+ * 스무 명이 되면서 메커니즘 하나를 네 명이 나눠 쓴다. 이제 무작위로 뽑으면
+ * 열 판 중 두어 판은 봇 셋이 같은 메커니즘으로 나오고, 그러면 이름과 색만
+ * 다른 셋을 상대하게 된다 — 로스터를 스무 명으로 늘린 이유가 사라진다.
+ *
+ * 그래서 메커니즘이 겹치지 않는 쪽을 먼저 집는다. 캐릭터 자체는 여전히
+ * 무작위이므로 매 판 얼굴은 달라지고, 싸우는 방식만 매번 셋으로 갈린다.
+ * (플레이어가 고른 메커니즘도 피한다 — 자기 거울상을 상대하는 재미는 적다)
+ */
+function pickOpponents(playerId: CharacterId): CharacterId[] {
+  const pool = Phaser.Utils.Array.Shuffle(
+    CHARACTER_ORDER.filter((id) => id !== playerId),
+  );
+
+  const used = new Set<string>([CHARACTERS[playerId]!.signature.id]);
+  const picked: CharacterId[] = [];
+
+  for (const id of pool) {
+    if (picked.length >= AI_COUNT) break;
+    const sig = CHARACTERS[id]!.signature.id;
+    if (used.has(sig)) continue;
+    used.add(sig);
+    picked.push(id);
+  }
+
+  // 메커니즘 종류보다 자리가 많으면(로스터가 작을 때) 남은 자리는 그냥 채운다
+  for (const id of pool) {
+    if (picked.length >= AI_COUNT) break;
+    if (!picked.includes(id)) picked.push(id);
+  }
+
+  return picked;
+}
 /**
  * 카드 안 아바타가 차지하는 세로 크기.
  *
@@ -370,7 +408,8 @@ export class SelectScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         676,
-        '← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      (나머지 3명 중 3명이 AI로 참전)',
+        `← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      ` +
+          `(총 ${CHARACTER_ORDER.length}명 — 고유 메커니즘이 서로 다른 ${AI_COUNT}명이 AI로 참전)`,
         {
           fontFamily: GAME.FONT,
           fontSize: '15px',
@@ -491,11 +530,7 @@ export class SelectScene extends Phaser.Scene {
 
     const playerId = CHARACTER_ORDER[this.selectedIndex]!;
 
-    // 1P vs 3AI — 남은 4명 중 3명을 무작위로 뽑는다
-    const others = Phaser.Utils.Array.Shuffle(
-      CHARACTER_ORDER.filter((id) => id !== playerId),
-    );
-    const aiIds = others.slice(0, AI_COUNT);
+    const aiIds = pickOpponents(playerId);
 
     const card = this.cards[this.selectedIndex]!;
     this.tweens.add({

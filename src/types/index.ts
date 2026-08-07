@@ -4,7 +4,27 @@
  */
 
 /** 캐릭터 고유 ID */
-export type CharacterId = 'gates' | 'jobs' | 'musk' | 'linus' | 'pepe';
+export type CharacterId =
+  | 'gates'
+  | 'jobs'
+  | 'musk'
+  | 'linus'
+  | 'pepe'
+  | 'buffett'
+  | 'jensen'
+  | 'satoshi'
+  | 'zuck'
+  | 'bezos'
+  | 'altman'
+  | 'son'
+  | 'ant'
+  | 'bear'
+  | 'bull'
+  | 'guru'
+  | 'bot'
+  | 'chairman'
+  | 'doom'
+  | 'whale';
 
 /** 진영 구분 (플레이어 / AI 봇) */
 export type Side = 'player' | 'ai';
@@ -354,10 +374,47 @@ export type QuoteMood = keyof QuoteSet;
 /* 캐릭터 외형 (코드로 그리는 SD 아트)                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 머리 위에 얹는 것.
+ *
+ * ── 왜 필요한가 ────────────────────────────────────────────────────
+ * 다섯 명일 때는 머리 모양·안경·수염 조합만으로 서로 구별됐다. 스무 명이
+ * 되자 그 조합이 동나서, 시트가 없는 캐릭터들이 전부 "색만 다른 동그란 머리"가
+ * 됐다. 게다가 새 로스터에는 사람이 아닌 것들(황소·곰·고래·로봇)이 있는데
+ * 머리 모양만으로는 그게 짐승이라는 표시를 할 방법이 아예 없다.
+ *
+ * 실루엣은 색보다 훨씬 빨리 읽힌다. 머리 위 한 조각만 달라도
+ * 작게 줄어든 선택 화면 카드에서조차 누가 누구인지 구분된다.
+ */
+export type Headgear =
+  | 'none'
+  /** 안전모 — 챙이 앞으로 나온 반구 */
+  | 'helmet'
+  /** 뿔 — 좌우로 뻗은 두 개 */
+  | 'horns'
+  /** 짐승 귀 — 머리 위 양쪽의 둥근 귀 */
+  | 'ears'
+  /** 후드 — 얼굴을 감싸는 그늘 */
+  | 'hood'
+  /** 왕관 */
+  | 'crown'
+  /** 안테나 — 끝에 구슬이 달린 막대 */
+  | 'antenna'
+  /** 상투 — 정수리에 묶은 머리 */
+  | 'topknot'
+  /** 분수공 — 물을 뿜는 고래 머리 */
+  | 'blowhole'
+  /** 챙 모자 */
+  | 'cap';
+
 export interface ArtConfig {
   /** 머리 모양 */
   hair: 'side-part' | 'short' | 'swept' | 'messy' | 'none';
   hairColor: number;
+  /** 머리 위에 얹는 것. 적지 않으면 아무것도 얹지 않는다 */
+  headgear?: Headgear;
+  /** headgear 색. 적지 않으면 포인트 색(colors.accent)을 쓴다 */
+  headgearColor?: number;
   /** 안경 */
   glasses: 'round' | 'rect' | 'none';
   glassesColor: number;

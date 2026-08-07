@@ -87,6 +87,8 @@ export function readRosterOrder() {
   const src = readFileSync(`${DIR}/index.ts`, 'utf8');
   const body = /const ROSTER:[^=]*=\s*\[([^\]]*)\]/.exec(src)?.[1] ?? '';
   return body
+    // 배열 안에 줄 주석이 섞여 있다(윗줄/아랫줄 구분). 이름만 남긴다
+    .replace(/\/\/[^\n]*/g, '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);

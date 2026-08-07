@@ -87,6 +87,13 @@ export function buildFighterArt(
   /* --- 머리카락 --------------------------------------------------- */
   front.push(...buildHair(scene, art, outline));
 
+  /*
+   * --- 머리 위 ----------------------------------------------------
+   * 머리카락보다 뒤(=화면상 위)에 그린다. 뿔·귀·안테나는 머리 밖으로
+   * 삐져나와야 실루엣이 되는데, 머리카락 뒤에 두면 가려지기 때문이다.
+   */
+  front.push(...buildHeadgear(scene, art, cfg.colors.accent, outline));
+
   /* --- 수염 ------------------------------------------------------- */
   if (art.beard) {
     const beard = scene.add.ellipse(FACE_DX, HEAD_CY + 17, 40, 22, art.beardColor);
@@ -162,6 +169,133 @@ function buildHair(
       [-18, -4, 12].forEach((x, i) => {
         out.push(scene.add.circle(x, HEAD_CY - 28 - (i % 2) * 4, 8, c));
       });
+      break;
+    }
+
+    default:
+      break;
+  }
+
+  return out;
+}
+
+/**
+ * 머리 위 한 조각.
+ *
+ * 도형 몇 개로 끝내되, **머리 실루엣 밖으로 나가는 것**을 우선한다.
+ * 선택 화면에서 카드가 92px까지 줄어들면 얼굴 안쪽 디테일은 뭉개져 안 보인다.
+ * 밖으로 튀어나온 뿔·귀·안테나만이 그 크기에서도 남는다.
+ */
+function buildHeadgear(
+  scene: Phaser.Scene,
+  art: ArtConfig,
+  accent: number,
+  outline: number,
+): Phaser.GameObjects.GameObject[] {
+  const kind = art.headgear ?? 'none';
+  if (kind === 'none') return [];
+
+  const c = art.headgearColor ?? accent;
+  const out: Phaser.GameObjects.GameObject[] = [];
+  const top = HEAD_CY - 20;
+
+  switch (kind) {
+    // 동학 개미 — 안전모. 챙이 앞으로 나온다
+    case 'helmet': {
+      const dome = scene.add.ellipse(0, top - 4, 60, 34, c);
+      dome.setStrokeStyle(2.5, outline, 0.45);
+      const brim = scene.add.ellipse(FACE_DX + 6, top + 9, 54, 10, shade(c, -0.2));
+      brim.setStrokeStyle(2, outline, 0.4);
+      out.push(dome, brim);
+      break;
+    }
+
+    // 월가 황소 — 좌우로 뻗은 뿔. 실루엣이 가장 크게 벌어진다
+    case 'horns': {
+      [-1, 1].forEach((s) => {
+        const horn = scene.add.triangle(
+          s * 26,
+          top,
+          0, 14,
+          s * 26, -18,
+          s * 2, 16,
+          c,
+        );
+        horn.setStrokeStyle(2.5, outline, 0.5);
+        out.push(horn);
+      });
+      break;
+    }
+
+    // 공매도 곰 — 머리 위 양쪽의 둥근 귀
+    case 'ears': {
+      [-1, 1].forEach((s) => {
+        const ear = scene.add.circle(s * 20, top - 6, 11, c);
+        ear.setStrokeStyle(2.5, outline, 0.45);
+        const inner = scene.add.circle(s * 20, top - 6, 5, shade(c, 0.35));
+        out.push(ear, inner);
+      });
+      break;
+    }
+
+    // 사토시 — 얼굴을 감싸는 후드. 정체를 가리는 것이 이 캐릭터다
+    case 'hood': {
+      const shell = scene.add.ellipse(-2, HEAD_CY - 6, 74, 66, c);
+      shell.setStrokeStyle(2.5, outline, 0.5);
+      // 얼굴 자리를 파낸다 — 그늘에 눈만 남는 인상
+      const shadow = scene.add.ellipse(FACE_DX + 2, HEAD_CY - 2, 50, 48, 0x0a0e18);
+      shadow.setAlpha(0.62);
+      out.push(shell, shadow);
+      break;
+    }
+
+    // 왕 회장님 — 왕관
+    case 'crown': {
+      const band = scene.add.rectangle(0, top - 2, 48, 9, c);
+      band.setStrokeStyle(2, outline, 0.45);
+      out.push(band);
+      [-16, 0, 16].forEach((x) => {
+        out.push(scene.add.triangle(x, top - 12, 0, 10, 8, -8, 16, 10, c));
+      });
+      break;
+    }
+
+    // 챗 도우미 — 끝에 구슬이 달린 안테나
+    case 'antenna': {
+      const rod = scene.add.rectangle(2, top - 12, 3.5, 22, shade(c, -0.3));
+      const bulb = scene.add.circle(2, top - 24, 7, c);
+      bulb.setStrokeStyle(2, outline, 0.4);
+      out.push(rod, bulb);
+      break;
+    }
+
+    // 차트 도사 — 상투
+    case 'topknot': {
+      const knot = scene.add.circle(0, top - 14, 12, c);
+      knot.setStrokeStyle(2.5, outline, 0.45);
+      const pin = scene.add.rectangle(0, top - 14, 32, 3.5, shade(c, 0.4));
+      out.push(knot, pin);
+      break;
+    }
+
+    // 큰손 고래 — 정수리에서 물을 뿜는다
+    case 'blowhole': {
+      const hole = scene.add.ellipse(-2, top + 2, 14, 8, shade(c, -0.4));
+      out.push(hole);
+      [0, 1, 2].forEach((i) => {
+        const drop = scene.add.circle(-2 + (i - 1) * 9, top - 12 - i * 6, 5 - i, c);
+        drop.setAlpha(0.85);
+        out.push(drop);
+      });
+      break;
+    }
+
+    // 챙 모자
+    case 'cap': {
+      const dome = scene.add.ellipse(0, top - 3, 56, 28, c);
+      dome.setStrokeStyle(2.5, outline, 0.45);
+      const brim = scene.add.ellipse(FACE_DX + 16, top + 8, 36, 9, shade(c, -0.25));
+      out.push(dome, brim);
       break;
     }
 

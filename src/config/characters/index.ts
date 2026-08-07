@@ -5,6 +5,21 @@ import { jobs } from './jobs';
 import { musk } from './musk';
 import { linus } from './linus';
 import { pepe } from './pepe';
+import { buffett } from './buffett';
+import { jensen } from './jensen';
+import { satoshi } from './satoshi';
+import { zuck } from './zuck';
+import { bezos } from './bezos';
+import { altman } from './altman';
+import { son } from './son';
+import { ant } from './ant';
+import { bear } from './bear';
+import { bull } from './bull';
+import { guru } from './guru';
+import { bot } from './bot';
+import { chairman } from './chairman';
+import { doom } from './doom';
+import { whale } from './whale';
 
 /**
  * 로스터.
@@ -24,9 +39,18 @@ import { pepe } from './pepe';
  *   4. npm run test:char                (빠진 것이 있으면 여기서 잡힌다)
  *
  * ── 순서가 곧 선택 화면 순서다 ────────────────────────────────────
- * 화면에 카드로 늘어서므로, 다루기 쉬운 캐릭터를 앞에 두는 편이 낫다.
+ * 화면에 10칸씩 두 줄로 늘어선다. 윗줄에는 조작이 무난한 쪽을,
+ * 아랫줄에는 극단적인 쪽(최경량 개미 · 최중량 고래 · 카운터형)을 둔다.
+ * 처음 켠 사람이 왼쪽 위부터 훑어도 무리 없이 시작할 수 있게 하는 배치다.
  */
-const ROSTER: CharacterConfig[] = [gates, jobs, musk, linus, pepe];
+const ROSTER: CharacterConfig[] = [
+  // 윗줄 — 기본기가 무난한 쪽
+  gates, jobs, musk, linus, pepe,
+  buffett, jensen, satoshi, zuck, bezos,
+  // 아랫줄 — 성향이 뚜렷한 쪽
+  altman, son, ant, bear, bull,
+  guru, bot, chairman, doom, whale,
+];
 
 export const CHARACTERS = Object.fromEntries(
   ROSTER.map((c) => [c.id, c]),

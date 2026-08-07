@@ -943,8 +943,40 @@ for (let i = 0; i < 20; i++) {
   if (i % 6 === 0) await page.keyboard.press('l');
 }
 await shot('mid-battle');
-await page.waitForTimeout(2500);
+
+/*
+ * 결과 화면까지 간다.
+ *
+ * 전적표는 판이 끝나야만 나오는 화면이라, 여기까지 오지 않으면 통째로
+ * 검증되지 않는다. 이기든 지든 상관없다 — 표가 그려지고 숫자가 채워지는지만 본다.
+ */
+await waitUntil(
+  (st) => !st.active,
+  '전투 종료 대기',
+  40000,
+  true,
+);
+await page.waitForTimeout(1200);
 await shot('final');
+
+const board = await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  const me = s.stats?.get(s.player.fighterId);
+  return me
+    ? { dealt: me.dealt, taken: me.taken, hits: me.hits, over: !s.battleActive }
+    : null;
+});
+if (!board) {
+  errors.push('[결과] 전적을 읽지 못했습니다');
+} else if (!board.over) {
+  console.log('  · 아직 전투 중이라 결과 화면은 건너뜁니다');
+} else if (board.hits === 0 && board.taken === 0) {
+  errors.push('[결과] 한 판을 다 치렀는데 전적이 비어 있습니다');
+} else {
+  console.log(
+    `  ✓ 전적 집계 — 준 피해 ${Math.round(board.dealt)} · 맞은 피해 ${Math.round(board.taken)} · 적중 ${board.hits}`,
+  );
+}
 
 /*
  * 무대 네 곳.

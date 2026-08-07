@@ -24,6 +24,7 @@ import { ProjectileSystem } from '../systems/ProjectileSystem';
 import { PromptOrbSystem } from '../systems/PromptOrbSystem';
 import { RhythmSystem } from '../systems/RhythmSystem';
 import { sound } from '../systems/SoundSystem';
+import { MatchStats } from '../systems/MatchStats';
 import { StockSystem } from '../systems/StockSystem';
 import { BannerLanes } from '../ui/BannerLanes';
 import { closePromptOverlay, openPromptOverlay } from '../ui/PromptOverlay';
@@ -93,6 +94,8 @@ export class BattleScene extends Phaser.Scene {
   private orbs!: PromptOrbSystem;
   private gimmicks!: GimmickSystem;
   private rhythm!: RhythmSystem;
+  /** 이 판의 전적 — 결과 화면에서 보여준다 */
+  private stats!: MatchStats;
 
   /** 프롬프트 입력 중 — 전투를 멈추고 조작을 막는다 */
   private prompting = false;
@@ -146,6 +149,10 @@ export class BattleScene extends Phaser.Scene {
     this.koOrder = [];
     this.battleActive = false;
     resetQuoteThrottle();
+
+    // 앞 판의 집계가 남아 있으면 두 판이 합산된다
+    this.stats?.destroy();
+    this.stats = new MatchStats();
 
     this.stage =
       (data.stageId && STAGE_BY_ID[data.stageId as StageId]) || pickStage(this.lastStageId);
@@ -1010,11 +1017,13 @@ export class BattleScene extends Phaser.Scene {
       `AI 해석: ${reading.reason} · 확신 ${Math.round(reading.confidence * 100)}%`;
 
     this.gimmicks.activate(reading.primary, text, this.time.now, note);
+    this.stats.countGimmick();
     if (reading.secondary) {
       // 조금 늦춰 건다 — 같은 순간에 두 배너가 겹쳐 뜨면 둘 다 안 읽힌다
       this.time.delayedCall(650, () => {
         if (!this.battleActive) return;
         this.gimmicks.activate(reading.secondary!, text, this.time.now, '함께 읽은 것');
+        this.stats.countGimmick();
       });
     }
 
@@ -1050,6 +1059,14 @@ export class BattleScene extends Phaser.Scene {
      * 그림이 있으면 전투 장면을 덮고, 없으면 지금까지처럼 검게 깐다.
      * 어느 쪽이든 그 위에 반투명 막을 한 겹 더 둬 글자를 읽히게 한다.
      */
+    /*
+     * HUD를 내린다.
+     *
+     * 판이 끝난 뒤의 주가 막대는 아무 정보도 아니고, 화면 아래 넉넉한
+     * 자리를 차지해 전적표가 그 위로 겹친다. 결과는 결과만 보여야 한다.
+     */
+    this.hudLayer?.setVisible(false);
+
     const art = addBackdrop(this, 'ui_result_bg', GAME.WIDTH, GAME.HEIGHT);
     art?.setDepth(DEPTH.OVERLAY).setScrollFactor(0);
 
@@ -1062,7 +1079,7 @@ export class BattleScene extends Phaser.Scene {
     const title = this.add
       .text(
         GAME.WIDTH / 2,
-        280,
+        170,
         playerWon ? '승리!' : '패배…',
         {
           fontFamily: GAME.FONT,
@@ -1085,7 +1102,7 @@ export class BattleScene extends Phaser.Scene {
     this.add
       .text(
         GAME.WIDTH / 2,
-        358,
+        250,
         winner
           ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%\n${rankText}`
           : '전원 상장폐지',
@@ -1100,8 +1117,10 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
 
+    this.buildScoreboard();
+
     this.add
-      .text(GAME.WIDTH / 2, 430, 'R : 다시하기      ESC : 캐릭터 선택', {
+      .text(GAME.WIDTH / 2, 648, 'R : 다시하기      ESC : 캐릭터 선택', {
         fontFamily: GAME.FONT,
         fontSize: '18px',
         color: '#8fa6d8',
@@ -1115,6 +1134,124 @@ export class BattleScene extends Phaser.Scene {
       duration: 420,
       ease: 'Back.easeOut',
     });
+  }
+
+  /**
+   * 네 명의 전적표.
+   *
+   * ── 왜 붙였는가 ──────────────────────────────────────────────────
+   * 전에는 "승리!" 와 등수 한 줄이 전부였다. 네 명이 3분 동안 치고받은
+   * 결과가 그 한 줄로 요약되면 방금 무슨 일이 있었는지 남지 않는다.
+   *
+   * 캐릭터가 스무 명인 게임에서는 **내가 뭘 했는지**가 다음 판의 선택을
+   * 만든다. "이 캐릭터로 340을 넣었네", "가장 많이 쓴 건 강제 종료였네" —
+   * 둘 다 다음에 누구를 고를지에 영향을 준다. 그 정보가 없으면
+   * 스무 명이 그냥 스무 개의 이름으로 남는다.
+   */
+  private buildScoreboard(): void {
+    const top = this.stats.topDealer();
+
+    const rowH = 46;
+    const y0 = 358;
+    const left = GAME.WIDTH / 2 - 430;
+
+    const header = ['', '준 피해', '맞은 피해', 'KO', '최고 주가', '가장 많이 쓴 기술'];
+    const colX = [0, 250, 350, 448, 520, 640];
+
+    header.forEach((label, i) => {
+      if (!label) return;
+      this.add
+        .text(left + colX[i]!, y0 - 26, label, {
+          fontFamily: GAME.FONT,
+          fontSize: '13px',
+          color: '#6c86c4',
+        })
+        .setOrigin(i === 5 ? 0 : 0.5, 0.5)
+        .setDepth(DEPTH.OVERLAY + 1);
+    });
+
+    this.add
+      .rectangle(GAME.WIDTH / 2, y0 - 10, 900, 2, 0x2f3f6b)
+      .setDepth(DEPTH.OVERLAY + 1);
+
+    /* 준 피해 순으로 세운다 — 순위표는 등수가 보여야 순위표다 */
+    const ordered = [...this.fighters].sort(
+      (a, b) => this.stats.get(b.fighterId).dealt - this.stats.get(a.fighterId).dealt,
+    );
+
+    ordered.forEach((f, i) => {
+      const r = this.stats.get(f.fighterId);
+      const fav = this.stats.favouriteMove(f.fighterId);
+      const y = y0 + 12 + i * rowH;
+      const isPlayer = f.side === 'player';
+      const isTop = top?.id === f.fighterId && r.dealt > 0;
+
+      // 내 줄만 배경을 깐다 — 넷 중 어느 줄이 나인지 한눈에 찾게
+      if (isPlayer) {
+        this.add
+          .rectangle(GAME.WIDTH / 2, y, 900, rowH - 6, f.cfg.colors.accent, 0.12)
+          .setDepth(DEPTH.OVERLAY + 1);
+      }
+
+      const nameColor = `#${f.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+      this.add
+        .text(left - 40, y, `${isTop ? '👑 ' : ''}${f.cfg.name}`, {
+          fontFamily: GAME.FONT,
+          fontSize: '18px',
+          color: nameColor,
+          fontStyle: isPlayer ? 'bold' : 'normal',
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(DEPTH.OVERLAY + 2);
+
+      const cells: Array<[number, string, string]> = [
+        [colX[1]!, String(Math.round(r.dealt)), '#e8eeff'],
+        [colX[2]!, String(Math.round(r.taken)), '#9fb3dd'],
+        [colX[3]!, String(r.kos), r.kos ? '#ffd54a' : '#54608a'],
+        [colX[4]!, `${Math.round(r.peakStock)}%`, '#9fb3dd'],
+      ];
+      for (const [x, text, color] of cells) {
+        this.add
+          .text(left + x, y, text, {
+            fontFamily: GAME.FONT,
+            fontSize: '18px',
+            color,
+          })
+          .setOrigin(0.5)
+          .setDepth(DEPTH.OVERLAY + 2);
+      }
+
+      this.add
+        .text(
+          left + colX[5]!,
+          y,
+          fav ? `${fav.name} ×${fav.count}` : '한 대도 못 맞혔다',
+          {
+            fontFamily: GAME.FONT,
+            fontSize: '16px',
+            color: fav ? '#cbd5e1' : '#54608a',
+          },
+        )
+        .setOrigin(0, 0.5)
+        .setDepth(DEPTH.OVERLAY + 2);
+    });
+
+    /* 이 판 전체를 한 줄로 — 어디서 싸웠고 문장을 몇 번 썼는가 */
+    const me = this.stats.get(this.player.fighterId);
+    this.add
+      .text(
+        GAME.WIDTH / 2,
+        y0 + 12 + ordered.length * rowH + 24,
+        `${this.stage.name} · 프롬프트 ${this.stats.gimmicks}회` +
+          (me.bestHitName ? ` · 내 최고 한 방 ${me.bestHitName} ${Math.round(me.bestHit)}` : ''),
+        {
+          fontFamily: GAME.FONT,
+          fontSize: '15px',
+          color: '#6c86c4',
+        },
+      )
+      .setOrigin(0.5)
+      .setDepth(DEPTH.OVERLAY + 1);
   }
 
   /** 화면 중앙 대형 안내 문구 */
@@ -1635,6 +1772,7 @@ export class BattleScene extends Phaser.Scene {
     this.gimmicks?.reset();
     this.orbs?.reset();
     this.rhythm?.reset();
+    this.stats?.destroy();
     closePromptOverlay();
     this.prompting = false;
     if (this.input.keyboard) this.input.keyboard.enabled = true;

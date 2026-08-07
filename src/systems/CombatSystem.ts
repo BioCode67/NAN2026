@@ -452,6 +452,8 @@ export class CombatSystem {
       damage: result.damage,
       absorbed: result.absorbed,
       attackType: atk.type,
+      // 결과 화면이 "가장 많이 쓴 기술"을 세는 데 쓴다
+      moveName: atk.name,
       x: hitX,
       y: hitY,
     });

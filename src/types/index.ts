@@ -586,6 +586,8 @@ export interface GameEventMap {
     damage: number;
     absorbed: number;
     attackType: AttackType;
+    /** 이 타격을 낸 기술 이름 — 전적 집계에 쓴다 */
+    moveName: string;
     x: number;
     y: number;
   };

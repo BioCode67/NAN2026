@@ -70,6 +70,19 @@ export const GIMMICKS: GimmickSpec[] = [
     ],
   },
   {
+    id: 'item_gold',
+    kind: 'item',
+    name: '배당금',
+    desc: '전원의 주가가 30% 오른다. 다 같이 부자',
+    icon: '💰',
+    color: 0xffd54a,
+    duration: 0,
+    keywords: [
+      '배당', '돈', '부자', '보너스', '지급', '뿌려', '용돈', '월급', '상승장',
+      'dividend', 'money', 'rich', 'bonus', 'payout',
+    ],
+  },
+  {
     id: 'item_power',
     kind: 'item',
     name: '무기고 개방',
@@ -140,6 +153,19 @@ export const GIMMICKS: GimmickSpec[] = [
     ],
   },
   {
+    id: 'map_bounce',
+    kind: 'map',
+    name: '트램펄린',
+    desc: '바닥이 튕긴다. 착지할 때마다 다시 떠오른다',
+    icon: '🛼',
+    color: 0xf472b6,
+    duration: 15000,
+    keywords: [
+      '튕', '통통', '트램', '점프대', '스프링', '용수철', '탱탱',
+      'bounce', 'trampoline', 'spring', 'jumpy',
+    ],
+  },
+  {
     id: 'map_blackout',
     kind: 'map',
     name: '정전',
@@ -207,6 +233,60 @@ export const GIMMICKS: GimmickSpec[] = [
     keywords: [
       '거대', '커', '크게', '巨', '자이언트', '대형', '뚱', '괴수',
       'giant', 'big', 'huge', 'large', 'grow', 'kaiju',
+    ],
+  },
+  {
+    id: 'rule_tiny',
+    kind: 'rule',
+    name: '미니어처',
+    desc: '전원이 0.6배로 작아진다. 리치도 함께 줄어든다',
+    icon: '🐜',
+    color: 0x38bdf8,
+    duration: 16000,
+    keywords: [
+      '작', '축소', '미니', '쪼그', '조그', '꼬마', '난쟁이', '줄여', '줄이',
+      'tiny', 'small', 'mini', 'shrink', 'little',
+    ],
+  },
+  {
+    id: 'rule_speed',
+    kind: 'rule',
+    name: '초고속',
+    desc: '판이 1.6배 빨리 돈다. 손이 못 따라간다',
+    icon: '⚡',
+    color: 0xfacc15,
+    duration: 14000,
+    keywords: [
+      '빠르', '빨리', '스피드', '고속', '가속', '광속', '급하', '서둘',
+      'fast', 'speed', 'quick', 'rush', 'hyper', 'turbo',
+    ],
+  },
+  {
+    id: 'rule_swap',
+    kind: 'rule',
+    name: '자리 바꾸기',
+    desc: '전원의 위치가 뒤섞인다',
+    icon: '🌀',
+    color: 0xc084fc,
+    // 즉시 발동 — 섞고 나면 끝이다
+    duration: 0,
+    keywords: [
+      '바꿔', '바꾸', '섞', '교체', '자리', '위치', '텔레포트', '순간이동',
+      'swap', 'shuffle', 'teleport', 'switch', 'scramble',
+    ],
+  },
+  {
+    id: 'rule_share',
+    kind: 'rule',
+    name: '균등 분배',
+    desc: '전원의 주가가 평균으로 맞춰진다',
+    icon: '⚖️',
+    color: 0x4ade80,
+    duration: 0,
+    keywords: [
+      '나눠', '나누', '평등', '균등', '똑같', '공평', '분배', '평균', '리셋',
+      '공산', '사회주의',
+      'share', 'equal', 'fair', 'split', 'average', 'reset',
     ],
   },
   {

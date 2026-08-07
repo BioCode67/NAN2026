@@ -127,8 +127,21 @@ for (const g of GIMMICKS) {
   ids.add(g.id);
 
   if (!g.keywords.length) fail(`${g.id}: 키워드가 없다 (영영 선택되지 않는다)`);
-  if (g.kind !== 'item' && g.duration <= 0) {
-    fail(`${g.id}: 지속형인데 duration이 0이다`);
+
+  /*
+   * duration 0 은 "즉시 발동하고 끝"이라는 뜻이다.
+   *
+   * 예전에는 갈래(kind)로 판별했다 — item 만 즉발이고 나머지는 지속형이라고.
+   * 자리 바꾸기·균등 분배처럼 **한 번에 끝나는 룰**이 생기면서 그 가정이
+   * 깨졌다. 갈래는 "무엇을 바꾸는가"이지 "얼마나 가는가"가 아니다.
+   *
+   * 대신 지속형이라면 그 길이가 말이 되는지를 본다. 너무 짧으면 뜬 줄도
+   * 모르고 지나가고, 너무 길면 그 판이 통째로 그 기믹의 판이 된다.
+   */
+  if (g.duration < 0) {
+    fail(`${g.id}: duration 이 음수다`);
+  } else if (g.duration > 0 && (g.duration < 6000 || g.duration > 30000)) {
+    fail(`${g.id}: 지속 시간이 ${g.duration}ms — 6~30초 사이여야 한다`);
   }
 }
 if (!failed) console.log(`✓ 카탈로그 ${GIMMICKS.length}종 정합성`);

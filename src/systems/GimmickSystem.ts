@@ -152,6 +152,17 @@ export class GimmickSystem {
       case 'item_power':
         this.ctx.items.dropBurst(3, 'stockOption');
         return;
+      case 'item_gold':
+        /*
+         * 다 같이 오른다.
+         *
+         * 아무도 손해를 안 보는데도 판이 바뀐다 — 전원이 위 등급으로 올라가
+         * 오라가 켜지고 공격력이 붙는다. "상승장"이라는 말이 그대로 규칙이 된다.
+         */
+        for (const f of this.ctx.fighters()) {
+          if (f.alive) this.ctx.stock.add(f.fighterId, 30);
+        }
+        return;
 
       /* --- 맵 ------------------------------------------------------ */
       case 'map_moon':
@@ -164,6 +175,8 @@ export class GimmickSystem {
         return this.applyNarrow();
       case 'map_blackout':
         return this.applyBlackout();
+      case 'map_bounce':
+        return this.applyBounce();
 
       /* --- 룰 ------------------------------------------------------ */
       case 'rule_rhythm':
@@ -186,6 +199,15 @@ export class GimmickSystem {
         return this.applyGiant(1.6);
       case 'rule_slow':
         return this.applySlow(1.85);
+      case 'rule_tiny':
+        return this.applyGiant(0.6);
+      case 'rule_speed':
+        // 슬로우와 같은 장치다 — 1보다 작으면 빨라진다
+        return this.applySlow(0.62);
+      case 'rule_swap':
+        return this.applySwap();
+      case 'rule_share':
+        return this.applyShare();
 
       default:
         return;
@@ -195,6 +217,34 @@ export class GimmickSystem {
   /* ================================================================ */
   /* 맵 기믹                                                          */
   /* ================================================================ */
+
+  /**
+   * 바닥이 튕긴다.
+   *
+   * 착지가 곧 다음 도약이 되므로 아무도 땅에 붙어 있지 못한다.
+   * 지상 연속기가 통째로 안 들어가고 판이 공중전으로 바뀐다 —
+   * 중력을 바꾸는 것과는 다른 방식으로 "어디서 싸우는가"를 흔든다.
+   */
+  private applyBounce() {
+    /** 방금 튕긴 사람 — 한 착지에 한 번만 튕겨야 바닥에서 진동하지 않는다 */
+    const cooling = new Map<string, number>();
+
+    return {
+      tick: (t: number) => {
+        for (const f of this.ctx.fighters()) {
+          if (!f.alive || !f.body) continue;
+          const onGround = f.body.blocked.down || f.body.touching.down;
+          if (!onGround) continue;
+          if (t < (cooling.get(f.fighterId) ?? 0)) continue;
+
+          cooling.set(f.fighterId, t + 240);
+          // 세게 떨어질수록 높이 튄다. 최소값을 둬서 가만히 서 있어도 튄다
+          f.body.setVelocityY(-Math.max(560, Math.abs(f.body.velocity.y) * 0.85));
+          f.pulseSquash(1.3, 0.72, 160);
+        }
+      },
+    };
+  }
 
   /** 중력을 바꾼다 — 점프가 통째로 달라진다 */
   private applyGravity(mul: number) {
@@ -384,6 +434,48 @@ export class GimmickSystem {
   /* ================================================================ */
   /* 룰 기믹                                                          */
   /* ================================================================ */
+
+  /**
+   * 전원의 자리를 뒤섞는다.
+   *
+   * 몰아붙이던 쪽과 몰리던 쪽이 한순간에 뒤집힌다. 지속 시간이 없는 대신
+   * **그 한 번이 판을 통째로 흔든다** — 유리한 자리를 잡는 것도 실력인데,
+   * 그 실력을 문장 한 줄이 지운다.
+   */
+  private applySwap() {
+    const alive = this.ctx.fighters().filter((f) => f.alive && f.body);
+    if (alive.length < 2) return;
+
+    const spots = alive.map((f) => ({ x: f.x, y: f.y }));
+    // 제자리에 그대로 남는 사람이 없도록 한 칸씩 민다
+    alive.forEach((f, i) => {
+      const to = spots[(i + 1) % spots.length]!;
+      f.setPosition(to.x, to.y);
+      f.body.setVelocity(0, 0);
+      f.pulseSquash(0.6, 1.5, 220);
+    });
+    return;
+  }
+
+  /**
+   * 주가를 전원 평균으로 맞춘다.
+   *
+   * 앞서던 사람은 잃고 뒤처진 사람은 얻는다. 주식이 소재인 게임에서
+   * 가장 통쾌한 한 줄이고, 왕관을 쓰고 있던 사람에게는 재앙이다.
+   */
+  private applyShare() {
+    const alive = this.ctx.fighters().filter((f) => f.alive);
+    if (alive.length < 2) return;
+
+    const avg = Math.round(
+      alive.reduce((sum, f) => sum + this.ctx.stock.get(f.fighterId), 0) / alive.length,
+    );
+    for (const f of alive) {
+      this.ctx.stock.setExact(f.fighterId, avg);
+      f.flash();
+    }
+    return;
+  }
 
   /** 전원이 커진다 — 히트박스와 물리 바디까지 함께 커진다 */
   private applyGiant(scale: number) {

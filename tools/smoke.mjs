@@ -527,12 +527,27 @@ for (let i = 0; i < PICK; i++) {
 await shot('picked');
 
 await page.keyboard.press('Enter');
-// 페이드아웃 + 전투 생성 + READY/FIGHT 연출
-await page.waitForTimeout(3600);
+
+/*
+ * 전투 씬이 실제로 설 때까지 기다린다.
+ *
+ * 예전에는 3.6초를 재고 넘어갔다. 저사양에서 부팅이 밀리면 그 시점에는
+ * 아직 선택 화면이라, 곡이 안 바뀐 게 아니라 **전투가 시작을 안 한 것**인데
+ * "배선이 빠졌다"는 결론이 났다. 실제로 그렇게 한 번 헛다리를 짚었다.
+ */
+await page
+  .waitForFunction(() => !!window.game?.scene?.isActive('Battle'), null, { timeout: 20000 })
+  .catch(() => {});
 await shot('battle-start');
 
 // 전투에 들어오면 곡이 바뀐다 — 메뉴 곡이 그대로 흐르면 배선이 빠진 것이다
 {
+  // 씬이 서고 나서도 곡 전환은 한 박자 뒤라, 바뀔 때까지 잠깐 지켜본다
+  await page
+    .waitForFunction(() => window.sound?.bgmDebug?.track === 'battle', null, {
+      timeout: 8000,
+    })
+    .catch(() => {});
   const now = await page.evaluate(() => window.sound?.bgmDebug ?? null);
   if (now?.track !== 'battle') {
     errors.push(`[BGM] 전투 곡으로 바뀌지 않았습니다: ${now?.track}`);
@@ -540,6 +555,20 @@ await shot('battle-start');
     console.log('  ✓ 전투 곡으로 전환');
   }
 }
+
+/*
+ * 개시 연출(READY? → FIGHT!)이 끝날 때까지 기다린다.
+ *
+ * 그 동안에는 handleInput 이 아예 안 불린다 — 여기서부터 키를 넣으므로,
+ * 연출 중에 시작하면 첫 몇 커맨드가 통째로 사라져 "연속기가 안 나간다"가 된다.
+ */
+await page
+  .waitForFunction(
+    () => window.game.scene.getScene('Battle')?.battleActive === true,
+    null,
+    { timeout: 20000 },
+  )
+  .catch(() => errors.push('[부팅] FIGHT! 까지 가지 못했습니다'));
 
 console.log('이동 · 점프');
 await hold('d', 500);
@@ -1252,6 +1281,91 @@ console.log('조작감');
     console.log('  ✓ 회피 — 방어 중 A/D 구르기 + 무적');
   }
   await shot('dodge');
+}
+
+/*
+ * 새로 넣은 기믹들.
+ *
+ * 카탈로그에 적어 두는 것과 실제로 걸리는 것은 다른 일이다. 이름만 있고
+ * 아무 일도 안 일어나는 기믹이 섞여 있어도 화면은 멀쩡해 보인다 —
+ * 문장을 넣어 걸어 보고 **판이 실제로 달라졌는지**를 숫자로 확인한다.
+ */
+console.log('새 기믹');
+{
+  /*
+   * 확인하는 동안 봇을 멈춰 세운다.
+   *
+   * 즉시 발동하는 기믹은 "건 직후"의 값으로 확인해야 하는데, 그 사이에
+   * 누가 한 대 맞으면 주가가 다시 벌어진다. 그건 기믹이 안 걸린 것이 아니라
+   * 계속 싸우고 있는 것이다 — 판단만 멈추면 값이 흔들리지 않는다.
+   */
+  await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    window.__gimAis = s.ais.splice(0);
+    s.fighters.filter((f) => f.side === 'ai').forEach((f) => f.moveHorizontal(0));
+  });
+
+  const tryGimmick = async (text, check, waitMs = 500) => {
+    const before = await page.evaluate(check);
+    const got = await page.evaluate(
+      (t) => {
+        const s = window.game.scene.getScene('Battle');
+        s.applyPrompt(t, '검사');
+        return s.gimmicks.getActive().map((a) => a.spec.name);
+      },
+      text,
+    );
+    if (waitMs) await page.waitForTimeout(waitMs);
+    const after = await page.evaluate(check);
+    return { got, before, after };
+  };
+
+  /* 균등 분배 — 주가가 전원 같아진다 */
+  await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    s.fighters.forEach((f, i) => s.stock.setExact(f.fighterId, 60 + i * 70));
+  });
+  const share = await tryGimmick('다 같이 똑같이 나눠', () => {
+    const s = window.game.scene.getScene('Battle');
+    const v = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+    return Math.max(...v) - Math.min(...v);
+  }, 0);
+  if (share.after >= share.before || share.after > 2) {
+    errors.push(`[기믹] 균등 분배 뒤에도 주가가 벌어져 있습니다 (${share.before}→${share.after})`);
+  } else {
+    console.log(`  ✓ 균등 분배 — 주가 격차 ${share.before} → ${share.after}`);
+  }
+
+  /* 미니어처 — 몸이 작아진다 */
+  const tiny = await tryGimmick('전부 조그맣게 만들어', () =>
+    window.game.scene.getScene('Battle').player.getSizeScale?.() ??
+    window.game.scene.getScene('Battle').player.sizeScale,
+  );
+  if (!(tiny.after < tiny.before)) {
+    errors.push(`[기믹] 미니어처인데 안 작아집니다 (${tiny.before}→${tiny.after})`);
+  } else {
+    console.log(`  ✓ 미니어처 — 몸 크기 ${tiny.before} → ${tiny.after.toFixed(2)}`);
+  }
+
+  /* 배당금 — 전원 주가가 오른다 */
+  const gold = await tryGimmick('배당금 뿌려줘', () => {
+    const s = window.game.scene.getScene('Battle');
+    return s.fighters
+      .filter((f) => f.alive)
+      .reduce((sum, f) => sum + s.stock.get(f.fighterId), 0);
+  }, 0);
+  if (gold.after <= gold.before) {
+    errors.push(`[기믹] 배당금인데 주가 합이 안 늘었습니다 (${gold.before}→${gold.after})`);
+  } else {
+    console.log(`  ✓ 배당금 — 주가 합 ${gold.before} → ${gold.after}`);
+  }
+
+  await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    if (window.__gimAis?.length && s.ais.length === 0) s.ais.push(...window.__gimAis);
+    window.__gimAis = [];
+  });
+  await shot('gimmick-new');
 }
 
 /*

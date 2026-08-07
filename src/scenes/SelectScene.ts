@@ -341,7 +341,7 @@ export class SelectScene extends Phaser.Scene {
       this.launch({
         playerId: d.hostChar,
         player2Id: d.guestChar,
-        aiIds: [],
+        aiIds: d.botIds ?? [],
         stageId: d.stageId,
         duel: true,
         netRole: 'guest',
@@ -362,17 +362,24 @@ export class SelectScene extends Phaser.Scene {
     if (!this.myPick || !this.foePick) return;
     if (net.role !== 'host') return;
 
+    /*
+     * 봇도 함께 넣는다 — 사람 둘 + 봇 둘, 로컬 2인 대전과 같은 구성이다.
+     * 어느 봇이 나올지는 호스트가 정해 알려준다. 양쪽이 따로 뽑으면
+     * 같은 자리에 다른 캐릭터가 서게 된다.
+     */
     const stage = pickStage();
+    const bots = pickOpponents(this.myPick, AI_COUNT - 1, [], [this.foePick]);
     const d = {
       hostChar: this.myPick,
       guestChar: this.foePick,
       stageId: stage.id,
+      botIds: bots,
     };
     net.sendStart(d);
     this.launch({
       playerId: d.hostChar,
       player2Id: d.guestChar,
-      aiIds: [],
+      aiIds: bots,
       stageId: d.stageId,
       duel: true,
       netRole: 'host',

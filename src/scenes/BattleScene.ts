@@ -740,6 +740,31 @@ export class BattleScene extends Phaser.Scene {
 
     this.fighters.push(hostFighter, guestFighter);
 
+    /*
+     * 봇도 함께 세운다.
+     *
+     * 호스트가 이미 판 전체를 계산하고 있고, 보내는 상태에는 파이터 목록이
+     * 통째로 들어간다 — 봇을 늘려도 회선으로 갈 것이 여덟 개 늘 뿐이다.
+     * 사람 둘만 덩그러니 서 있는 판보다 넷이 뒤엉키는 쪽이 이 게임이다.
+     *
+     * 목록 순서는 사람 둘 다음에 봇이다. 양쪽 기계가 같은 순서로 세워야
+     * 번호로 주고받는 상태가 제자리를 찾는다.
+     */
+    const botIds = this.battleData.aiIds ?? [];
+    const gap = (STAGE.RIGHT - STAGE.LEFT - 460) / (botIds.length + 1);
+    botIds.forEach((id, i) => {
+      const bot = new BaseCharacter(
+        this,
+        STAGE.LEFT + 230 + gap * (i + 1),
+        spawnY,
+        CHARACTERS[id],
+        'ai',
+        `CPU${i + 1}`,
+      );
+      bot.facing = i % 2 === 0 ? 1 : -1;
+      this.fighters.push(bot);
+    });
+
     /* 화면마다 "내 것"이 1P 자리에 온다 — 카메라와 HUD가 나를 따라야 한다 */
     const iAmGuest = this.netRole === 'guest';
     this.player = iAmGuest ? guestFighter : hostFighter;

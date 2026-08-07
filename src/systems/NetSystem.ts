@@ -1,4 +1,4 @@
-import Peer from 'peerjs';
+import type Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import type { CharacterId } from '../types';
 import type { StageId } from '../config/stages';
@@ -142,6 +142,8 @@ export interface NetStart {
   hostChar: CharacterId;
   guestChar: CharacterId;
   stageId: StageId;
+  /** 함께 설 봇들. 호스트가 정해 알려준다 — 양쪽이 따로 뽑으면 판이 달라진다 */
+  botIds?: CharacterId[];
 }
 
 /** 호스트가 매 전송마다 보내는 판 상태 */
@@ -348,13 +350,18 @@ export class NetSystem {
     this.conn.send(msg);
   }
 
-  private openPeer(id?: string): Promise<void> {
+  private async openPeer(id?: string): Promise<void> {
+    /*
+     * PeerJS 는 이때 처음 불러온다.
+     *
+     * 통째로 얹어 두면 온라인을 한 번도 안 켜는 사람도 그 무게를 내려받는다.
+     * 첫 화면이 뜨는 속도는 심사에서 가장 먼저 보이는 것이라, 안 쓰는 기능이
+     * 그걸 늦추게 둘 이유가 없다. (같은 컴퓨터 경로는 이것 없이도 돈다)
+     */
+    const { default: PeerCtor } = await import('peerjs');
+
     return new Promise((resolve, reject) => {
-      /*
-       * PeerJS 기본값은 공개 브로커다. 여기서 하는 일은 "코드로 서로를
-       * 찾아 주는 것"뿐이고, 연결이 맺어진 뒤의 통신은 브로커를 거치지 않는다.
-       */
-      const peer = id ? new Peer(id) : new Peer();
+      const peer = id ? new PeerCtor(id) : new PeerCtor();
       this.peer = peer;
 
       const timer = setTimeout(() => {

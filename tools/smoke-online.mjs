@@ -100,7 +100,7 @@ async function toSelect(page) {
 let skipped = '';
 
 try {
-  console.log('온라인 1:1 결투\n');
+  console.log('온라인 대전 (사람 둘 + 봇 둘)\n');
 
   const ready = await Promise.all([toSelect(host), toSelect(guest)]);
   if (!ready[0] || !ready[1]) {
@@ -202,10 +202,12 @@ try {
         errors.push(`[온라인] 무대가 다릅니다 — 호스트 ${a.stage} / 게스트 ${b.stage}`);
       } else if (a.ids.join() !== b.ids.join()) {
         errors.push(`[온라인] 캐릭터가 다릅니다 — ${a.ids} / ${b.ids}`);
-      } else if (a.n !== 2) {
-        errors.push(`[온라인] 1:1이어야 하는데 ${a.n}명입니다`);
+      } else if (a.n !== 4) {
+        errors.push(`[온라인] 넷이 서야 하는데 ${a.n}명입니다`);
       } else {
-        console.log(`  ✓ 같은 판 — ${a.stage} · ${a.ids.join(' vs ')}`);
+        console.log(
+          `  ✓ 같은 판 — ${a.stage} · 사람 ${a.ids[0]} vs ${a.ids[1]} + 봇 ${a.ids.slice(2).join('·')}`,
+        );
       }
 
       const drift = a.pos.map((x, i) => Math.abs(x - b.pos[i]));
@@ -216,7 +218,19 @@ try {
         console.log(`  ✓ 두 화면이 같은 곳을 본다 (최대 차이 ${worst}px)`);
       }
 
-      /* --- 게스트의 입력이 호스트에 닿는가 ---------------------------- */
+      /*
+       * --- 게스트의 입력이 호스트에 닿는가 ----------------------------
+       *
+       * 개시 연출(READY? → FIGHT!) 동안에는 조작이 아예 안 먹는다.
+       * 시간을 재서 기다리면 저사양에서 그 구간에 걸려, 회선이 멀쩡한데도
+       * "입력이 안 닿는다"로 오판한다. 실제로 그렇게 한 번 속았다.
+       */
+      await host.waitForFunction(
+        () => window.game.scene.getScene('Battle').battleActive === true,
+        null,
+        { timeout: 20000 },
+      );
+
       const guestX = () =>
         host.evaluate(() => Math.round(window.game.scene.getScene('Battle').fighters[1].x));
 
@@ -228,14 +242,22 @@ try {
       const after = await guestX();
 
       const stats = await Promise.all([
-        host.evaluate(() => window.game.scene.getScene('Battle').netStats),
+        host.evaluate(() => {
+          const s = window.game.scene.getScene('Battle');
+          return {
+            ...s.netStats,
+            active: s.battleActive,
+            humans: s.humans.length,
+            held: s.remoteFrame?.left ?? null,
+          };
+        }),
         guest.evaluate(() => window.game.scene.getScene('Battle').netStats),
       ]);
 
       if (Math.abs(after - before) < 25) {
         errors.push(
           `[온라인] 게스트가 눌러도 호스트 쪽 캐릭터가 안 움직입니다 (${before}→${after}) ` +
-            `— 게스트가 보낸 ${stats[1].sent}건 / 호스트가 받은 ${stats[0].recv}건`,
+            `— 보냄 ${stats[1].sent} / 받음 ${stats[0].recv} / 전투중 ${stats[0].active} / 사람 ${stats[0].humans} / 왼쪽 ${stats[0].held}`,
         );
       } else {
         console.log(`  ✓ 게스트 입력이 회선을 타고 도착 — ${before} → ${after}px`);

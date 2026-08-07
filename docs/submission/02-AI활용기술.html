@@ -94,7 +94,7 @@
 
     <h3>해석 규칙 — 3단계</h3>
     <p>
-      <code>src/config/gimmicks.ts</code>. 14종의 기믹이 각자
+      <code>src/config/gimmicks.ts</code>. 20종의 기믹이 각자
       <strong>자기를 부르는 말들</strong>(keywords)을 들고 있고, 입력 문장을
       아래 순서로 판정한다.
     </p>
@@ -275,16 +275,16 @@
       뽑았다”가 아니라, <strong>그 공정을 통째로 코드로 굳혔다</strong>는 점이다.
     </p>
 
-    <pre>npm run prompts    ① 프롬프트 46개 생성 (캐릭터 35 + 스테이지·UI 11)
+    <pre>npm run prompts    ① 프롬프트 152개 생성 (캐릭터 20명 × 7묶음 + 스테이지·UI 12)
 npm run art        ② 그 프롬프트로 이미지 생성 → 게임이 읽는 자리에 저장
 npm run art:in     ②' (무료 경로) 웹에서 받은 그림을 제자리로 정리
 npm run sheet:merge  ③ 묶음 이미지들을 스프라이트 시트 한 장으로 합침
 npm run sheet        ④ 시트 전처리 (칸 나누기 · 배경 제거 · 라벨 제거)
-npm run art:opt      ⑤ 배포 무게로 줄임 (20.6MB → 1.5MB)</pre>
+npm run art:opt      ⑤ 배포 무게로 줄임 (29MB → 2.0MB)</pre>
 
     <h3>① 프롬프트를 코드가 만든다</h3>
     <p>
-      46장의 프롬프트를 손으로 쓰지 않는다.
+      152장의 프롬프트를 손으로 쓰지 않는다.
       <code>tools/gen-prompts.mjs</code>가 게임 데이터(캐릭터 설정·기술 이름·
       스테이지 목록)를 읽어 생성한다. <strong>캐릭터를 추가하면 그 캐릭터의
       프롬프트가 자동으로 따라 나온다.</strong> 기술 이름이 바뀌면 프롬프트의
@@ -347,8 +347,8 @@ npm run art:opt      ⑤ 배포 무게로 줄임 (20.6MB → 1.5MB)</pre>
       심사자의 브라우저에서 로딩만 수십 초가 걸린다 — 그 시점에
       <strong>“안 켜지는 게임”</strong>과 같은 말이 된다.
       <code>npm run art:opt</code>가 해상도는 그대로 두고 WebP로만 바꿔
-      <strong>20.6MB → 1.5MB</strong>, 배포본 전체로는
-      <strong>32MB → 2.9MB</strong>로 줄인다.
+      <strong>29MB → 2.0MB</strong>, 배포본 전체로는
+      <strong>32MB → 3.5MB</strong>로 줄인다.
       게임은 WebP가 있으면 그쪽을, 없으면 PNG를 읽으므로
       “폴더에 넣기만 하면 붙는다”는 작업 흐름은 그대로다.
     </p>
@@ -379,8 +379,23 @@ npm run art:opt      ⑤ 배포 무게로 줄임 (20.6MB → 1.5MB)</pre>
         <td><code>npm run smoke</code></td>
         <td>
           타이틀 → 선택 → 전투 → 이동·점프·공격·커맨드 무브·연속기·프롬프트
-          기믹·스킬·방어·대시 → 결과 경로를 브라우저에서 자동으로 밟고
-          콘솔 오류를 검사한다 (스크린샷 26장)
+          기믹·스킬·방어·대시·잡기 → 결과 경로를 브라우저에서 자동으로 밟고
+          콘솔 오류를 검사한다 (스크린샷 43장 · 확인 33건)
+        </td>
+      </tr>
+      <tr>
+        <td><code>npm run smoke:online</code></td>
+        <td>
+          브라우저 창을 여러 개 띄워 실제로 방을 만들고 들어간다 —
+          같은 무대·같은 캐릭터로 시작하는가, 창마다 자기 것만 움직이는가,
+          아이템·오브·프롬프트 입력창이 모두에게 같이 보이는가
+        </td>
+      </tr>
+      <tr>
+        <td><code>npm run art:check</code></td>
+        <td>
+          받아 놓은 그림이 게임에 제대로 붙었는가 — 묶음당 6칸이 맞는지,
+          빈 칸이 섞였는지, 예전 WebP가 새 PNG를 가리고 있는지
         </td>
       </tr>
       <tr>
@@ -485,6 +500,14 @@ npm run art:opt      ⑤ 배포 무게로 줄임 (20.6MB → 1.5MB)</pre>
         <td>게임 엔진 (런타임 의존성 · 배포본에 포함)</td>
       </tr>
       <tr>
+        <td>PeerJS (^1.5.5)</td>
+        <td>MIT</td>
+        <td>
+          온라인 대전의 신호 교환 (런타임 의존성 · 온라인을 고를 때만
+          내려받는 별도 묶음)
+        </td>
+      </tr>
+      <tr>
         <td>Vite (^7.1.0)</td>
         <td>MIT</td>
         <td>빌드 · 개발 서버 (개발 전용)</td>
@@ -506,8 +529,10 @@ npm run art:opt      ⑤ 배포 무게로 줄임 (20.6MB → 1.5MB)</pre>
       </tr>
     </table>
     <p>
-      런타임에 실제로 배포되는 서드파티 코드는 <strong>Phaser 3 (MIT)</strong>
-      하나뿐이다. 이 프로젝트 자체의 라이선스는 MIT다.
+      런타임에 배포되는 서드파티 코드는 <strong>Phaser 3</strong>와
+      <strong>PeerJS</strong> 둘뿐이고 모두 MIT다. PeerJS는 온라인 대전을
+      고른 순간에만 내려받는 별도 묶음이라, 혼자 하거나 로컬 2인으로 하는
+      사람은 받지 않는다. 이 프로젝트 자체의 라이선스는 MIT다.
     </p>
 
     <h3>그래픽</h3>
@@ -525,8 +550,8 @@ npm run art:opt      ⑤ 배포 무게로 줄임 (20.6MB → 1.5MB)</pre>
         </td>
       </tr>
       <tr>
-        <td>스테이지 배경 3종</td>
-        <td>동일 (증권 거래소 · 정전 · 달 표면). 원본 PNG와 프롬프트를 저장소에 보관</td>
+        <td>스테이지 배경 4종</td>
+        <td>동일 (증권 거래소 · 정전된 객장 · 달 표면 · 서버실). 원본 PNG와 프롬프트를 저장소에 보관</td>
       </tr>
       <tr>
         <td>이펙트 · 아이템 아이콘 · UI · 파티클</td>

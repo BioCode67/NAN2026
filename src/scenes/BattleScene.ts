@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { DEFAULT_STAGE_ART, addBackdrop, hasArt } from '../config/artAssets';
-import { STAGE_BY_ID, pickStage } from '../config/stages';
+import { addBackdrop, hasArt } from '../config/artAssets';
+import { STAGES, STAGE_BY_ID, pickStage } from '../config/stages';
 import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
@@ -81,6 +81,8 @@ export class BattleScene extends Phaser.Scene {
   private platformSkins: Phaser.GameObjects.GameObject[] = [];
   /** 생성한 스테이지 그림 레이어 (없으면 보이지 않는다) */
   private bgArt?: Phaser.GameObjects.Image;
+  /** 코드로 그린 배경 — 무대 그림이 없을 때 이 위에 무대 색을 입힌다 */
+  private bgBase?: Phaser.GameObjects.Image;
   /** 배경 위에 까는 어둠 막 — 밝은 그림 위에서도 캐릭터가 읽히게 한다 */
   private bgScrim?: Phaser.GameObjects.Image;
   /** 맵 기믹이 요청한 배경들 — 맨 위가 지금 보이는 것 */
@@ -268,7 +270,7 @@ export class BattleScene extends Phaser.Scene {
       g.destroy();
     }
 
-    this.add.image(0, 0, KEY).setOrigin(0).setDepth(DEPTH.BG);
+    this.bgBase = this.add.image(0, 0, KEY).setOrigin(0).setDepth(DEPTH.BG);
 
     /*
      * 스테이지 그림 레이어.
@@ -353,6 +355,29 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** 지금 보여야 할 배경 그림을 정해 반영한다 */
+  /**
+   * 코드로 그린 배경을 무대 색으로 물들인다.
+   *
+   * 곱하기 합성이라 색을 그대로 얹으면 배경이 통째로 어두워진다.
+   * 흰색 쪽으로 절반 넘게 끌어와야 "물든" 정도로 남는다.
+   *
+   * @param on 무대 그림이 없어서 이 배경이 실제로 보이는 상황인가
+   */
+  private tintBase(on: boolean): void {
+    if (!this.bgBase?.scene) return;
+
+    if (!on) {
+      this.bgBase.clearTint();
+      return;
+    }
+
+    const c = Phaser.Display.Color.IntegerToColor(this.stage.accent);
+    const mix = (v: number) => Math.round(v + (255 - v) * 0.45);
+    this.bgBase.setTint(
+      Phaser.Display.Color.GetColor(mix(c.red), mix(c.green), mix(c.blue)),
+    );
+  }
+
   private applyStageArt(immediate = false): void {
     /*
      * 씬이 내려간 뒤에도 불릴 수 있다.
@@ -365,8 +390,16 @@ export class BattleScene extends Phaser.Scene {
 
     /*
      * 기믹이 걸려 있으면 그 그림, 아니면 이 무대의 그림.
-     * 무대 그림이 아직 없으면(안 그렸으면) 기본 거래소로 떨어진다 —
-     * 맵을 늘렸다고 배경이 사라지면 늘리지 않느니만 못하다.
+     *
+     * ── 없으면 남의 그림을 빌려 오지 않는다 ─────────────────────────
+     * 예전에는 그림이 없는 무대를 기본 거래소 배경으로 채웠다. "배경이
+     * 사라지는 것보다는 낫다"는 판단이었는데, 무대가 여섯 곳이 되면서
+     * 그 판단이 뒤집혔다 — 넷이 같은 그림을 쓰면 이름만 다른 같은 곳이 되고,
+     * 플레이어는 "무대가 여러 개"라는 말을 믿지 않게 된다.
+     *
+     * 그림이 없으면 **코드로 그린 배경을 무대 색으로 물들여** 쓴다.
+     * 사진만큼은 아니어도 확실히 다른 곳으로 보이고, 나중에 그림을 넣으면
+     * 그대로 갈아 끼워진다.
      */
     const wanted = this.stageArtStack[this.stageArtStack.length - 1];
     const key =
@@ -374,9 +407,9 @@ export class BattleScene extends Phaser.Scene {
         ? wanted
         : hasArt(this, this.stage.art)
           ? this.stage.art
-          : hasArt(this, DEFAULT_STAGE_ART)
-            ? DEFAULT_STAGE_ART
-            : null;
+          : null;
+
+    this.tintBase(!key);
 
     if (!key) {
       this.bgArt.setVisible(false);
@@ -1158,6 +1191,31 @@ export class BattleScene extends Phaser.Scene {
       platforms: this.platforms.length,
       gravity: this.physics.world.gravity.y,
     };
+  }
+
+  /**
+   * 등록된 무대 전부 — 검사 도구가 "적어 둔 대로 실제로 서는가"를 대조한다.
+   *
+   * 검사 쪽에 무대 목록을 따로 적어 두면 무대를 하나 늘릴 때마다 두 군데를
+   * 고쳐야 하고, 한쪽을 잊으면 새 무대는 아무도 확인하지 않은 채 배포된다.
+   * 설정을 그대로 내보내 검사가 그것과 실제 판을 맞춰 보게 한다.
+   */
+  listStages(): Array<{
+    id: string;
+    name: string;
+    platforms: number;
+    gravityMul: number;
+    transpose: number;
+    bpmMul: number;
+  }> {
+    return STAGES.map((s) => ({
+      id: s.id,
+      name: s.name,
+      platforms: s.platforms.length,
+      gravityMul: s.gravityMul,
+      transpose: s.music.transpose,
+      bpmMul: s.music.bpmMul,
+    }));
   }
 
   /** 무대 이름 — 화면 위쪽에서 잠깐 떴다 사라진다 */

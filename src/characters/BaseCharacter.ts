@@ -636,9 +636,16 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const now = this.scene.time.now;
     if (now - this.lastMashAt < FIGHTER.GRAB_MASH_GAP) return;
 
+    /*
+     * 두드림은 **탈출에만** 쓴다.
+     *
+     * 처음에는 두드릴 때마다 붙잡힌 시간도 함께 줄였다. 그런데 그 시간이
+     * 다 되면 자동으로 던져지므로, 열심히 두드릴수록 탈출과 자동 던지기가
+     * 서로 경쟁하게 된다 — 두드렸는데 오히려 더 빨리 던져지는 일이 생긴다.
+     * 잡힌 사람에게 "두드리면 빠져나간다"는 하나의 규칙만 남긴다.
+     */
     this.lastMashAt = now;
     this.mashCount++;
-    this.grabbedBy.grabHoldUntil -= FIGHTER.GRAB_MASH_RELIEF;
     this.pulseSquash(1.14, 0.88, 90);
 
     /* 충분히 두드렸으면 그 자리에서 뿌리치고 나간다 */
@@ -818,9 +825,20 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.guarding = false;
       return;
     }
+    /*
+     * 잡혀 있으면 막을 수 없다.
+     *
+     * 이게 빠져 있으면 잡힌 채로 가드가 서고, 이어지는 던지기가 "막은 것"으로
+     * 계산돼 피해 70%·넉백 65%가 깎인다. 잡기는 가드를 뚫으라고 넣은 수단인데
+     * 정작 던지는 순간 가드에 막히는 셈이라, 규칙이 스스로를 부정하게 된다.
+     * (붙잡고 있는 쪽도 마찬가지 — 한 손으로 상대를 들고 막을 수는 없다)
+     */
     const onGround = this.body.blocked.down || this.body.touching.down;
     const free =
-      this.attackPhase === 'none' && this.scene.time.now >= this.stunUntil;
+      this.attackPhase === 'none' &&
+      this.grabPhase === 'none' &&
+      !this.grabbedBy &&
+      this.scene.time.now >= this.stunUntil;
 
     this.guarding = on && onGround && free;
     if (this.guarding) this.body.setVelocityX(0);

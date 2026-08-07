@@ -1391,9 +1391,16 @@ console.log('잡기');
       const held = await grabOnce();
       if (!held) continue;
 
-      for (let i = 0; i < 12 && p.isGrabbing(); i++) {
+      /*
+       * 사람이 두드리는 속도로 두드린다.
+       *
+       * 헤드리스는 프레임이 드물어 한 프레임에 여러 번 불러도 최소 간격에
+       * 걸려 한 번만 인정된다. 자동 던지기(1.3초)보다 먼저 열 번이 쌓여야
+       * 하므로, 넉넉히 돌리되 매번 풀렸는지 확인한다.
+       */
+      for (let i = 0; i < 26 && p.isGrabbing(); i++) {
         held.struggle();
-        await wait(70);
+        await wait(55);
       }
       escaped = !p.isGrabbing();
     }
@@ -1453,7 +1460,7 @@ console.log('잡기');
     const p = s.player;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    for (let t = 0; t < 6; t++) {
+    for (let t = 0; t < 10; t++) {
       const foe = s.fighters.find((f) => f !== p && f.alive);
       if (!foe) return { why: '살아 있는 상대가 없습니다' };
 
@@ -1465,6 +1472,20 @@ console.log('잡기');
       p.facing = 1;
       p.jumpsLeft = 0;
       p.hitTargets.clear();
+      /*
+       * 방금 맞은 상대는 무적이라 이번 타가 통째로 씹힌다.
+       * 확인하려는 것은 "공중 히트가 점프를 돌려주는가"이지
+       * "지금 이 순간 때릴 수 있는가"가 아니므로, 조건을 만들어 준다.
+       */
+      foe.invulnUntil = 0;
+      p.stunUntil = 0;
+      p.attackPhase = 'none';
+      /*
+       * 점프 반환은 한 체공에 한 번이고, 착지해야 다시 열린다.
+       * 이 검사는 착지 없이 공중으로 옮겨 놓고 반복하므로, 옮길 때마다
+       * "새로 뜬 것"으로 쳐 줘야 두 번째 시도부터 항상 실패한다.
+       */
+      p.airHitRefunded = false;
       p.attack('light', 'neutral');
 
       for (let i = 0; i < 24; i++) {
@@ -1563,30 +1584,27 @@ console.log('연승 도전');
 }
 
 /*
- * 무대 네 곳.
+ * 무대 전부.
  *
  * 발판 배치는 스크린샷으로 보이지만 중력은 안 보인다. 그리고 무대를 늘리면
  * 늘어난 만큼 "그 무대에서만 터지는" 자리가 생긴다 — 발판이 여섯 개인 곳,
- * 중력이 다른 곳. 네 곳을 실제로 한 번씩 세워 보고 콘솔이 조용한지 본다.
+ * 중력이 다른 곳. 하나씩 실제로 세워 보고 콘솔이 조용한지 본다.
+ *
+ * 기대값을 여기 적어 두지 않는다. 적어 두면 무대를 하나 늘릴 때마다 두 군데를
+ * 고쳐야 하고, 한쪽을 잊으면 새 무대는 아무도 확인하지 않은 채 배포된다.
+ * 설정을 게임에게 물어보고, **적어 둔 대로 실제로 서는지**를 대조한다.
  */
 console.log('무대');
 {
-  /** 무대 → [이조(반음), 템포 배율] — stages.ts 와 맞춰 둔다 */
-  const TONES = {
-    exchange: [0, 1],
-    rooftop: [3, 1.05],
-    server: [-2, 1.09],
-    moon: [-5, 0.88],
-  };
+  const BASE_GRAVITY = 2200;
+  const WANT = await page.evaluate(
+    () => window.game.scene.getScene('Battle').listStages(),
+  );
+  console.log(`  등록된 무대 ${WANT.length}곳`);
 
-  const WANT = [
-    ['exchange', 5, 2200],
-    ['rooftop', 3, 2200],
-    ['server', 6, 2200],
-    ['moon', 5, 1364],
-  ];
-
-  for (const [id, platforms, gravity] of WANT) {
+  for (const want of WANT) {
+    const { id, platforms } = want;
+    const gravity = BASE_GRAVITY * want.gravityMul;
     await page.evaluate((stageId) => {
       const g = window.game;
       const sc = g.scene.getScene('Battle');
@@ -1628,12 +1646,14 @@ console.log('무대');
      * 소리는 스크린샷에 안 남으므로, 상태값으로만 잡을 수 있다.
      */
     const tone = await page.evaluate(() => window.sound?.bgmDebug ?? null);
-    const wantTone = TONES[id];
     if (!tone) {
       errors.push(`[무대] ${id} 곡 상태를 읽지 못했습니다`);
-    } else if (tone.transpose !== wantTone[0] || Math.abs(tone.bpmMul - wantTone[1]) > 0.001) {
+    } else if (
+      tone.transpose !== want.transpose ||
+      Math.abs(tone.bpmMul - want.bpmMul) > 0.001
+    ) {
       errors.push(
-        `[무대] ${info.name}: 곡이 ${wantTone[0]}반음 · 템포 ${wantTone[1]}배여야 하는데 ` +
+        `[무대] ${info.name}: 곡이 ${want.transpose}반음 · 템포 ${want.bpmMul}배여야 하는데 ` +
           `${tone.transpose}반음 · ${tone.bpmMul}배`,
       );
     }

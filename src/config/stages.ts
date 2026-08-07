@@ -21,7 +21,13 @@ import { DEFAULT_STAGE_ART } from './artAssets';
  * 넷 다 다른 시스템이 알 필요가 없는 값들이다.
  */
 
-export type StageId = 'exchange' | 'rooftop' | 'server' | 'moon';
+export type StageId =
+  | 'exchange'
+  | 'rooftop'
+  | 'server'
+  | 'moon'
+  | 'blackout'
+  | 'lava';
 
 export interface StagePlatform {
   x: number;
@@ -138,6 +144,55 @@ export const STAGES: StageConfig[] = [
       { x: 760, y: 265, w: 140 },
       { x: 1160, y: 265, w: 140 },
       { x: 960, y: 150, w: 180 },
+    ],
+  },
+
+  {
+    id: 'blackout',
+    name: '정전된 객장',
+    /*
+     * 위층이 없다.
+     *
+     * 다른 무대는 위로 도망칠 길이 있다 — 발판을 타고 올라가면 한 박자 쉰다.
+     * 여기는 낮은 발판 둘뿐이라 올라가 봐야 곧 내려와야 하고, 결국 지면에서
+     * 정면으로 붙는다. 넷이 한 줄에 서는 판이 하나쯤 있어야 나머지 무대의
+     * "높이"가 무엇을 주는지가 드러난다.
+     */
+    desc: '정면 승부 — 올라갈 데가 없다',
+    art: 'stage_blackout',
+    accent: 0xf59e0b,
+    // 조금 무겁다 — 뜨는 시간이 짧아 공중으로 빠져나가기 어렵다
+    gravityMul: 1.12,
+    // 불이 꺼진 곳 — 가장 낮게 깔고 조금 느리게
+    music: { transpose: -4, bpmMul: 0.95 },
+    platforms: [
+      { x: 620, y: 480, w: 260 },
+      { x: 1300, y: 480, w: 260 },
+    ],
+  },
+
+  {
+    id: 'lava',
+    name: '용암 지대',
+    /*
+     * 발판이 좁고 높다.
+     *
+     * 딛는 자리가 좁으면 착지 자체가 판단이 된다. 대충 뛰어 오르면
+     * 가장자리를 놓치고, 밀치기 한 번이 그대로 추락으로 이어진다.
+     * "떨어지지 않는 것"이 목표가 되는 무대가 하나 필요했다.
+     */
+    desc: '외줄타기 — 발판이 좁고 높다',
+    art: 'stage_lava',
+    accent: 0xf97316,
+    gravityMul: 1.05,
+    // 뜨거운 곳 — 조를 올리고 가장 몰아친다
+    music: { transpose: 5, bpmMul: 1.12 },
+    platforms: [
+      { x: 300, y: 455, w: 130 },
+      { x: 1620, y: 455, w: 130 },
+      { x: 660, y: 350, w: 120 },
+      { x: 1260, y: 350, w: 120 },
+      { x: 960, y: 245, w: 150 },
     ],
   },
 ];

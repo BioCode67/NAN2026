@@ -12,7 +12,7 @@
  * 판단만 순수 함수로 떼어 뒀으므로(shouldCastSkill) 여기서 직접 물어본다.
  */
 
-import { readFileSync } from 'node:fs';
+import { readRoster } from './roster-source.mjs';
 import {
   AI_PERSONAS,
   personaFor,
@@ -22,15 +22,11 @@ import {
 /*
  * 캐릭터 표는 소스에서 글자로 읽는다.
  *
- * characters.ts 는 gameConfig 를 확장자 없이 import 하는데, Node의 ESM은
- * 그 경로를 풀지 못한다(번들러만 푼다). 이 테스트에 필요한 것은
- * "어떤 고유 메커니즘들이 존재하는가" 하나뿐이라, 그것만 뽑아 쓴다.
+ * 캐릭터 파일은 gameConfig 를 거쳐 phaser 까지 끌고 온다. 검사 하나 돌리자고
+ * 게임 엔진을 부를 이유가 없다. 필요한 것은 "어떤 고유 메커니즘이
+ * 쓰이고 있는가" 하나뿐이다.
  */
-const SIGNATURE_IDS = [
-  ...readFileSync('src/config/characters.ts', 'utf8').matchAll(
-    /signature:\s*\{\s*\n\s*id:\s*'([^']+)'/g,
-  ),
-].map((m) => m[1]);
+const SIGNATURE_IDS = [...new Set(readRoster().map((c) => c.signature))];
 
 let failed = 0;
 const fail = (msg) => {

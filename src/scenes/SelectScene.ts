@@ -9,9 +9,38 @@ import type { BattleSceneData, CharacterConfig, CharacterId } from '../types';
 /** AI 봇 수 — 명세의 1P vs 3AI */
 const AI_COUNT = 3;
 
-/** 캐릭터 카드 규격 */
-const CARD_W = 196;
-const CARD_H = 268;
+/** 카드가 놓일 수 있는 영역 — 머리말 아래, 설명 패널 위 */
+const GRID = { top: 158, bottom: 424, width: 1190, gap: 14 };
+/** 카드 한 장의 최대 크기 (다섯 명일 때의 크기) */
+const CARD_MAX_W = 196;
+/** 카드 가로:세로 비율 */
+const CARD_RATIO = 268 / 196;
+/** 이 수를 넘으면 카드에서 설명을 빼고 얼굴만 남긴다 */
+const COMPACT_FROM = 8;
+
+/** 한 줄에 놓을 최대 장수 — 이보다 많으면 줄을 나눈다 */
+const MAX_COLS = 10;
+
+/**
+ * 로스터 크기에 맞춰 격자를 짠다.
+ *
+ * 다섯 명일 때는 한 줄에 크게 늘어놓으면 됐다. 스무 명이 되면 그 방식으로는
+ * 화면 밖으로 나간다. 열 수를 먼저 정하고, 남는 폭을 나눠 카드 크기를 줄인다.
+ *
+ * 카드가 작아지면 패시브 이름 같은 글자는 읽히지 않으므로 아예 뺀다.
+ * 어차피 고른 캐릭터의 설명은 아래 패널에 전부 나온다 —
+ * 격자는 "누가 있는지"를 보여주는 자리고, 패널이 "어떤 캐릭터인지"를 맡는다.
+ */
+function layoutRoster(n: number) {
+  const cols = Math.min(n, MAX_COLS);
+  const rows = Math.ceil(n / cols);
+
+  const byWidth = (GRID.width - GRID.gap * (cols - 1)) / cols;
+  const byHeight = (GRID.bottom - GRID.top - GRID.gap * (rows - 1)) / rows / CARD_RATIO;
+
+  const w = Math.min(CARD_MAX_W, byWidth, byHeight);
+  return { cols, rows, w, h: w * CARD_RATIO, compact: n >= COMPACT_FROM };
+}
 /**
  * 카드 안 아바타가 차지하는 세로 크기.
  *
@@ -21,16 +50,14 @@ const CARD_H = 268;
  * 가장 아래까지 찬 시트를 기준으로 잡는다.
  */
 const AVATAR_H = 126;
-/** 아바타 중심 — 카드 위쪽에 붙여 이름표와 거리를 둔다 */
-const AVATAR_Y = -48;
-const CARD_GAP = 24;
-const CARD_Y = 300;
 
 interface CharacterCard {
   id: CharacterId;
   root: Phaser.GameObjects.Container;
   frame: Phaser.GameObjects.Rectangle;
   glow: Phaser.GameObjects.Rectangle;
+  /** 이 카드가 원래 있어야 할 자리 — 고르면 살짝 떠오르므로 기준이 필요하다 */
+  homeY: number;
 }
 
 /**
@@ -41,8 +68,12 @@ interface CharacterCard {
  */
 export class SelectScene extends Phaser.Scene {
   private cards: CharacterCard[] = [];
+  /** 한 줄에 놓인 카드 수 — 위아래 이동 폭이 된다 */
+  private cols = 1;
   private selectedIndex = 0;
   private confirmed = false;
+  /** 이 시각 전의 입력은 앞 화면에서 넘어온 것이다 */
+  private readyAt = 0;
 
   private nameText!: Phaser.GameObjects.Text;
   private taglineText!: Phaser.GameObjects.Text;
@@ -59,6 +90,15 @@ export class SelectScene extends Phaser.Scene {
   create(): void {
     this.confirmed = false;
     this.cards = [];
+
+    /*
+     * 화면이 뜨자마자 들어오는 입력은 무시한다.
+     *
+     * 타이틀에서 "아무 키나" 눌러 넘어오는데, 그 키를 놓기 전에 선택 화면이
+     * 뜨면 같은 Enter가 여기서 "결정"으로 한 번 더 먹는다. 그러면 캐릭터를
+     * 고르기도 전에 첫 번째 캐릭터로 전투가 시작된다.
+     */
+    this.readyAt = this.time.now + 260;
 
     this.buildBackground();
     this.buildHeader();
@@ -144,56 +184,82 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private buildCards(): void {
-    const total =
-      CHARACTER_ORDER.length * CARD_W + (CHARACTER_ORDER.length - 1) * CARD_GAP;
-    const startX = (GAME.WIDTH - total) / 2 + CARD_W / 2;
+    const n = CHARACTER_ORDER.length;
+    const g = layoutRoster(n);
+    this.cols = g.cols;
+
+    const rowW = (count: number) => count * g.w + (count - 1) * GRID.gap;
+    const gridH = g.rows * g.h + (g.rows - 1) * GRID.gap;
+    const top = GRID.top + (GRID.bottom - GRID.top - gridH) / 2;
 
     CHARACTER_ORDER.forEach((id, i) => {
       const cfg = CHARACTERS[id];
-      const x = startX + i * (CARD_W + CARD_GAP);
+      const row = Math.floor(i / g.cols);
+      const col = i % g.cols;
+
+      // 마지막 줄이 덜 찼으면 그 줄만 가운데로 모은다
+      const inRow = Math.min(g.cols, n - row * g.cols);
+      const startX = (GAME.WIDTH - rowW(inRow)) / 2 + g.w / 2;
+
+      const x = startX + col * (g.w + GRID.gap);
+      const y = top + row * (g.h + GRID.gap) + g.h / 2;
 
       const glow = this.add
-        .rectangle(0, 0, CARD_W + 12, CARD_H + 12, cfg.colors.accent, 0.35)
+        .rectangle(0, 0, g.w + 12, g.h + 12, cfg.colors.accent, 0.35)
         .setVisible(false);
 
       const frame = this.add
-        .rectangle(0, 0, CARD_W, CARD_H, 0x141c33)
+        .rectangle(0, 0, g.w, g.h, 0x141c33)
         .setStrokeStyle(3, 0x2f3f6b);
 
       /* 아바타 — 시트가 있으면 전투에서 실제로 보게 될 그림을 그대로 쓴다 */
-      const avatar = buildCardArt(this, cfg, AVATAR_H).setPosition(0, AVATAR_Y);
+      const avatarH = Math.min(AVATAR_H, g.h * (g.compact ? 0.66 : 0.47));
+      const avatar = buildCardArt(this, cfg, avatarH).setPosition(
+        0,
+        g.compact ? -g.h * 0.1 : -g.h * 0.18,
+      );
+
+      const parts: Phaser.GameObjects.GameObject[] = [glow, frame, avatar];
 
       const name = this.add
-        .text(0, 42, cfg.name, {
+        .text(0, g.h * (g.compact ? 0.33 : 0.16), cfg.name, {
           fontFamily: GAME.FONT,
-          fontSize: '19px',
+          fontSize: `${Math.max(10, Math.round(g.w * 0.097))}px`,
           color: '#ffffff',
           fontStyle: 'bold',
+          align: 'center',
+          wordWrap: { width: g.w - 8 },
         })
         .setOrigin(0.5);
+      parts.push(name);
 
-      const real = this.add
-        .text(0, 66, cfg.realName, {
-          fontFamily: GAME.FONT,
-          fontSize: '12px',
-          color: '#7f93bd',
-        })
-        .setOrigin(0.5);
+      /*
+       * 카드가 작아지면 이 글자들은 읽히지 않는다. 읽히지 않는 글자는
+       * 정보가 아니라 얼룩이므로 뺀다 — 어차피 아래 패널에 전부 나온다.
+       */
+      if (!g.compact) {
+        parts.push(
+          this.add
+            .text(0, g.h * 0.25, cfg.realName, {
+              fontFamily: GAME.FONT,
+              fontSize: '12px',
+              color: '#7f93bd',
+            })
+            .setOrigin(0.5),
+          this.add
+            .text(0, g.h * 0.37, cfg.passive.name, {
+              fontFamily: GAME.FONT,
+              fontSize: '13px',
+              color: '#0b1020',
+              backgroundColor: `#${cfg.colors.accent.toString(16).padStart(6, '0')}`,
+              padding: { x: 10, y: 4 },
+              fontStyle: 'bold',
+            })
+            .setOrigin(0.5),
+        );
+      }
 
-      const passiveTag = this.add
-        .text(0, 98, cfg.passive.name, {
-          fontFamily: GAME.FONT,
-          fontSize: '13px',
-          color: '#0b1020',
-          backgroundColor: `#${cfg.colors.accent.toString(16).padStart(6, '0')}`,
-          padding: { x: 10, y: 4 },
-          fontStyle: 'bold',
-        })
-        .setOrigin(0.5);
-
-      const root = this.add
-        .container(x, CARD_Y, [glow, frame, avatar, name, real, passiveTag])
-        .setDepth(DEPTH.HUD);
+      const root = this.add.container(x, y, parts).setDepth(DEPTH.HUD);
 
       /* 마우스 조작 */
       frame
@@ -204,7 +270,7 @@ export class SelectScene extends Phaser.Scene {
           this.confirm();
         });
 
-      this.cards.push({ id, root, frame, glow });
+      this.cards.push({ id, root, frame, glow, homeY: y });
     });
   }
 
@@ -304,7 +370,7 @@ export class SelectScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         676,
-        '← → / A D : 선택      Enter · Space · 클릭 : 결정      (나머지 3명이 AI로 참전)',
+        '← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      (나머지 3명 중 3명이 AI로 참전)',
         {
           fontFamily: GAME.FONT,
           fontSize: '15px',
@@ -326,6 +392,12 @@ export class SelectScene extends Phaser.Scene {
     kb.on('keydown-A', () => this.move(-1));
     kb.on('keydown-RIGHT', () => this.move(1));
     kb.on('keydown-D', () => this.move(1));
+
+    /* 줄이 여러 개면 위아래로도 다녀야 한다 */
+    kb.on('keydown-UP', () => this.move(-this.cols));
+    kb.on('keydown-W', () => this.move(-this.cols));
+    kb.on('keydown-DOWN', () => this.move(this.cols));
+    kb.on('keydown-S', () => this.move(this.cols));
     kb.on('keydown-ENTER', () => this.confirm());
     kb.on('keydown-SPACE', () => this.confirm());
   }
@@ -355,7 +427,7 @@ export class SelectScene extends Phaser.Scene {
       card.frame.setStrokeStyle(3, active ? 0xffffff : 0x2f3f6b);
 
       const scale = active ? 1.07 : 0.94;
-      const y = active ? CARD_Y - 10 : CARD_Y;
+      const y = active ? card.homeY - 10 : card.homeY;
 
       if (immediate) {
         card.root.setScale(scale);
@@ -413,7 +485,7 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private confirm(): void {
-    if (this.confirmed) return;
+    if (this.confirmed || this.time.now < this.readyAt) return;
     this.confirmed = true;
     sound.play('uiConfirm');
 

@@ -65,6 +65,8 @@ export class BattleScene extends Phaser.Scene {
   private platforms: Phaser.GameObjects.Rectangle[] = [];
   /** 생성한 스테이지 그림 레이어 (없으면 보이지 않는다) */
   private bgArt?: Phaser.GameObjects.Image;
+  /** 배경 위에 까는 어둠 막 — 밝은 그림 위에서도 캐릭터가 읽히게 한다 */
+  private bgScrim?: Phaser.GameObjects.Image;
   /** 맵 기믹이 요청한 배경들 — 맨 위가 지금 보이는 것 */
   private stageArtStack: string[] = [];
   private fighters: BaseCharacter[] = [];
@@ -94,6 +96,8 @@ export class BattleScene extends Phaser.Scene {
    * 기믹 배너 · 리듬 게이지 · 오브 알림이 서로 겹치지 않게 나눠 쓴다.
    */
   private banners!: BannerLanes;
+  /** 지금 떠 있는 중앙 안내 — 새 안내가 오면 겹치지 않게 치운다 */
+  private announceLabel?: Phaser.GameObjects.Text;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
   private hudLayer!: Phaser.GameObjects.Container;
   /** 더블탭 대시 판정용 */
@@ -121,6 +125,7 @@ export class BattleScene extends Phaser.Scene {
     this.huds = [];
     this.platforms = [];
     this.stageArtStack = [];
+    this.announceLabel = undefined;
     this.disposers = [];
     this.koOrder = [];
     this.battleActive = false;
@@ -212,8 +217,58 @@ export class BattleScene extends Phaser.Scene {
       .image(0, 0, 'pixel')
       .setOrigin(0)
       .setDepth(DEPTH.BG + 1)
+      /*
+       * 시차(視差) — 배경은 월드보다 천천히 흐른다.
+       *
+       * 같은 속도로 흐르면 배경이 발판에 붙어 있는 벽지처럼 보인다.
+       * 0.55배로 늦추면 그림이 뒤로 물러나 앉아 공간에 깊이가 생긴다.
+       * 그림 폭이 월드 폭(1920)이라 카메라가 끝까지 가도 빈자리가 생기지 않는다.
+       */
+      .setScrollFactor(0.55)
       .setVisible(false);
+
+    this.buildStageScrim();
     this.applyStageArt(true);
+  }
+
+  /**
+   * 배경 위에 얹는 어둠 막.
+   *
+   * 생성한 배경은 밝기가 제각각이다. 밝은 그림이 오면 그 위의 캐릭터·발판이
+   * 묻혀 어디가 밟을 수 있는 곳인지 안 보인다. 프롬프트에 "어둡게"라고 적어
+   * 뒀지만 매번 지켜지지는 않는다 — 게임 쪽에서도 받쳐 줘야 한다.
+   *
+   * 전체를 고르게 덮지 않고 **아래로 갈수록 짙게** 깐다. 전투는 아래쪽에서
+   * 벌어지고, 위쪽은 그림을 보여 주는 자리이기 때문이다.
+   * 배경 그림이 없으면(코드로 그린 배경) 만들지 않는다. 이미 어둡다.
+   */
+  private buildStageScrim(): void {
+    const KEY = 'stage-scrim';
+
+    if (!this.textures.exists(KEY)) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      const steps = 32;
+
+      for (let i = 0; i < steps; i++) {
+        const t = i / (steps - 1);
+        /*
+         * 위 12% → 아래 62%. 곡선을 살짝 눕혀(제곱) 위쪽은 거의 건드리지 않고
+         * 아래쪽만 확실히 눌러 준다.
+         */
+        g.fillStyle(0x050a16, 0.12 + 0.5 * t * t);
+        g.fillRect(0, (GAME.HEIGHT / steps) * i, 8, GAME.HEIGHT / steps + 1);
+      }
+      g.generateTexture(KEY, 8, GAME.HEIGHT);
+      g.destroy();
+    }
+
+    this.bgScrim = this.add
+      .image(0, 0, KEY)
+      .setOrigin(0)
+      .setDisplaySize(GAME.WIDTH, GAME.HEIGHT)
+      .setScrollFactor(0)
+      .setDepth(DEPTH.BG + 2)
+      .setVisible(false);
   }
 
   /**
@@ -255,6 +310,7 @@ export class BattleScene extends Phaser.Scene {
 
     if (!key) {
       this.bgArt.setVisible(false);
+      this.bgScrim?.setVisible(false);
       return;
     }
     if (this.bgArt.visible && this.bgArt.texture.key === key) return;
@@ -262,6 +318,7 @@ export class BattleScene extends Phaser.Scene {
     this.bgArt.setTexture(key);
     this.bgArt.setDisplaySize(GAME.WORLD_WIDTH, GAME.HEIGHT);
     this.bgArt.setVisible(true);
+    this.bgScrim?.setVisible(true);
 
     // 장소가 바뀐 것이 눈에 들어오도록 짧게 밝혔다 가라앉힌다
     this.tweens.killTweensOf(this.bgArt);
@@ -868,6 +925,15 @@ export class BattleScene extends Phaser.Scene {
 
   /** 화면 중앙 대형 안내 문구 */
   private announce(text: string, color: string, hold = 700): void {
+    /*
+     * 앞의 안내가 아직 떠 있으면 지우고 시작한다.
+     *
+     * 네 명이 붙는 판이라 "장외!" 와 "OOO 상장폐지!" 가 거의 동시에 뜨는 일이
+     * 흔한데, 같은 자리에 겹쳐 그려져 두 글자가 포개진 채 읽히지 않는다.
+     * 뒤에 온 소식이 더 중요하므로 앞의 것을 치운다.
+     */
+    this.announceLabel?.destroy();
+
     const label = this.add
       .text(GAME.WIDTH / 2, 230, text, {
         fontFamily: GAME.FONT,
@@ -879,6 +945,7 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.OVERLAY)
       .setScrollFactor(0);
     label.setStroke('#0b1020', 9);
+    this.announceLabel = label;
 
     this.tweens.add({
       targets: label,
@@ -892,7 +959,10 @@ export class BattleScene extends Phaser.Scene {
           y: label.y - 30,
           delay: hold,
           duration: 260,
-          onComplete: () => label.destroy(),
+          onComplete: () => {
+            if (this.announceLabel === label) this.announceLabel = undefined;
+            label.destroy();
+          },
         });
       },
     });
@@ -923,26 +993,36 @@ export class BattleScene extends Phaser.Scene {
      * 조작키 안내는 상단에 둔다 — 하단은 HUD 패널이 가득 차 겹친다.
      * 커맨드가 늘어나 한 줄에 담기지 않으므로 두 줄로 나눴다.
      */
-    ui(
-      this.add
-        .text(
-          GAME.WIDTH / 2,
-          16,
-          'A/D 이동 · SPACE(↑) 점프(2단) · S 방어 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
-          { fontFamily: GAME.FONT, fontSize: '13px', color: '#5d739f' },
-        )
-        .setOrigin(0.5),
-    );
+    /*
+     * 조작 안내는 배경 위에 바로 얹힌다.
+     *
+     * 생성한 배경이 밝게 나오면 이 옅은 회색 글자가 그대로 묻힌다.
+     * 배경이 밝은지 어두운지에 따라 색을 바꾸는 것보다, 글자마다 어두운
+     * 테두리를 두르는 쪽이 어떤 그림 위에서도 통한다.
+     */
+    const hint = (y: number, text: string, color: string) => {
+      const label = ui(
+        this.add
+          .text(GAME.WIDTH / 2, y, text, {
+            fontFamily: GAME.FONT,
+            fontSize: '13px',
+            color,
+          })
+          .setOrigin(0.5),
+      );
+      label.setStroke('#080d1a', 4);
+      return label;
+    };
 
-    ui(
-      this.add
-        .text(
-          GAME.WIDTH / 2,
-          34,
-          'J 약공격(JJJ 연속기) · K 강공격(KK) · L 스킬  ｜  W+J·W+K 상단기 · S+J·S+K 하단기 · 대시 중 J/K 돌진 · 공중 S+J/K 급강하',
-          { fontFamily: GAME.FONT, fontSize: '13px', color: '#7f93bd' },
-        )
-        .setOrigin(0.5),
+    hint(
+      16,
+      'A/D 이동 · SPACE(↑) 점프(2단) · S 방어 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
+      '#8ea3cc',
+    );
+    hint(
+      34,
+      'J 약공격(JJJ 연속기) · K 강공격(KK) · L 스킬  ｜  W+J·W+K 상단기 · S+J·S+K 하단기 · 대시 중 J/K 돌진 · 공중 S+J/K 급강하',
+      '#a8bce0',
     );
 
     this.muteLabel = ui(
@@ -950,10 +1030,11 @@ export class BattleScene extends Phaser.Scene {
         .text(GAME.WIDTH - 20, 14, sound.isMuted ? '🔇 M' : '🔊 M', {
           fontFamily: GAME.FONT,
           fontSize: '14px',
-          color: '#5d739f',
+          color: '#8ea3cc',
         })
         .setOrigin(1, 0),
     );
+    this.muteLabel.setStroke('#080d1a', 4);
 
     /*
      * 연속기 안내.

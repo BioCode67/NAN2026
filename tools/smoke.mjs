@@ -268,15 +268,21 @@ const restartRound = async () => {
 
     await hold('r', 220);
 
+    /*
+     * 여기서는 "씬이 갈렸는가"만 본다. "조작이 먹는가"는 waitGrounded 몫이다.
+     *
+     * 개시 연출이 끝나기(FIGHT!)를 여기서 함께 기다리면 안 된다.
+     * 그 시점에는 이미 봇 셋이 달려들어, 주가가 시작값에 머무는 구간이
+     * 한순간뿐이라 폴링이 그 틈을 놓친다.
+     */
     const fresh = await waitUntil(
       (s) =>
         s.alive &&
-        s.stock === 100 &&
-        s.active &&
-        s.free &&
-        !s.airborne &&
-        // 기록기가 붙어 있었다면, 그것이 떨어져 나간 뒤라야 진짜 새 판이다
-        (!wasRecorded || !s.recorded),
+        (wasRecorded
+          ? // 기록기가 떨어져 나갔다 = 플레이어 객체가 새로 만들어졌다
+            !s.recorded
+          : // 첫 호출이라 비교할 기록기가 없다 — 시작 상태로 갈음한다
+            s.stock === 100 && s.free && !s.airborne),
       '새 판 시작 대기',
       8000,
       true,

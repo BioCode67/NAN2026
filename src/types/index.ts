@@ -591,6 +591,14 @@ export interface AIDifficulty {
 export interface BattleSceneData {
   /** 플레이어가 고른 캐릭터 */
   playerId: CharacterId;
+  /**
+   * 2P가 고른 캐릭터. 없으면 1인 플레이다.
+   *
+   * 한 키보드를 나눠 쓰는 로컬 2인 대전이다. 봇 성격을 아무리 갈라 놔도
+   * 옆 사람이 뭘 할지 모르는 것과는 다르다 — 이 게임에서 제일 재미있는
+   * 순간은 사람 둘이 붙었을 때 나온다.
+   */
+  player2Id?: CharacterId;
   /** AI 봇 캐릭터 목록 */
   aiIds: CharacterId[];
   /**

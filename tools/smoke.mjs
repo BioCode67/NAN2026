@@ -1295,17 +1295,21 @@ console.log('잡기');
       const s = window.game.scene.getScene('Battle');
       return s.fighters.some((f) => f !== s.player && f.alive);
     });
-  if (!(await hasFoe())) {
+  /** 잡을 상대가 있는 상태로 만든다 (없으면 판을 새로 연다) */
+  const ensureFoe = async () => {
+    if (await hasFoe()) return true;
     await restartRound();
     await waitGrounded();
-  }
+    return hasFoe();
+  };
+  await ensureFoe();
 
   /*
    * 규칙 검사는 브라우저 안에서 한 번에 돌린다.
    * 붙잡는 데 성공하려면 상대가 판정 구간 내내 앞에 있어야 하는데,
    * 봇은 매 프레임 움직인다 — 바깥에서 왕복하며 붙잡아 두기에는 너무 느리다.
    */
-  const grab = await page.evaluate(async () => {
+  const runGrabChecks = () => page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1397,6 +1401,16 @@ console.log('잡기');
     return { guardedFoe, ...combo, escaped };
   });
 
+  /*
+   * 검사 도중 상대가 전멸할 수 있다.
+   *
+   * 상대를 코앞에 세워 두고 돌리는 검사라 봇들끼리 서로 몰아붙이다 끝나기도
+   * 한다. 그건 잡기가 고장난 것이 아니라 검사할 상대가 없어진 것이므로,
+   * 판을 새로 열고 한 번 더 해 본다.
+   */
+  let grab = await runGrabChecks();
+  if (grab.why && (await ensureFoe())) grab = await runGrabChecks();
+
   if (grab.why) {
     errors.push(`[잡기] ${grab.why}`);
   } else {
@@ -1433,6 +1447,7 @@ console.log('잡기');
   await shot('grab');
 
   /* --- 공중 히트 → 점프 반환 (공중 연속기의 근거) ----------------- */
+  await ensureFoe();
   const airCombo = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
@@ -1629,6 +1644,114 @@ console.log('무대');
       `  ✓ ${info.name} — 발판 ${info.platforms}개 · 중력 ${Math.round(info.gravity)} · ` +
         `곡 ${tone?.transpose ?? '?'}반음 ${tone?.bpmMul ?? '?'}배`,
     );
+  }
+}
+
+/*
+ * 2인 대전.
+ *
+ * 선택 화면에서 F2 → 두 번 고르고 → 사람 둘이 실제로 판에 서는지.
+ * 여기가 끊기면 "모드가 있다"는 말만 남는다. 그리고 두 사람의 키가 진짜로
+ * 갈렸는지까지 봐야 한다 — 한쪽 키가 다른 쪽 캐릭터를 움직이면
+ * 화면상으로는 멀쩡해 보이지만 같이 못 한다.
+ */
+console.log('2인 대전');
+{
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(900);
+  await page.keyboard.press('F2');
+  await page.waitForTimeout(300);
+
+  const armed = await page.evaluate(
+    () => window.game.scene.getScene('Select')?.twoPlayer === true,
+  );
+  if (!armed) {
+    errors.push('[2인] F2로 2인 대전이 켜지지 않습니다');
+  } else {
+    // 1P 고르기 → 2P 고르기 (같은 화면에서 차례만 넘어간다)
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(500);
+    const midway = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Select');
+      return { p1: s?.p1Id ?? null, confirmed: s?.confirmed ?? null };
+    });
+    if (!midway.p1 || midway.confirmed) {
+      errors.push('[2인] 1P가 고른 뒤 2P 차례로 넘어가지 않습니다');
+    }
+
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(160);
+    }
+    await shot('vs-select');
+    await page.keyboard.press('Enter');
+
+    await waitUntil((s) => s.alive && s.active, '2인 대전 개시', 20000);
+
+    const vs = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      const humans = s.fighters.filter((f) => f.side === 'player');
+      return {
+        total: s.fighters.length,
+        humans: humans.length,
+        names: humans.map((f) => f.cfg.name),
+        ids: humans.map((f) => f.fighterId),
+        same: humans.length === 2 && humans[0].cfg.id === humans[1].cfg.id,
+        // 봇이 사람과 같은 캐릭터를 쓰고 있지는 않은가
+        clash: s.fighters
+          .filter((f) => f.side === 'ai')
+          .some((b) => humans.some((h) => h.cfg.id === b.cfg.id)),
+      };
+    });
+
+    if (vs.humans !== 2) {
+      errors.push(`[2인] 사람이 둘이어야 하는데 ${vs.humans}명입니다`);
+    } else if (vs.total !== 4) {
+      errors.push(`[2인] 판에 넷이 서야 하는데 ${vs.total}명입니다`);
+    } else if (vs.same || vs.clash) {
+      errors.push('[2인] 같은 캐릭터가 두 번 나왔습니다');
+    } else {
+      console.log(
+        `  ✓ F2 → 1P·2P 각자 선택 — ${vs.ids.join('/')} = ${vs.names.join(' vs ')} + 봇 둘`,
+      );
+    }
+
+    /*
+     * 키가 갈렸는가.
+     *
+     * 1P의 A/D 와 2P의 ←/→ 를 각각 눌러 **그 사람만** 움직이는지 본다.
+     * 한 키가 둘 다 움직이면(혹은 엉뚱한 쪽을 움직이면) 같이 할 수 없다.
+     */
+    const moved = async (key) => {
+      const before = await page.evaluate(() => {
+        const s = window.game.scene.getScene('Battle');
+        const h = s.fighters.filter((f) => f.side === 'player');
+        return h.map((f) => f.x);
+      });
+      await hold(key, 420);
+      await page.waitForTimeout(120);
+      const after = await page.evaluate(() => {
+        const s = window.game.scene.getScene('Battle');
+        const h = s.fighters.filter((f) => f.side === 'player');
+        return h.map((f) => f.x);
+      });
+      return after.map((x, i) => Math.abs(x - before[i]));
+    };
+
+    const byA = await moved('a');
+    const byLeft = await moved('ArrowLeft');
+    const MOVED = 18;
+
+    if (byA[0] < MOVED) {
+      errors.push(`[2인] A를 눌러도 1P가 움직이지 않습니다 (${byA[0]?.toFixed(0)}px)`);
+    } else if (byLeft[1] < MOVED) {
+      errors.push(`[2인] ←를 눌러도 2P가 움직이지 않습니다 (${byLeft[1]?.toFixed(0)}px)`);
+    } else {
+      console.log(
+        `  ✓ 키 분리 — A→1P ${byA[0].toFixed(0)}px · ←→2P ${byLeft[1].toFixed(0)}px`,
+      );
+    }
+    await shot('vs-battle');
   }
 }
 } catch (err) {

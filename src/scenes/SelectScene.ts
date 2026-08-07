@@ -86,6 +86,13 @@ export class SelectScene extends Phaser.Scene {
   private skillText!: Phaser.GameObjects.Text;
   private movesText!: Phaser.GameObjects.Text;
   private quoteText!: Phaser.GameObjects.Text;
+  private prompt!: Phaser.GameObjects.Text;
+  private modeLabel!: Phaser.GameObjects.Text;
+
+  /** 2인 대전인가 (F2로 켠다) */
+  private twoPlayer = false;
+  /** 2인 대전에서 1P가 이미 고른 캐릭터 (null이면 아직 1P 차례) */
+  private p1Id: CharacterId | null = null;
 
   constructor() {
     super({ key: 'Select' });
@@ -95,6 +102,8 @@ export class SelectScene extends Phaser.Scene {
     this.confirmed = false;
     this.cards = [];
     this.detail = undefined;
+    this.twoPlayer = false;
+    this.p1Id = null;
 
     /*
      * 화면이 뜨자마자 들어오는 입력은 무시한다.
@@ -186,13 +195,54 @@ export class SelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.add
+    this.prompt = this.add
       .text(GAME.WIDTH / 2, 140, '파이터를 선택하세요', {
         fontFamily: GAME.FONT,
         fontSize: '18px',
         color: '#cbd5e1',
       })
       .setOrigin(0.5);
+  }
+
+  /**
+   * 지금 누가 고르는 중인지 알린다.
+   *
+   * 2인 대전은 한 화면에서 번갈아 고른다. 지금이 누구 차례인지 크게 쓰지
+   * 않으면 옆 사람이 남의 캐릭터를 정해 버린다 — 실제로 그렇게 된다.
+   */
+  private refreshPrompt(): void {
+    if (!this.twoPlayer) {
+      this.prompt.setText('파이터를 선택하세요');
+      this.prompt.setColor('#cbd5e1');
+      return;
+    }
+    const first = this.p1Id === null;
+    this.prompt.setText(first ? '1P — 파이터를 선택하세요' : '2P — 파이터를 선택하세요');
+    this.prompt.setColor(first ? '#38bdf8' : '#f472b6');
+  }
+
+  /**
+   * 2인 대전을 켜고 끈다.
+   *
+   * 별도 메뉴 화면을 두지 않았다. 선택 화면에 이미 있는 것을 그대로 쓰면
+   * 화면 하나와 그 사이 전환을 통째로 안 만들어도 되고, 켜는 순간 눈앞의
+   * 카드가 그대로 1P 차례로 바뀌니 설명도 필요 없다.
+   */
+  private toggleTwoPlayer(): void {
+    if (this.confirmed || this.detail) return;
+
+    this.twoPlayer = !this.twoPlayer;
+    this.p1Id = null;
+    sound.play('uiConfirm');
+    this.refreshPrompt();
+    this.modeLabel.setText(this.modeText());
+    this.modeLabel.setColor(this.twoPlayer ? '#f472b6' : '#6c86c4');
+  }
+
+  private modeText(): string {
+    return this.twoPlayer
+      ? '👥 2인 대전  ·  사람 둘 + 봇 둘   (F2 : 1인으로)'
+      : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전)';
   }
 
   private buildCards(): void {
@@ -378,10 +428,23 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private buildFooter(): void {
+    /*
+     * 모드 줄을 조작 안내보다 위에, 더 크게 둔다.
+     * 2인 대전이 있다는 사실 자체를 모르면 없는 기능이나 마찬가지다.
+     */
+    this.modeLabel = this.add
+      .text(GAME.WIDTH / 2, 650, this.modeText(), {
+        fontFamily: GAME.FONT,
+        fontSize: '17px',
+        color: '#6c86c4',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5);
+
     this.add
       .text(
         GAME.WIDTH / 2,
-        676,
+        680,
         `← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      ` +
           `TAB · I : 커맨드 14개 자세히      (총 ${CHARACTER_ORDER.length}명 — 고유 메커니즘이 서로 다른 ${AI_COUNT}명이 AI로 참전)`,
         {
@@ -423,6 +486,7 @@ export class SelectScene extends Phaser.Scene {
      * 키 하나가 막혀도 기능 전체가 사라지지 않는 편이 낫다.
      */
     kb.addCapture('TAB');
+    kb.on('keydown-F2', () => this.toggleTwoPlayer());
     kb.on('keydown-TAB', () => this.toggleDetail());
     kb.on('keydown-I', () => this.toggleDetail());
     kb.on('keydown-ESC', () => this.closeDetail());
@@ -690,13 +754,8 @@ export class SelectScene extends Phaser.Scene {
       return;
     }
     if (this.confirmed || this.time.now < this.readyAt) return;
-    this.confirmed = true;
-    sound.play('uiConfirm');
 
-    const playerId = CHARACTER_ORDER[this.selectedIndex]!;
-
-    const aiIds = pickOpponents(playerId, AI_COUNT);
-
+    const picked = CHARACTER_ORDER[this.selectedIndex]!;
     const card = this.cards[this.selectedIndex]!;
     this.tweens.add({
       targets: card.root,
@@ -705,8 +764,36 @@ export class SelectScene extends Phaser.Scene {
       yoyo: true,
       ease: 'Quad.easeOut',
     });
+    sound.play('uiConfirm');
 
-    const data: BattleSceneData = { playerId, aiIds };
+    /*
+     * 2인 대전은 한 번 더 고른다.
+     *
+     * 화면을 따로 만들지 않고 같은 화면에서 차례만 넘긴다. 1P가 고른 뒤
+     * 곧바로 2P 차례가 되므로, 두 사람이 같은 자리에서 번갈아 누르면 된다.
+     * 다음 입력이 곧장 결정으로 먹지 않도록 여기서도 잠깐 잠근다 —
+     * Enter를 꾹 누르고 있으면 둘 다 같은 캐릭터가 되어 버린다.
+     */
+    if (this.twoPlayer && this.p1Id === null) {
+      this.p1Id = picked;
+      this.readyAt = this.time.now + 320;
+      this.refreshPrompt();
+      return;
+    }
+
+    this.confirmed = true;
+
+    const playerId = this.p1Id ?? picked;
+    const player2Id = this.p1Id ? picked : undefined;
+
+    /*
+     * 사람이 늘면 봇이 줄어든다 — 판에 서는 인원은 넷 그대로다.
+     * 다섯이 뒤엉키면 화면에서 자기 캐릭터를 놓친다.
+     */
+    const botCount = AI_COUNT - (player2Id ? 1 : 0);
+    const aiIds = pickOpponents(playerId, botCount, [], player2Id ? [player2Id] : []);
+
+    const data: BattleSceneData = { playerId, player2Id, aiIds };
     this.cameras.main.fadeOut(280, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.start('Battle', data);

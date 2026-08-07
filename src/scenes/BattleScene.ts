@@ -109,6 +109,21 @@ export class BattleScene extends Phaser.Scene {
   private prompting = false;
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
+  private keys2!: Record<string, Phaser.Input.Keyboard.Key>;
+  /** 2P (로컬 2인 대전일 때만 있다) */
+  private player2?: BaseCharacter;
+  /**
+   * 사람이 조종하는 파이터들.
+   *
+   * 키와 더블탭 기록을 파이터에 묶어 둔다 — 씬이 "1P는 이 키, 2P는 저 키"를
+   * 매번 갈라 보는 대신 목록을 돌리기만 하면 되고, 셋째 사람이 붙어도
+   * 여기 한 줄이 늘 뿐이다.
+   */
+  private humans: Array<{
+    fighter: BaseCharacter;
+    keys: Record<string, Phaser.Input.Keyboard.Key>;
+    tap: { dir: -1 | 0 | 1; at: number };
+  }> = [];
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
   /** 연속기 안내 — 지금 이어 칠 수 있는 다음 타를 알려준다 */
@@ -126,9 +141,12 @@ export class BattleScene extends Phaser.Scene {
   private announceLabel?: Phaser.GameObjects.Text;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
   private hudLayer!: Phaser.GameObjects.Container;
-  /** 더블탭 대시 판정용 */
-  private lastTapDir: -1 | 0 | 1 = 0;
-  private lastTapAt = 0;
+  /** 화면 밖으로 나간 사람을 가리키는 가장자리 표시 */
+  private offscreenMarks: Array<{
+    fighter: BaseCharacter;
+    arrow: Phaser.GameObjects.Triangle;
+    text: Phaser.GameObjects.Text;
+  }> = [];
 
   private paused = false;
   private pauseOverlay?: Phaser.GameObjects.Container;
@@ -172,10 +190,14 @@ export class BattleScene extends Phaser.Scene {
 
     this.buildBackground();
     this.buildStage();
+    /*
+     * 키를 먼저 만든다 — 파이터를 만들 때 사람마다 키를 나눠 묶기 때문이다.
+     * (2P가 있으면 1P의 ↑ 점프를 떼야 해서, 키가 없으면 그 판단을 못 한다)
+     */
+    this.bindInput();
     this.spawnFighters();
     this.setupSystems();
     this.buildHud();
-    this.bindInput();
     this.bindEvents();
     this.playIntro();
 
@@ -508,7 +530,8 @@ export class BattleScene extends Phaser.Scene {
 
   private spawnFighters(): void {
     const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
-    const total = 1 + this.battleData.aiIds.length;
+    const p2Id = this.battleData.player2Id;
+    const total = 1 + (p2Id ? 1 : 0) + this.battleData.aiIds.length;
 
     /*
      * 연승이 쌓일수록 봇이 빨라진다.
@@ -537,7 +560,28 @@ export class BattleScene extends Phaser.Scene {
     this.player.facing = 1;
     this.fighters.push(this.player);
 
-    this.battleData.aiIds.forEach((id, i) => {
+    /*
+     * 2P는 맨 오른쪽에서 시작한다.
+     *
+     * 사람 둘을 양 끝에 세우고 봇을 가운데에 둔다. 사람끼리 붙으려면
+     * 봇을 헤치고 가야 하니, 시작하자마자 둘이 서로만 두들기는 판이 안 된다.
+     */
+    if (p2Id) {
+      this.player2 = new BaseCharacter(
+        this,
+        STAGE.RIGHT - 130,
+        spawnY,
+        CHARACTERS[p2Id],
+        'player',
+        'P2',
+      );
+      this.player2.facing = -1;
+      this.fighters.push(this.player2);
+    }
+
+    // 봇은 사이를 메운다 (사람이 둘이면 자리가 하나 줄어든다)
+    const botSlots = total - 1 - (p2Id ? 1 : 0);
+    this.battleData.aiIds.slice(0, botSlots).forEach((id, i) => {
       const bot = new BaseCharacter(
         this,
         startX + gap * (i + 1),
@@ -549,6 +593,20 @@ export class BattleScene extends Phaser.Scene {
       bot.facing = -1;
       this.fighters.push(bot);
     });
+
+    /* 사람마다 자기 키와 자기 더블탭 기록을 갖는다 */
+    const p1Keys = { ...this.keys };
+    // 2P가 있으면 방향키는 2P 것이다 — 1P의 ↑ 점프를 뗀다
+    if (this.player2) delete p1Keys.jumpAlt;
+
+    this.humans = [{ fighter: this.player, keys: p1Keys, tap: { dir: 0, at: 0 } }];
+    if (this.player2) {
+      this.humans.push({
+        fighter: this.player2,
+        keys: this.keys2,
+        tap: { dir: 0, at: 0 },
+      });
+    }
 
     /* 지면·발판 충돌 + 파이터 간 밀림 */
     this.fighters.forEach((f) => {
@@ -567,7 +625,8 @@ export class BattleScene extends Phaser.Scene {
       // 연승 도전은 플레이어만 앞 판의 주가를 이어받는다
       this.stock.register(
         f,
-        f.side === 'player' ? (this.battleData.startStock ?? STOCK.START) : STOCK.START,
+        // 연승 도전으로 이어받는 주가는 1P의 것이다 (2P는 늘 100에서 시작)
+        f === this.player ? (this.battleData.startStock ?? STOCK.START) : STOCK.START,
       );
       // 투사체 스킬(빌 게이츠맨의 블루스크린 등) 발사 연결
       f.onSpawnProjectile = (owner, atk) => this.projectiles.spawn(owner, atk);
@@ -683,11 +742,40 @@ export class BattleScene extends Phaser.Scene {
       taunt: Phaser.Input.Keyboard.KeyCodes.T,
     }) as Record<string, Phaser.Input.Keyboard.Key>;
 
-    // 스페이스바로 페이지가 스크롤되지 않도록 캡처
+    /*
+     * 2P 키 — 한 키보드를 반으로 나눠 쓴다.
+     *
+     * 이동은 방향키. 버튼은 숫자패드를 먼저 두고, 없는 노트북을 위해
+     * 방향키 왼쪽의 , . / ; ' 도 같은 자리에 함께 묶었다. 둘 중 아무거나
+     * 눌러도 같은 기술이 나가므로 키보드를 가리지 않는다.
+     *
+     * 1P의 ↑ 점프(jumpAlt)는 2P가 있는 판에서 꺼진다 — 방향키는 2P 것이다.
+     */
+    this.keys2 = kb.addKeys({
+      left: Phaser.Input.Keyboard.KeyCodes.LEFT,
+      right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+      up: Phaser.Input.Keyboard.KeyCodes.UP,
+      down: Phaser.Input.Keyboard.KeyCodes.DOWN,
+      jump: Phaser.Input.Keyboard.KeyCodes.NUMPAD_ZERO,
+      jumpAlt: Phaser.Input.Keyboard.KeyCodes.COMMA,
+      light: Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE,
+      lightAlt: Phaser.Input.Keyboard.KeyCodes.PERIOD,
+      heavy: Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO,
+      heavyAlt: Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH,
+      skill: Phaser.Input.Keyboard.KeyCodes.NUMPAD_THREE,
+      skillAlt: Phaser.Input.Keyboard.KeyCodes.SEMICOLON,
+      grab: Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR,
+      grabAlt: Phaser.Input.Keyboard.KeyCodes.QUOTES,
+      taunt: Phaser.Input.Keyboard.KeyCodes.NUMPAD_FIVE,
+    }) as Record<string, Phaser.Input.Keyboard.Key>;
+
+    // 스페이스바·방향키로 페이지가 스크롤되지 않도록 캡처
     kb.addCapture([
       Phaser.Input.Keyboard.KeyCodes.SPACE,
       Phaser.Input.Keyboard.KeyCodes.UP,
       Phaser.Input.Keyboard.KeyCodes.DOWN,
+      Phaser.Input.Keyboard.KeyCodes.LEFT,
+      Phaser.Input.Keyboard.KeyCodes.RIGHT,
     ]);
 
     kb.on('keydown-R', () => this.scene.start('Battle', this.battleData));
@@ -700,32 +788,57 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private handleInput(): void {
-    const p = this.player;
+  /** 사람이 조종하는 파이터 하나 — 파이터 · 키 · 더블탭 기록 */
+  private handleAllInput(): void {
+    for (const h of this.humans) this.handleInput(h.fighter, h.keys, h.tap);
+  }
+
+  private handleInput(
+    p: BaseCharacter,
+    keys: Record<string, Phaser.Input.Keyboard.Key>,
+    tap: { dir: -1 | 0 | 1; at: number },
+  ): void {
     if (!p.alive) return;
 
     /*
      * JustDown 은 한 번 읽으면 그 프레임의 "방금 눌림"을 소비한다.
      * 같은 키를 두 곳에서 각각 읽으면 뒤쪽은 언제나 false 가 된다 —
      * 실제로 회피가 통째로 죽어 있었다. 프레임 시작에 한 번만 읽어 나눠 쓴다.
+     *
+     * 2P는 한 동작에 키가 둘씩 묶여 있다(숫자패드 / , . / 계열).
+     * 그래서 "이 동작에 묶인 키를 전부 한 번씩 읽고 하나라도 눌렸으면 참"으로
+     * 본다 — 짧게 끊는 || 로 쓰면 앞엣것이 참일 때 뒤엣것을 안 읽어
+     * 그 키의 눌림이 다음 프레임까지 남아 한 박자 늦게 발동한다.
      */
     const JustDown = Phaser.Input.Keyboard.JustDown;
     const JustUp = Phaser.Input.Keyboard.JustUp;
+    const anyOf = (
+      names: string[],
+      read: (k: Phaser.Input.Keyboard.Key) => boolean,
+    ) => {
+      let hit = false;
+      for (const n of names) {
+        const k = keys[n];
+        if (k && read(k)) hit = true;
+      }
+      return hit;
+    };
+    const held = (name: string) => keys[name]?.isDown ?? false;
 
-    const tapLeft = JustDown(this.keys.left!);
-    const tapRight = JustDown(this.keys.right!);
-    const tapJump = JustDown(this.keys.jump!) || JustDown(this.keys.jumpAlt!);
-    const releaseJump = JustUp(this.keys.jump!) || JustUp(this.keys.jumpAlt!);
-    const tapLight = JustDown(this.keys.light!);
-    const tapHeavy = JustDown(this.keys.heavy!);
-    const tapSkill = JustDown(this.keys.skill!);
-    const tapGrab = JustDown(this.keys.grab!);
-    const tapTaunt = JustDown(this.keys.taunt!);
+    const tapLeft = anyOf(['left'], JustDown);
+    const tapRight = anyOf(['right'], JustDown);
+    const tapJump = anyOf(['jump', 'jumpAlt'], JustDown);
+    const releaseJump = anyOf(['jump', 'jumpAlt'], JustUp);
+    const tapLight = anyOf(['light', 'lightAlt'], JustDown);
+    const tapHeavy = anyOf(['heavy', 'heavyAlt'], JustDown);
+    const tapSkill = anyOf(['skill', 'skillAlt'], JustDown);
+    const tapGrab = anyOf(['grab', 'grabAlt'], JustDown);
+    const tapTaunt = anyOf(['taunt'], JustDown);
 
-    const left = this.keys.left!.isDown;
-    const right = this.keys.right!.isDown;
-    const up = this.keys.up!.isDown;
-    const down = this.keys.down!.isDown;
+    const left = held('left');
+    const right = held('right');
+    const up = held('up');
+    const down = held('down');
     const onGround = p.body.blocked.down || p.body.touching.down;
     const reversed = this.gimmicks.isReversed();
 
@@ -778,8 +891,8 @@ export class BattleScene extends Phaser.Scene {
 
     /* A/D 더블탭 → 대시 (방어 중에는 구르기가 먼저다) */
     if (!wantGuard) {
-      if (tapLeft && this.checkDoubleTap(-1)) p.dash(-1);
-      if (tapRight && this.checkDoubleTap(1)) p.dash(1);
+      if (tapLeft && this.checkDoubleTap(tap, -1)) p.dash(-1);
+      if (tapRight && this.checkDoubleTap(tap, 1)) p.dash(1);
     }
 
     /* 조작 반전 룰이 걸려 있으면 좌우가 뒤집힌다 */
@@ -797,7 +910,7 @@ export class BattleScene extends Phaser.Scene {
      * 드문 환경에서는 누르고 떼는 것이 통째로 프레임 사이에 들어가
      * JustUp 을 놓치기 때문이다.
      */
-    p.setJumpHeld(this.keys.jump!.isDown || this.keys.jumpAlt!.isDown);
+    p.setJumpHeld(held('jump') || held('jumpAlt'));
     // 뗀 순간을 잡을 수 있으면 즉시 잘라 반응을 더 또렷하게 한다
     if (releaseJump) p.releaseJump();
 
@@ -810,7 +923,7 @@ export class BattleScene extends Phaser.Scene {
     if (tapLight) p.attack('light', dir);
     if (tapHeavy) p.attack('heavy', dir);
     // 누르고 있으면 선딜 구간에서 힘을 모은다 (차지 강공격)
-    p.setHeavyHeld(this.keys.heavy!.isDown);
+    p.setHeavyHeld(held('heavy') || held('heavyAlt'));
     if (tapSkill) this.castSkill(p);
     if (tapTaunt) p.taunt();
 
@@ -818,16 +931,20 @@ export class BattleScene extends Phaser.Scene {
     if (down && !onGround) p.fastFall();
   }
 
-  /** 같은 방향키를 짧은 간격으로 두 번 눌렀는가 */
-  private checkDoubleTap(dir: -1 | 1): boolean {
+  /**
+   * 같은 방향키를 짧은 간격으로 두 번 눌렀는가.
+   *
+   * 기록을 사람마다 따로 둔다. 하나로 두면 2P가 왼쪽을 누른 것이 1P의
+   * 더블탭으로 세어져, 둘이 번갈아 걷기만 해도 아무나 대시로 튀어 나간다.
+   */
+  private checkDoubleTap(tap: { dir: -1 | 0 | 1; at: number }, dir: -1 | 1): boolean {
     const now = this.time.now;
-    const isDouble =
-      this.lastTapDir === dir && now - this.lastTapAt <= FIGHTER.DOUBLE_TAP_MS;
+    const isDouble = tap.dir === dir && now - tap.at <= FIGHTER.DOUBLE_TAP_MS;
 
-    this.lastTapDir = dir;
-    this.lastTapAt = now;
+    tap.dir = dir;
+    tap.at = now;
     // 3연타가 연속 대시로 이어지지 않도록 기록을 지운다
-    if (isDouble) this.lastTapDir = 0;
+    if (isDouble) tap.dir = 0;
     return isDouble;
   }
 
@@ -887,9 +1004,19 @@ export class BattleScene extends Phaser.Scene {
       maxX = Math.max(maxX, f.x);
     }
 
-    // 플레이어가 살아있으면 조금 더 플레이어 쪽에 무게를 둔다
+    /*
+     * 사람 쪽에 무게를 둔다.
+     *
+     * 전원의 한가운데만 보면 봇 셋이 몰려 있는 쪽으로 화면이 끌려가
+     * 정작 내 캐릭터가 가장자리로 밀린다. 사람이 둘이면 **둘의 한가운데**를
+     * 쓴다 — 한쪽만 따라가면 나머지 한 사람은 늘 화면 밖이다.
+     */
+    const humansAlive = this.humans.map((h) => h.fighter).filter((f) => f.alive);
     const mid = (minX + maxX) / 2;
-    const targetX = this.player.alive ? (mid + this.player.x) / 2 : mid;
+    const humanMid = humansAlive.length
+      ? humansAlive.reduce((sum, f) => sum + f.x, 0) / humansAlive.length
+      : mid;
+    const targetX = humansAlive.length ? (mid + humanMid) / 2 : mid;
 
     const cam = this.cameras.main;
     const desired = Phaser.Math.Clamp(
@@ -1177,7 +1304,17 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private showResult(winner: BaseCharacter | null): void {
-    const playerWon = winner?.side === 'player';
+    /*
+     * 2인 대전에서는 "이겼다/졌다"가 성립하지 않는다.
+     *
+     * 사람이 둘이면 한 화면을 둘이 같이 본다. 한쪽 기준으로 "패배…"를
+     * 크게 띄우면 이긴 사람은 자기가 진 줄 안다. 그래서 2인 대전에서는
+     * 판정을 내리지 않고 **누가 이겼는지만** 말한다.
+     */
+    const versus = !!this.player2;
+    const playerWon = versus
+      ? winner === this.player || winner === this.player2
+      : winner?.side === 'player';
 
     /*
      * 결과 화면 배경.
@@ -1203,20 +1340,30 @@ export class BattleScene extends Phaser.Scene {
 
     /* 이긴 판이 몇 번째인가 — 이번 판을 포함한 수 */
     const wonSoFar = playerWon ? this.streak + 1 : this.streak;
-    this.canContinue = playerWon;
+    // 연승 도전은 혼자 할 때만. 둘이면 다음 상대가 아니라 다시 붙는 것이 맞다
+    this.canContinue = playerWon && !versus;
+
+    /* 2인 대전은 누가 이겼는지가 곧 제목이다 */
+    const humanWinner =
+      winner === this.player ? '1P 승리!' : winner === this.player2 ? '2P 승리!' : '봇 승리…';
+    const titleText = versus ? humanWinner : playerWon ? '승리!' : '패배…';
+    const titleColor = versus
+      ? winner === this.player
+        ? '#38bdf8'
+        : winner === this.player2
+          ? '#f472b6'
+          : '#ef4444'
+      : playerWon
+        ? '#4ade80'
+        : '#ef4444';
 
     const title = this.add
-      .text(
-        GAME.WIDTH / 2,
-        170,
-        playerWon ? '승리!' : '패배…',
-        {
-          fontFamily: GAME.FONT,
-          fontSize: '76px',
-          color: playerWon ? '#4ade80' : '#ef4444',
-          fontStyle: 'bold',
-        },
-      )
+      .text(GAME.WIDTH / 2, 170, titleText, {
+        fontFamily: GAME.FONT,
+        fontSize: '76px',
+        color: titleColor,
+        fontStyle: 'bold',
+      })
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
     title.setStroke('#0b1020', 10);
@@ -1224,9 +1371,11 @@ export class BattleScene extends Phaser.Scene {
     // 플레이어가 몇 등이었는지 알려준다 (KO 순서의 역순 = 등수)
     const total = this.fighters.length;
     const playerRank = total - this.koOrder.indexOf(this.player.fighterId);
-    const rankText = playerWon
+    const rankText = versus
       ? `${total}명 중 최후의 1인`
-      : `${total}명 중 ${playerRank}위`;
+      : playerWon
+        ? `${total}명 중 최후의 1인`
+        : `${total}명 중 ${playerRank}위`;
 
     this.add
       .text(
@@ -1253,7 +1402,7 @@ export class BattleScene extends Phaser.Scene {
      * 나가면 대부분 거기서 그만둔다. **나가지 않아도 다음 상대가 나오는 것**이
      * 그 스무 명을 실제로 보게 만드는 유일한 장치다.
      */
-    if (wonSoFar > 0) {
+    if (wonSoFar > 0 && !versus) {
       const badge = streakTitle(wonSoFar);
       this.add
         .text(
@@ -1274,9 +1423,11 @@ export class BattleScene extends Phaser.Scene {
 
     this.buildScoreboard();
 
-    const keys = playerWon
-      ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
-      : 'R : 다시하기      ESC : 캐릭터 선택';
+    const keys = versus
+      ? 'R : 한 판 더      ESC : 캐릭터 선택'
+      : playerWon
+        ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
+        : 'R : 다시하기      ESC : 캐릭터 선택';
 
     const keyLabel = this.add
       .text(GAME.WIDTH / 2, 648, keys, {
@@ -1497,6 +1648,73 @@ export class BattleScene extends Phaser.Scene {
   /* HUD                                                              */
   /* ================================================================ */
 
+  /**
+   * 화면 밖으로 나간 사람을 가장자리에 표시한다.
+   *
+   * 월드가 화면보다 넓어서, 넉백으로 크게 날아가거나 2인 대전에서 둘이
+   * 양 끝으로 갈라지면 자기 캐릭터가 화면에서 사라진다. 그러면 그 몇 초는
+   * 게임이 아니라 추측이 된다 — 어디 있는지 모른 채 버튼만 누르게 된다.
+   *
+   * 대난투가 같은 문제를 화면 가장자리 표시로 푼다. 카메라를 억지로
+   * 넓히는 것보다 이쪽이 확실하다 — 넷이 흩어지면 어차피 다 담을 수 없다.
+   */
+  private buildOffscreenMarkers(
+    ui: <T extends Phaser.GameObjects.GameObject>(obj: T) => T,
+  ): void {
+    this.offscreenMarks = this.humans.map((h) => {
+      // HUD 패널과 같은 색을 쓴다 — 1P는 파랑, 2P는 분홍으로 고정
+      const first = h.fighter === this.player;
+      const accent = first ? 0x38bdf8 : 0xf472b6;
+      const label = first ? '1P' : '2P';
+
+      const arrow = ui(
+        this.add.triangle(0, 0, 0, 0, 22, 11, 0, 22, accent, 0.92).setVisible(false),
+      );
+      const text = ui(
+        this.add
+          .text(0, 0, label, {
+            fontFamily: GAME.FONT,
+            fontSize: '13px',
+            color: '#ffffff',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+          .setVisible(false),
+      );
+      text.setStroke('#0b1020', 4);
+
+      return { fighter: h.fighter, arrow, text };
+    });
+  }
+
+  /** 매 프레임 — 화면 밖에 있는 사람만 가장자리에 띄운다 */
+  private updateOffscreenMarkers(): void {
+    if (!this.offscreenMarks?.length) return;
+
+    const cam = this.cameras.main;
+    const left = cam.scrollX;
+    const right = cam.scrollX + GAME.WIDTH;
+    const MARGIN = 44;
+
+    for (const m of this.offscreenMarks) {
+      const f = m.fighter;
+      const out = !f.alive ? 0 : f.x < left + MARGIN ? -1 : f.x > right - MARGIN ? 1 : 0;
+
+      if (!out) {
+        m.arrow.setVisible(false);
+        m.text.setVisible(false);
+        continue;
+      }
+
+      // 화면 안에서의 세로 위치는 그대로 따라간다 — 위아래 어디쯤인지도 정보다
+      const y = Phaser.Math.Clamp(f.y, 90, GAME.HEIGHT - 150);
+      const x = out < 0 ? 26 : GAME.WIDTH - 26;
+
+      m.arrow.setPosition(x, y).setAngle(out < 0 ? 180 : 0).setVisible(true);
+      m.text.setPosition(x, y - 26).setVisible(true);
+    }
+  }
+
   private buildHud(): void {
     /*
      * HUD는 카메라를 따라 움직이면 안 된다.
@@ -1513,6 +1731,8 @@ export class BattleScene extends Phaser.Scene {
       this.hudLayer.add(obj);
       return obj;
     };
+
+    this.buildOffscreenMarkers(ui);
 
     /*
      * 조작키 안내는 상단에 둔다 — 하단은 HUD 패널이 가득 차 겹친다.
@@ -1539,16 +1759,36 @@ export class BattleScene extends Phaser.Scene {
       return label;
     };
 
-    hint(
-      16,
-      'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
-      '#8ea3cc',
-    );
-    hint(
-      34,
-      'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬 · U 잡기(가드를 뚫는다)  ｜  잡은 뒤 J 툭툭 · K 던지기(W/S/뒤로 방향 지정) · 잡히면 아무 버튼 연타로 탈출',
-      '#a8bce0',
-    );
+    if (this.player2) {
+      /*
+       * 2인 대전은 안내를 사람별로 나눈다.
+       *
+       * 한 줄에 두 사람 조작을 섞어 쓰면 자기 것을 찾다가 판이 끝난다.
+       * 색은 HUD 패널의 1P/2P 표시와 같게 맞춰, 화면 아래를 흘깃 보면
+       * 자기 줄이 바로 눈에 들어오게 했다.
+       */
+      hint(
+        16,
+        '1P   A/D 이동 · SPACE 점프 · S 방어 · J 약 · K 강 · L 스킬 · U 잡기 · AA/DD 대시',
+        '#38bdf8',
+      );
+      hint(
+        34,
+        '2P   ← → 이동 · 숫자패드 0 점프 · ↓ 방어 · 1 약 · 2 강 · 3 스킬 · 4 잡기    (숫자패드가 없으면  ,  .  /  ;  \'  순서로 같은 자리)',
+        '#f472b6',
+      );
+    } else {
+      hint(
+        16,
+        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
+        '#8ea3cc',
+      );
+      hint(
+        34,
+        'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬 · U 잡기(가드를 뚫는다)  ｜  잡은 뒤 J 툭툭 · K 던지기(W/S/뒤로 방향 지정) · 잡히면 아무 버튼 연타로 탈출',
+        '#a8bce0',
+      );
+    }
 
     this.muteLabel = ui(
       this.add
@@ -1658,11 +1898,32 @@ export class BattleScene extends Phaser.Scene {
         }),
       );
 
+      /*
+       * 누가 사람인지 한눈에 보여야 한다.
+       *
+       * 넷이 뒤엉키면 화면에서 자기 캐릭터를 놓친다. 2인 대전이면 특히
+       * 그렇다 — 옆 사람 것과 내 것을 헷갈리면 그 판은 끝난 것이나 같다.
+       * 1P는 파랑, 2P는 분홍으로 고정해 두고 결과 화면까지 같은 색을 쓴다.
+       */
+      const label =
+        fighter === this.player
+          ? '1P'
+          : fighter === this.player2
+            ? '2P'
+            : `CPU (${this.difficulty.label})`;
+      const labelColor =
+        fighter === this.player
+          ? '#38bdf8'
+          : fighter === this.player2
+            ? '#f472b6'
+            : '#7f93bd';
+
       ui(
-        this.add.text(x + 58, y + 27, isPlayer ? '1P' : `CPU (${this.difficulty.label})`, {
+        this.add.text(x + 58, y + 27, label, {
           fontFamily: GAME.FONT,
           fontSize: '10px',
-          color: isPlayer ? '#4ade80' : '#7f93bd',
+          color: labelColor,
+          fontStyle: isPlayer ? 'bold' : 'normal',
         }),
       );
 
@@ -1931,9 +2192,11 @@ export class BattleScene extends Phaser.Scene {
     const scaled = delta / this.gimmicks.getTimeScale();
 
     this.updateCamera(scaled);
+    // 카메라가 정해진 뒤라야 "화면 밖"을 판단할 수 있다
+    this.updateOffscreenMarkers();
 
     if (this.battleActive) {
-      this.handleInput();
+      this.handleAllInput();
       for (const ai of this.ais) ai.update(time, scaled);
     }
 

@@ -179,7 +179,7 @@ export class TitleScene extends Phaser.Scene {
       .text(
         GAME.WIDTH / 2,
         552,
-        '1P vs 3AI 대난투 · 프롬프트를 입력해 판을 바꾼다',
+        '혼자서 봇 셋과 · 또는 둘이 한 키보드로 (선택 화면에서 F2) · 프롬프트를 입력해 판을 바꾼다',
         { fontFamily: GAME.FONT, fontSize: '16px', color: '#8fa6d8' },
       )
       .setOrigin(0.5)

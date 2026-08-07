@@ -15,13 +15,24 @@ import type { CharacterId } from '../types';
  * (플레이어가 고른 메커니즘도 피한다 — 자기 거울상을 상대하는 재미는 적다)
  *
  * @param avoid 최근에 나온 상대들. 연승 도전에서 같은 얼굴이 연달아 나오는 것을 막는다
+ * @param exclude 절대 뽑으면 안 되는 캐릭터. 2인 대전에서 2P가 고른 사람이 여기 들어간다
  */
 export function pickOpponents(
   playerId: CharacterId,
   count: number,
   avoid: CharacterId[] = [],
+  exclude: CharacterId[] = [],
 ): CharacterId[] {
-  const shuffled = shuffle(CHARACTER_ORDER.filter((id) => id !== playerId));
+  /*
+   * exclude 는 avoid 와 다르다.
+   *
+   * avoid 는 "되도록 피한다"라 자리가 모자라면 다시 등장한다. 그런데 2P가
+   * 고른 캐릭터가 봇으로도 나오면 같은 얼굴 둘이 한 판에 서게 되고,
+   * 누가 사람인지 구별할 수 없게 된다. 이건 양보하면 안 되는 조건이다.
+   */
+  const shuffled = shuffle(
+    CHARACTER_ORDER.filter((id) => id !== playerId && !exclude.includes(id)),
+  );
 
   /*
    * 최근에 나온 얼굴을 뒤로 민다. 아예 빼지 않는 이유는 로스터가 작아졌을 때
@@ -33,7 +44,11 @@ export function pickOpponents(
     ...shuffled.filter((id) => avoid.includes(id)),
   ];
 
-  const usedMechanism = new Set<string>([CHARACTERS[playerId]!.signature.id]);
+  const usedMechanism = new Set<string>([
+    CHARACTERS[playerId]!.signature.id,
+    // 2P가 쓰는 메커니즘도 겹치지 않게 — 넷이 전부 다른 방식으로 싸운다
+    ...exclude.map((id) => CHARACTERS[id]!.signature.id),
+  ]);
   const picked: CharacterId[] = [];
 
   for (const id of pool) {

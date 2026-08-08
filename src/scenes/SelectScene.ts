@@ -3,7 +3,7 @@ import { addBackdrop } from '../config/artAssets';
 import { buildCardArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
-import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS } from '../config/gameConfig';
+import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS, MOVE_SLOTS } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import { MAX_PLAYERS, net } from '../systems/NetSystem';
 import {
@@ -339,7 +339,7 @@ export class SelectScene extends Phaser.Scene {
     if (this.online) return `🌐 온라인 대전  ·  연결됨 (빈자리는 봇)`;
     return this.twoPlayer
       ? '👥 2인 대전  ·  사람 둘 + 봇 둘   (F2 : 1인으로 · F3 : 온라인)'
-      : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전 · F3 : 온라인 1:1)';
+      : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전 · F3 : 온라인 넷이서)';
   }
 
   /* ================================================================ */
@@ -730,7 +730,7 @@ export class SelectScene extends Phaser.Scene {
         GAME.WIDTH / 2,
         680,
         `← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      ` +
-          `TAB · I : 커맨드 14개 자세히      F2 : 2인 대전      F3 : 온라인 1:1      (총 ${CHARACTER_ORDER.length}명)`,
+          `TAB · I : 기술 ${MOVE_SLOTS.length}개 자세히      F2 : 2인 대전      F3 : 온라인 넷이서      (총 ${CHARACTER_ORDER.length}명)`,
         {
           fontFamily: GAME.FONT,
           fontSize: '15px',
@@ -1055,12 +1055,25 @@ export class SelectScene extends Phaser.Scene {
       `J J 다음에 ↑ ${cfg.moves.lightUp.name} · ↓ ${cfg.moves.lightDown.name}` +
       ` · 앞 ${cfg.moves.lightFwd.name} · 뒤 ${cfg.moves.lightBack.name}`;
 
-    // 스킬은 위 줄에서 이미 설명했으므로 커맨드 목록에서는 뺀다
+    /*
+     * 커맨드 전체 목록은 여기 안 적는다.
+     *
+     * 열넷일 때도 빽빽했는데 스물하나가 되면서 패널을 넘쳐 하단 안내와
+     * 겹쳤다 — 읽히지 않는 글자는 정보가 아니라 얼룩이다. 대표 여섯만
+     * 보여주고 나머지는 상세 보기(TAB)가 맡는다.
+     */
+    const featured: MoveSlot[] = [
+      'lightFwd',
+      'lightBack',
+      'heavyUp',
+      'heavyDown',
+      'dashSlide',
+      'airDive',
+    ];
     this.movesText.setText(
-      `[연속기] ${chains}\n[마무리 갈래] ${branches}\n[커맨드] ` +
-        MOVE_COMMANDS.filter((c) => c.slot !== 'skill')
-          .map((c) => `${c.keys} ${cfg.moves[c.slot].name}`)
-          .join('  ·  '),
+      `[연속기] ${chains}\n[마무리 갈래] ${branches}\n[기술 ${MOVE_SLOTS.length}개 중] ` +
+        featured.map((slot) => `${cfg.moves[slot].name}`).join(' · ') +
+        '  …  (TAB 전체 보기)',
     );
 
     this.quoteText.setText(`“${cfg.quotes.intro[0] ?? ''}”`);

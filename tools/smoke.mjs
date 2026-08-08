@@ -1740,6 +1740,96 @@ console.log('맞은 쪽 반응');
 }
 
 /*
+ * 참가자(게스트) 화면 재현 — 회선 없이 그 코드 경로를 직접 부른다.
+ *
+ * 참가자 화면 버그는 늘 늦게 발견된다 — 창 두 개를 띄워야 보이고, 호스트
+ * 화면만 보고 개발하기 때문이다. 실제로 "참가자는 공격 모션이 안 나가고
+ * 스킬이 항상 가득 차 보인다"가 그렇게 오래 살아남았다. 참가자가 쓰는
+ * 함수(setRemotePose · applyRemoteMeters · playRemoteReaction)는 회선과
+ * 무관하므로, 혼자 도는 판에서도 그대로 불러 검사할 수 있다.
+ */
+console.log('참가자 화면 재현');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const guest = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const f = s.fighters[1];
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    if (!f) return { why: '두 번째 파이터가 없습니다' };
+
+    /* 계기판 — 호스트가 보낸 값이 그대로 보이는가 */
+    const before = f.getSkillCooldownRatio();
+    f.applyRemoteMeters(0.62, 2, false);
+    const meters = {
+      before,
+      after: f.getSkillCooldownRatio(),
+      stacks: f.getSignatureStacks(),
+    };
+
+    /* 공격 포즈 전이 — 스윙 연출(이펙트·기술 이름)이 재생되는가 */
+    const shapes = () =>
+      s.children.list.filter(
+        (o) => o.depth >= 20 && (o.type === 'Ellipse' || o.type === 'Arc'),
+      );
+    const seen = new Set(shapes());
+    f.setRemotePose('idle');
+    f.setRemotePose('attackK');
+    /*
+     * 스윙은 선딜만큼 늦게 그려진다(예비동작 → 내지름). 그런데 검사용
+     * 브라우저는 초당 열 장이라 Phaser 가 프레임 델타를 ~20ms 로 눌러 잡고,
+     * 게임 안 타이머가 실제 시간의 1/5 로 흐른다 — 고정 대기는 여기서
+     * 반드시 거짓말을 한다. 나타날 때까지 본다.
+     */
+    let fxCount = 0;
+    for (let i = 0; i < 80 && fxCount === 0; i++) {
+      await wait(50);
+      fxCount = shapes().filter((o) => !seen.has(o)).length;
+    }
+    const moveName = f.getRecentMoveName(60000);
+
+    /* 피격 반응 — 호스트가 보낸 반응 번호대로 몸이 젖혀지는가 */
+    f.playRemoteReaction('launch');
+    const lean = f.lean.angle;
+
+    return { meters, fxCount, moveName, want: f.cfg.moves.heavy.name, lean };
+  });
+  await releasePlayer();
+
+  if (guest.why) {
+    errors.push(`[참가자] ${guest.why}`);
+  } else {
+    if (Math.abs(guest.meters.after - 0.62) > 0.001 || guest.meters.stacks !== 2) {
+      errors.push(
+        `[참가자] 계기판이 회선 값을 안 씁니다 — 쿨다운 ${guest.meters.after} · 스택 ${guest.meters.stacks}`,
+      );
+    } else {
+      console.log(
+        `  ✓ 계기판 — 쿨다운 ${guest.meters.before} → ${guest.meters.after} · 자원 ${guest.meters.stacks}칸`,
+      );
+    }
+
+    if (guest.fxCount < 2 || guest.moveName !== guest.want) {
+      errors.push(
+        `[참가자] 공격 포즈 전이가 스윙으로 안 이어집니다 — 이펙트 ${guest.fxCount}겹 · 이름 ${guest.moveName}/${guest.want}`,
+      );
+    } else {
+      console.log(`  ✓ 공격 전이 — ${guest.moveName} 이펙트 ${guest.fxCount}겹`);
+    }
+
+    if (Math.abs(guest.lean - -38) > 0.5) {
+      errors.push(`[참가자] 피격 반응이 재생되지 않습니다 (기울기 ${guest.lean})`);
+    } else {
+      console.log(`  ✓ 피격 반응 — 떠오름 ${guest.lean}°`);
+    }
+  }
+  await shot('guest-replay');
+}
+
+
+/*
  * 공매도 유령 — 상장폐지된 사람도 판에 개입한다.
  *
  * 넷이 붙는 판에서 가장 먼저 떨어진 사람은 남은 1~2분을 구경만 한다.

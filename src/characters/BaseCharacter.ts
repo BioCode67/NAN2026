@@ -5,6 +5,7 @@ import {
   FIGHTER,
   GAME,
   HIT_REACTIONS,
+  MOVE_SLOTS,
   STAGE,
   STOCK,
   THROW,
@@ -17,7 +18,7 @@ import { sound } from '../systems/SoundSystem';
 import type { ItemConfig, ItemMods } from '../config/items';
 import { createFighterView } from './FighterView';
 import type { FighterView } from './FighterView';
-import { MOVE_POSE } from '../config/spriteSheets';
+import { MOVE_POSE, POSE_SLOT } from '../config/spriteSheets';
 import type { Pose } from '../config/spriteSheets';
 import { StockTier } from '../types';
 import type {
@@ -162,6 +163,23 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private invulnUntil = 0;
   /** 스킬 사용 가능 시각 */
   private skillReadyAt = 0;
+  /** 회선으로 받은 스킬 쿨다운 (참가자 화면 전용, null 이면 직접 계산) */
+  private remoteCooldown: number | null = null;
+  /** 회선으로 받은 고유 자원 신호 (잡스의 후속 창 · 리누스의 훔친 기술) */
+  private remoteSigFlag = false;
+  /** 회선으로 받은 차지 게이지 (참가자 화면 전용) */
+  private remoteCharge = 0;
+  /** 회선으로 받은 "이어칠 수 있는 다음 타" 슬롯 번호 (-1 없음) */
+  private remoteChainSlot = -1;
+  /** 회선으로 받은 손에 든 아이템 아이콘 (참가자 화면 전용) */
+  remoteItemIcon = '';
+  /** 꼭두각시 모드 — 시뮬레이션 없이 호스트가 보낸 것만 그린다 */
+  private puppet = false;
+
+  /** 온라인 참가자 화면에서 호출 — 이후 이 파이터는 그리기만 한다 */
+  makePuppet(): void {
+    this.puppet = true;
+  }
 
   // FIGHTER.MAX_JUMPS는 as const라 리터럴 타입(2)이므로 number로 명시한다
   /** 방어 중인가 (S 유지) */
@@ -566,8 +584,80 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 회선으로 받은 포즈를 그대로 쓴다 — 상태 계산 없이 그림만 맞춘다 */
   setRemotePose(pose: Pose): void {
+    const prev = this.lastPose;
     this.lastPose = pose;
     this.view.setPose(pose);
+
+    /*
+     * 공격 포즈로 **넘어가는 순간**을 잡아 스윙을 재생한다.
+     *
+     * 호스트는 공격의 모든 연출(예비동작·내지름·이펙트·소리)을 시뮬레이션이
+     * 만들지만, 참가자 화면에는 30Hz 포즈 번호만 온다. 포즈마다 기술 슬롯이
+     * 1:1 이므로(MOVE_POSE 의 역), 전이만 감지하면 어떤 공격인지 알 수 있고
+     * 같은 연출을 이쪽에서 그대로 틀 수 있다. 판정은 여전히 호스트 것이다 —
+     * 여기서 트는 것은 전부 보이고 들리는 것뿐이다.
+     */
+    if (pose !== prev && this.alive) {
+      const slot = POSE_SLOT[pose];
+      if (slot) this.playRemoteSwing(this.cfg.moves[slot]);
+      // 잡기 전이 — 호스트에서만 나오던 말풍선을 이쪽에서도
+      if (pose === 'grabHold') this.say('잡았다', this.cfg.colors.accent);
+    }
+  }
+
+  /** 참가자 화면에서 공격 연출을 재생한다 — 예비동작 → 스윙 순서까지 재현 */
+  private playRemoteSwing(atk: AttackConfig): void {
+    // HUD 기술 이름도 이 경로로 갱신된다 (시뮬레이션이 없으니 여기가 유일하다)
+    this.lastMove = atk.name;
+    this.lastMoveDamage = atk.damage;
+    this.lastMoveAt = this.scene.time.now;
+
+    // 기술 고유 외침 — 호스트의 beginAttack 이 하던 것을 이쪽에서도
+    if (atk.cry) this.say(atk.cry, this.cfg.colors.accent);
+    this.view.triggerWindup(atk, atk.startup);
+    // 선딜이 긴 기술도 연출은 너무 늦지 않게 — 스냅샷 지연이 이미 얹혀 있다
+    this.scene.time.delayedCall(Math.min(atk.startup, 240), () => {
+      if (this.alive && this.visual.active) this.swingFx(atk);
+    });
+  }
+
+  /**
+   * 회선으로 받은 계기판 값 — 스킬 쿨다운·고유 자원·손에 든 아이템.
+   *
+   * 참가자 쪽 파이터는 skillReadyAt 이 영영 0 이라 **스킬이 항상 가득 찬
+   * 것으로 보였다.** 쿨다운은 호스트가 잰 값을 그대로 받아 보여준다.
+   */
+  applyRemoteMeters(
+    cooldown: number,
+    stacks: number,
+    sigFlag: boolean,
+    charge = 0,
+    chainSlot = -1,
+  ): void {
+    this.remoteCooldown = cooldown;
+    this.sigStacks = stacks;
+    this.remoteSigFlag = sigFlag;
+    this.remoteCharge = charge;
+    this.remoteChainSlot = chainSlot;
+  }
+
+  /** 지금 이어칠 수 있는 다음 타의 슬롯 번호 (호스트가 스냅샷에 싣는다) */
+  getChainSlotIndex(): number {
+    const slot =
+      this.currentAttack?.chain ??
+      (this.scene.time.now < this.chainUntil ? this.chainNext : null);
+    return slot ? MOVE_SLOTS.indexOf(slot) : -1;
+  }
+
+  /**
+   * 고유 자원의 "지금이다" 신호 (호스트가 스냅샷에 싣는다).
+   * 잡스 계열은 후속 입력 창이 열렸는가, 리누스 계열은 훔친 기술이 있는가.
+   */
+  getSigFlag(): boolean {
+    const id = this.cfg.signature.id;
+    if (id === 'oneMoreThing') return this.isSignatureWindowOpen();
+    if (id === 'fork') return this.forked !== null;
+    return false;
   }
 
   /**
@@ -595,6 +685,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 모으는 것이 보이지 않으면 그냥 "가끔 세게 나가는 기술"이 된다.
    */
   getChargeRatio(): number {
+    // 참가자 화면 — 차지는 호스트 상태 머신에만 있으므로 받은 값을 그린다
+    if (this.puppet) return this.remoteCharge;
     if (!this.chargeMs) return 0;
     return Math.min(1, this.chargeMs / FIGHTER.CHARGE_MAX_MS);
   }
@@ -993,11 +1085,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 후속 입력 창이 열려 있는가 (잡스) */
   isSignatureWindowOpen(): boolean {
+    // 참가자 화면 — 호스트가 잰 신호를 그대로 쓴다 (이쪽 시계는 안 돈다)
+    if (this.remoteCooldown !== null) return this.remoteSigFlag;
     return this.scene.time.now < this.sigWindowUntil;
   }
 
   /** 훔쳐둔 기술 이름 (리누스 HUD용) */
   getForkedName(): string | null {
+    // 참가자 화면 — 무엇을 훔쳤는지까지는 안 오지만, 있다는 것은 보여야 한다
+    if (this.remoteCooldown !== null) return this.remoteSigFlag ? '기술 훔침' : null;
     return this.forked?.name ?? null;
   }
 
@@ -1198,9 +1294,11 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 줄도 몰랐다. 갈래는 그보다 더 숨어 있으므로 이름을 셋 다 보여준다.
    */
   getChainBranches(): { straight: string; up: string; down: string } | null {
-    const slot =
-      this.currentAttack?.chain ??
-      (this.scene.time.now < this.chainUntil ? this.chainNext : null);
+    const slot = this.puppet
+      ? // 참가자 화면 — 상태 머신이 없으니 호스트가 보낸 슬롯 번호를 쓴다
+        (MOVE_SLOTS[this.remoteChainSlot] ?? null)
+      : (this.currentAttack?.chain ??
+        (this.scene.time.now < this.chainUntil ? this.chainNext : null));
     if (!slot) return null;
 
     const base = this.cfg.moves[slot];
@@ -1285,6 +1383,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 남은 스킬 쿨다운 비율 (0 = 사용 가능, 1 = 방금 씀) */
   getSkillCooldownRatio(): number {
+    if (this.remoteCooldown !== null) return this.remoteCooldown;
     const cooldown =
       (this.cfg.moves.skill.cooldown ?? 10000) *
       this.cooldownMul *
@@ -1549,6 +1648,21 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 마지막으로 받은 피격 반응 (없으면 null) */
   getHitReaction(): HitReaction | null {
     return this.lastReaction;
+  }
+
+  /**
+   * 참가자 화면에서 피격 반응을 재생한다.
+   *
+   * 판정은 호스트가 끝냈고 결과(누가·어떤 반응)만 회선으로 왔다.
+   * 몸이 젖혀지고 찌그러지는 것까지 틀어야 맞는 쪽 화면과 같은 그림이 된다 —
+   * 포즈만 바뀌면 맞았는데 몸이 뻣뻣하게 서 있는 것처럼 보인다.
+   */
+  playRemoteReaction(reaction: HitReaction): void {
+    const r = HIT_REACTIONS[reaction];
+    this.lastReaction = reaction;
+    this.pulseSquash(r.squashX, r.squashY, r.ms);
+    this.pulseLean(r.lean, r.ms);
+    this.flash();
   }
 
   /** 히트 플래시 — 1프레임 흰색 점멸 */
@@ -1845,6 +1959,22 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   override update(time: number, delta: number): void {
     if (!this.alive) return;
 
+    /*
+     * 온라인 참가자 화면의 파이터는 **꼭두각시**다.
+     *
+     * 위치·포즈·계기판 전부 호스트가 보낸 것을 쓴다. 여기서 상태 머신까지
+     * 돌리면 computePose 가 매 프레임 로컬 상태(공격 안 함 → idle/run)로
+     * 포즈를 덮어써서, 회선으로 온 공격 포즈가 **한 프레임 만에 지워진다.**
+     * "참가자는 공격 모션이 안 나간다"의 진짜 원인이 이것이었다 — 스냅샷은
+     * 제대로 오고 있었고, 이쪽이 스스로 지우고 있었다.
+     */
+    if (this.puppet) {
+      const onGround = this.body.blocked.down || this.body.touching.down;
+      this.view.setPose(this.lastPose);
+      this.applyPresentation(time, onGround);
+      return;
+    }
+
     this.tickItem(time);
     this.tickSignature(time);
     this.tickGrab(time, delta);
@@ -1983,6 +2113,17 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     /* 상태에 맞는 포즈 + 시간 기반 모션 */
     this.lastPose = this.computePose(onGround);
     this.view.setPose(this.lastPose);
+    this.applyPresentation(time, onGround);
+  }
+
+  /**
+   * 몸의 **보이는 부분**만 갱신한다 — 포즈 애니, 스쿼시·기울기, 그림자, 게이지.
+   *
+   * 시뮬레이션(위 update)과 갈라 둔 이유는 온라인 참가자다. 참가자 쪽
+   * 파이터는 판을 계산하면 안 되지만(호스트와 어긋난다), 이 표시부가 안 돌면
+   * 잔상도 그림자도 스쿼시도 죽는다. 참가자는 이것만 돌린다(updatePuppet).
+   */
+  private applyPresentation(time: number, onGround: boolean): void {
     this.view.update(time, onGround);
 
     /* 시각 갱신 — 스쿼시와 몸 크기를 함께 곱한다 */
@@ -2194,6 +2335,30 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 공격 판정이 켜지는 순간의 스윙 이펙트 */
   private spawnSwing(atk: AttackConfig): void {
+    // 돌진기 — 판정이 켜지는 순간 앞으로 치고 나간다
+    if (atk.lunge) this.body.setVelocityX(this.facing * atk.lunge);
+
+    // 투사체 공격이면 탄을 쏘고 근접 스윙은 그리지 않는다
+    if (atk.projectile) {
+      sound.play('whiff');
+      this.view.triggerAttack(atk, atk.active + atk.recovery);
+      this.onSpawnProjectile?.(this, atk);
+      return;
+    }
+
+    this.swingFx(atk);
+  }
+
+  /**
+   * 스윙의 **눈에 보이는 부분** — 소리·몸 모션·이펙트.
+   *
+   * 판정·이동(런지)과 갈라 둔 이유는 온라인 참가자 화면이다. 참가자 쪽
+   * 파이터는 시뮬레이션을 돌지 않아 spawnSwing 경로를 아예 안 타는데,
+   * 그러면 **공격이 화면에서 완전히 죽는다** — 포즈 프레임 하나 바뀌는 것이
+   * 전부라, 실제로 "참가자는 공격 모션이 안 나간다"는 말이 나왔다.
+   * 보이는 부분만 떼어 두면 참가자 쪽에서 그대로 재생할 수 있다.
+   */
+  private swingFx(atk: AttackConfig): void {
     sound.play('whiff');
     /*
      * 모션 길이는 판정 시간이 아니라 **눈에 보이는 꼬리**로 준다.
@@ -2201,15 +2366,6 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
      * 후딜까지가 한 동작으로 읽히는 구간이다.
      */
     this.view.triggerAttack(atk, atk.active + atk.recovery);
-
-    // 돌진기 — 판정이 켜지는 순간 앞으로 치고 나간다
-    if (atk.lunge) this.body.setVelocityX(this.facing * atk.lunge);
-
-    // 투사체 공격이면 탄을 쏘고 근접 스윙은 그리지 않는다
-    if (atk.projectile) {
-      this.onSpawnProjectile?.(this, atk);
-      return;
-    }
 
     const area = this.computeHitArea(atk);
     const color = this.cfg.colors.accent;

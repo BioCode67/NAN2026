@@ -71,6 +71,10 @@ export class PromptOrbSystem {
   /** 오브가 깨졌을 때 호출 — BattleScene이 프롬프트 입력으로 연결한다 */
   onBreak?: (breaker: BaseCharacter) => void;
 
+  /** 방금 오브가 사라진 이유 — 스냅샷에 몇 번 실어 참가자에게 알린다 */
+  private endReason: 'break' | 'escape' | null = null;
+  private endReasonLeft = 0;
+
   private readonly hitRect = new Phaser.Geom.Rectangle();
   private readonly orbCircle = new Phaser.Geom.Circle(0, 0, ORB_RADIUS);
 
@@ -107,8 +111,27 @@ export class PromptOrbSystem {
    */
   snapshot(): number[] | undefined {
     const o = this.orb;
-    if (!o || o.dead) return undefined;
-    return [Math.round(o.root.x), Math.round(o.root.y), Math.round((o.hp / ORB_HP) * 100)];
+    if (!o || o.dead) {
+      /*
+       * 방금 어떻게 사라졌는지를 몇 번 더 알린다.
+       *
+       * 참가자 쪽은 "오브가 스냅샷에서 사라졌다"만 보면 파괴와 도망을
+       * 구별할 수 없어서, 누가 멋지게 깨뜨렸는데도 화면에는
+       * "오브가 달아났다…"가 떴다. 한 번만 실으면 그 스냅샷이 유실될 수
+       * 있으므로 짧게 반복한다.
+       */
+      if (this.endReason && this.endReasonLeft > 0) {
+        this.endReasonLeft--;
+        return [0, 0, 0, this.endReason === 'break' ? 1 : 2];
+      }
+      return undefined;
+    }
+    return [
+      Math.round(o.root.x),
+      Math.round(o.root.y),
+      Math.round((o.hp / ORB_HP) * 100),
+      0,
+    ];
   }
 
   /**
@@ -119,9 +142,12 @@ export class PromptOrbSystem {
    * 알 수가 없다. 위치와 남은 체력만 받아 같은 그림을 세운다.
    */
   applyRemote(state: number[] | undefined, time: number): void {
-    if (!state) {
-      // 호스트 쪽에서 사라졌다 — 여기서도 치운다
-      if (this.orb && !this.orb.dead) this.escape(time);
+    if (!state || state[3]) {
+      // 호스트 쪽에서 사라졌다 — 같은 이유로 치운다 (1 파괴 / 2·없음 도망)
+      if (this.orb && !this.orb.dead) {
+        if (state?.[3] === 1) this.breakRemote();
+        else this.escape(time);
+      }
       return;
     }
     if (!this.orb || this.orb.dead) {
@@ -326,6 +352,8 @@ export class PromptOrbSystem {
     const o = this.orb;
     if (!o || o.dead) return;
     o.dead = true;
+    this.endReason = 'break';
+    this.endReasonLeft = 4;
 
     sound.play('gambleWin');
     this.scene.cameras.main.shake(320, 0.02);
@@ -353,11 +381,41 @@ export class PromptOrbSystem {
     this.onBreak?.(by);
   }
 
+  /**
+   * 참가자 화면의 파괴 연출 — 판정 없이 보이는 것만.
+   * 직후 "누구의 차례" 정지가 오므로, 여기서 터져 줘야 그 정지가 읽힌다.
+   */
+  private breakRemote(): void {
+    const o = this.orb;
+    if (!o || o.dead) return;
+    o.dead = true;
+
+    sound.play('gambleWin');
+    this.scene.cameras.main.shake(320, 0.02);
+    this.burst(o.root.x, o.root.y);
+    o.sprite?.setFrame(ORB_FRAME.BURST);
+
+    this.scene.tweens.killTweensOf(o.root);
+    if (o.ring) this.scene.tweens.killTweensOf(o.ring);
+    if (o.sprite) this.scene.tweens.killTweensOf(o.sprite);
+    this.scene.tweens.add({
+      targets: o.root,
+      scale: 2.4,
+      alpha: 0,
+      duration: 300,
+      ease: 'Quad.easeOut',
+      onComplete: () => o.root.destroy(),
+    });
+    this.orb = null;
+  }
+
   /** 아무도 못 깨면 조용히 사라진다 */
   private escape(time: number): void {
     const o = this.orb;
     if (!o) return;
     o.dead = true;
+    this.endReason = 'escape';
+    this.endReasonLeft = 4;
 
     this.scene.tweens.killTweensOf(o.root);
     if (o.ring) this.scene.tweens.killTweensOf(o.ring);

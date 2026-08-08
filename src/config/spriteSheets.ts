@@ -113,6 +113,19 @@ export const MOVE_POSE: Record<MoveSlot, Pose> = {
 };
 
 /**
+ * 포즈 → 기술 슬롯 (MOVE_POSE 의 역).
+ *
+ * 온라인 참가자는 포즈 번호만 받는다. 공격 포즈로 넘어가는 순간 그것이
+ * 어느 기술인지 알아야 같은 연출(예비동작·이펙트·소리)을 틀 수 있다.
+ * 손으로 또 적지 않고 역으로 만든다 — 표가 둘이면 한쪽만 고쳐진다.
+ * flair 는 슬롯이 아니라 완전 충전 강공격의 연출이므로 heavy 로 친다.
+ */
+export const POSE_SLOT: Partial<Record<Pose, MoveSlot>> = Object.fromEntries([
+  ...Object.entries(MOVE_POSE).map(([slot, pose]) => [pose, slot]),
+  ['flair', 'heavy'],
+]) as Partial<Record<Pose, MoveSlot>>;
+
+/**
  * 포즈 대체 사슬.
  *
  * 커맨드 무브가 늘어난 만큼 필요한 그림도 늘었지만,

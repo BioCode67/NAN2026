@@ -923,8 +923,11 @@ export const CHAIN = {
   GRACE_MS: 260,
 } as const;
 
-// 템플릿에 있는 슬롯 전부 — 커맨드 목록에 없는 연속기 링크도 빠짐없이 채워야 한다
-const MOVE_SLOTS = Object.keys(MOVE_TEMPLATES) as MoveSlot[];
+/**
+ * 템플릿에 있는 슬롯 전부 — 커맨드 목록에 없는 연속기 링크도 빠짐없이 채워야 한다.
+ * 온라인에서 슬롯을 번호로 주고받는 순서표도 겸한다 (양쪽이 같은 코드를 본다).
+ */
+export const MOVE_SLOTS = Object.keys(MOVE_TEMPLATES) as MoveSlot[];
 
 /** 슬롯 템플릿에 캐릭터별 차이만 얹어 기술 하나를 만든다 */
 export function move(
@@ -1063,6 +1066,18 @@ export const HIT_REACTIONS: Record<HitReaction, HitReactionSpec> = {
  * 눌리는데 상대는 하늘로 뜨는 그림이 나온다. 눈에 보이는 것과 물리가
  * 어긋나는 쪽이 훨씬 나쁘다.
  */
+/**
+ * 반응을 번호로 주고받기 위한 고정 순서 (POSE_ORDER 와 같은 이유).
+ * 뒤에만 덧붙일 것 — 중간이 밀리면 참가자 화면에서 엉뚱한 반응이 나온다.
+ */
+export const HIT_REACTION_ORDER: HitReaction[] = [
+  'jab',
+  'blow',
+  'launch',
+  'slam',
+  'spin',
+];
+
 export function hitReactionOf(atk: AttackConfig): HitReaction {
   // 아래로 꽂는 기술 (다이브) — 부호가 뒤집힌 유일한 경우라 먼저 거른다
   if (atk.knockbackY >= 0) return 'slam';

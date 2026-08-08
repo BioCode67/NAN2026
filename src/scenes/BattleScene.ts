@@ -10,8 +10,10 @@ import {
 } from '../systems/InputFrame';
 import type { InputFrame } from '../systems/InputFrame';
 import { net } from '../systems/NetSystem';
+import { judgeAt, judgeIndex } from '../systems/RhythmSystem';
 import type { NetSnapshot } from '../systems/NetSystem';
 import { POSE_ORDER } from '../config/spriteSheets';
+import { ITEM_LIST } from '../config/items';
 
 /**
  * 호스트가 판 상태를 보내는 간격 (ms).
@@ -34,6 +36,7 @@ import { CHARACTERS } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
 import { carryOverStock, streakDifficulty, streakTitle } from '../config/streak';
 import {
+  HIT_REACTION_ORDER,
   AI_MEDIUM,
   DEPTH,
   FIGHTER,
@@ -233,6 +236,12 @@ export class BattleScene extends Phaser.Scene {
   private outTaps: InputFrame = emptyFrame();
   /** 이번 구간에 일어난 타격 — 게스트 화면에도 같은 연출을 보낸다 */
   private netHits: number[][] = [];
+  /** 이번 구간의 상장폐지 [피해자 자리, 격추자 자리(-1 자멸)] — 참가자 화면용 */
+  private netKos: number[][] = [];
+  /** 마지막 타격의 리듬 판정 번호 — damageHook 이 쓰고 combat:hit 수집기가 읽는다 */
+  private netJudge = -1;
+  /** 참가자 쪽 — 회선으로 미리 알게 된 격추자 (자리번호). setExact 의 ko 가 쓴다 */
+  private remoteKillers = new Map<number, number>();
   /** 회선이 끊겼을 때 한 번만 알린다 */
   private netEnded = false;
   /** 참가자가 보낸 문장을 기다리는 중인 약속 (호스트) */
@@ -332,6 +341,8 @@ export class BattleScene extends Phaser.Scene {
     this.remoteFrames = [];
     this.outTaps = emptyFrame();
     this.netHits = [];
+    this.netKos = [];
+    this.remoteKillers = new Map();
     this.leaderId = '';
     this.leaderAnnouncedAt = 0;
 
@@ -887,6 +898,11 @@ export class BattleScene extends Phaser.Scene {
       }));
     } else if (this.netRole === 'guest') {
       /*
+       * 참가자 화면의 파이터는 전원 꼭두각시다 — 시뮬레이션을 돌리면
+       * computePose 가 회선으로 온 공격 포즈를 매 프레임 지워버린다.
+       */
+      this.fighters.forEach((f) => f.makePuppet());
+      /*
        * 참가자도 **자기 캐릭터가 누구인지는** 씬이 알아야 한다.
        * 카메라가 따라갈 대상과 화면 밖 표시가 이 목록에서 나오기 때문이다.
        * 비워 두면 카메라가 전원의 한가운데만 보게 되는데, 양 끝에 서 있으면
@@ -1023,14 +1039,34 @@ export class BattleScene extends Phaser.Scene {
     /* 타격이 일어날 때마다 게스트 화면에도 같은 연출을 보내려고 모아 둔다 */
     if (this.netRole === 'host') {
       this.disposers.push(
+        eventBus.on('fighter:ko', (p) => {
+          this.netKos.push([
+            this.fighters.findIndex((f) => f.fighterId === p.fighterId),
+            p.killerId
+              ? this.fighters.findIndex((f) => f.fighterId === p.killerId)
+              : -1,
+          ]);
+        }),
         eventBus.on('combat:hit', (e) => {
           const attacker = this.fighters.find((f) => f.fighterId === e.attackerId);
+          const victimAt = this.fighters.findIndex((f) => f.fighterId === e.targetId);
+          const victim = this.fighters[victimAt];
           this.netHits.push([
             Math.round(e.x),
             Math.round(e.y),
             attacker?.cfg.colors.accent ?? 0xffffff,
             e.damage >= 18 ? 1 : 0,
+            /*
+             * 맞은 쪽의 몸 반응까지 실어 보낸다.
+             * 참가자 화면은 receiveHit 을 안 돌므로, 이게 없으면 맞는 순간
+             * 파티클만 튀고 몸은 뻣뻣하게 서 있다.
+             */
+            victimAt,
+            Math.max(0, HIT_REACTION_ORDER.indexOf(victim?.getHitReaction() ?? 'jab')),
+            // 리듬 판정 번호 (-1 = 리듬 배틀 아님)
+            this.netJudge,
           ]);
+          this.netJudge = -1;
         }),
       );
     }
@@ -1097,17 +1133,35 @@ export class BattleScene extends Phaser.Scene {
         f.alive ? 1 : 0,
         this.stock.get(f.fighterId),
         Math.max(0, POSE_ORDER.indexOf(f.getPose())),
+        /*
+         * 계기판 값들 — 참가자 쪽 파이터는 시뮬레이션이 없어서 이 값들을
+         * 스스로 만들 수 없다. 실제로 스킬 게이지가 항상 가득 찬 것으로
+         * 보였다 — 쿨다운 시계가 이쪽에만 있었기 때문이다.
+         */
+        Math.round(f.getSkillCooldownRatio() * 100),
+        f.getSignatureStacks(),
+        f.getSigFlag() ? 1 : 0,
+        ITEM_LIST.findIndex((i) => i.id === f.getItem()?.cfg.id),
+        Math.round(f.getChargeRatio() * 100),
+        f.getChainSlotIndex(),
       ]),
     };
     if (this.netHits.length) {
       snap.hit = this.netHits.slice(0, 8);
       this.netHits.length = 0;
     }
+    if (this.netKos.length) {
+      snap.ko = this.netKos.slice(0, 4);
+      this.netKos.length = 0;
+    }
     // 오브는 이 게임의 중심 장치다 — 안 보이면 판이 왜 멈추는지 알 수가 없다
     snap.orb = this.orbs.snapshot();
     // 아이템도 — 안 보이면 상대가 왜 갑자기 세졌는지 알 수가 없다
     const items = this.items.snapshot();
     if (items.length) snap.item = items;
+    // 투사체 — 없으면 참가자는 블루스크린을 "안 보이는 공격"으로 맞는다
+    const pj = this.projectiles.snapshot();
+    if (pj.length) snap.pj = pj;
     /*
      * 유령도 보내야 한다.
      *
@@ -1124,9 +1178,55 @@ export class BattleScene extends Phaser.Scene {
     if (!this.battleActive) {
       const alive = this.fighters.findIndex((f) => f.alive);
       snap.over = alive;
+      // 결과 화면용 전적 — 참가자는 이벤트가 없어 스스로 못 센다
+      snap.stat = this.fighters.map((f) => {
+        const r = this.stats.get(f.fighterId);
+        return [
+          Math.round(r.dealt),
+          Math.round(r.taken),
+          r.kos,
+          r.hits,
+          Math.round(r.bestHit),
+          r.bestHitName,
+        ];
+      });
     }
 
     net.sendSnapshot(snap);
+  }
+
+  /** 참가자 화면의 아이템 획득 연출 — 링과 이름표만, 판정은 호스트 것이다 */
+  private playRemotePickup(f: BaseCharacter, icon: string, name: string): void {
+    sound.play('uiConfirm', 0.5);
+    const ring = this.add
+      .circle(f.x, f.y - 30, 18)
+      .setStrokeStyle(3, 0xffd54a, 0.9)
+      .setDepth(DEPTH.FLOATING);
+    this.tweens.add({
+      targets: ring,
+      scale: 2.2,
+      alpha: 0,
+      duration: 330,
+      onComplete: () => ring.destroy(),
+    });
+    const label = this.add
+      .text(f.x, f.y - 64, `${icon} ${name}`, {
+        fontFamily: GAME.FONT,
+        fontSize: '15px',
+        color: '#ffd54a',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH.FLOATING);
+    label.setStroke('#0b1020', 5);
+    this.tweens.add({
+      targets: label,
+      y: label.y - 40,
+      alpha: 0,
+      duration: 900,
+      ease: 'Quad.easeOut',
+      onComplete: () => label.destroy(),
+    });
   }
 
   /** 게스트 — 받은 모습을 그대로 그린다 */
@@ -1137,32 +1237,101 @@ export class BattleScene extends Phaser.Scene {
 
     /* 유령 — 자리와 "던질 수 있는가"만 받는다 */
     for (const [slot, x, ready] of snap.gh ?? []) {
+      /*
+       * 죽은 참가자 본인에게는 조작법을 알려야 한다.
+       * 호스트 화면에는 안내가 뜨는데 정작 유령을 조종할 사람의 화면에는
+       * 안 떠서, 자기가 아직 판에 개입할 수 있다는 것을 모른 채 구경만 했다.
+       */
+      if (!this.ghosts.has(slot!) && slot === net.slot) {
+        this.announce('유령이 됐다! ← → 조준 · J 로 물건 투하', '#a78bfa', 2600);
+      }
       const g = this.ghosts.get(slot!) ?? { x: x!, readyAt: 0 };
       g.x = x!;
       g.readyAt = ready ? 0 : Number.POSITIVE_INFINITY;
       this.ghosts.set(slot!, g);
     }
 
+    // 격추자 정보를 먼저 챙긴다 — 아래 alive 반영이 ko 이벤트를 일으킨다
+    for (const [victimAt, killerAt] of snap.ko ?? []) {
+      this.remoteKillers.set(victimAt!, killerAt ?? -1);
+    }
+
     snap.f.forEach((row, i) => {
       const f = this.fighters[i];
       if (!f || !f.body) return;
 
-      const [x, y, vx, vy, facing, alive, stock, pose] = row;
+      const [x, y, vx, vy, facing, alive, stock, pose, cd, stacks, flag, item, chg, chain] =
+        row;
       f.setPosition(x!, y!);
       // 속도까지 받아야 다음 상태가 올 때까지 이 자리에 얼어붙지 않는다
       f.body.setVelocity(vx!, vy!);
       f.facing = facing === -1 ? -1 : 1;
       this.stock.setExact(f.fighterId, stock!);
+      f.applyRemoteMeters(
+        (cd ?? 0) / 100,
+        stacks ?? 0,
+        flag === 1,
+        (chg ?? 0) / 100,
+        chain ?? -1,
+      );
+      /*
+       * 아이템 획득 순간 — 아이콘이 없음→있음으로 바뀌는 전이가 곧 "집었다"다.
+       * 호스트 쪽 획득 연출(grant)은 이쪽에서 안 돌므로, 상자가 소리 없이
+       * 증발하고 상대가 말없이 세지는 것처럼 보였다.
+       */
+      const prevIcon = f.remoteItemIcon;
+      const cfgItem = item !== undefined && item >= 0 ? ITEM_LIST[item] : undefined;
+      f.remoteItemIcon = cfgItem?.icon ?? '';
+      if (cfgItem && !prevIcon) this.playRemotePickup(f, cfgItem.icon, cfgItem.name);
       const p = POSE_ORDER[pose!];
       if (p) f.setRemotePose(p);
-      if (!alive && f.alive) f.kill();
+      /*
+       * 장외 격추는 주가가 남은 채 죽는다 — setExact 로는 ko 이벤트가
+       * 안 나므로 여기서 직접 연출까지 챙긴다. (주가 0 격추는 setExact 가
+       * 이미 이벤트를 내 위 경로에서 처리되고, alive 가 벌써 false 라
+       * 이 분기는 조용히 지나간다)
+       */
+      if (!alive && f.alive) {
+        const killerAt = this.remoteKillers.get(i);
+        this.remoteKillers.delete(i);
+        f.kill();
+        this.koOrder.push(f.fighterId);
+        this.playKo(
+          f,
+          killerAt !== undefined && killerAt >= 0
+            ? (this.fighters[killerAt] ?? null)
+            : null,
+        );
+      }
     });
 
     for (const h of snap.hit ?? []) {
       this.combat.playRemoteHit(h[0]!, h[1]!, h[2]!, h[3] === 1);
+      // 맞은 쪽 몸 반응 — 젖혀짐·찌그러짐·점멸
+      const victim = this.fighters[h[4] ?? -1];
+      const reaction = HIT_REACTION_ORDER[h[5] ?? -1];
+      if (victim?.alive && reaction) victim.playRemoteReaction(reaction);
+      // 리듬 배틀 판정 — 호스트 시계로 판정된 것을 그대로 띄운다
+      const judge = judgeAt(h[6] ?? -1);
+      if (judge) this.rhythm.showJudge(h[0]!, h[1]!, judge);
     }
     this.orbs.applyRemote(snap.orb, this.time.now);
     this.items.applyRemote(snap.item ?? []);
+    this.projectiles.applyRemote(snap.pj ?? []);
+
+    // 전적 주입은 결과 화면을 세우기 전에 — 표가 0으로 굳은 뒤에는 늦다
+    snap.stat?.forEach((row, i) => {
+      const f = this.fighters[i];
+      if (!f) return;
+      this.stats.injectRemote(f.fighterId, {
+        dealt: row[0],
+        taken: row[1],
+        kos: row[2],
+        hits: row[3],
+        bestHit: row[4],
+        bestHitName: row[5],
+      });
+    });
 
     if (snap.over !== undefined && this.battleActive) {
       this.battleActive = false;
@@ -1228,6 +1397,8 @@ export class BattleScene extends Phaser.Scene {
         mul *= judge.mul;
         this.rhythm.showJudge(ctx.x, ctx.y, judge);
       }
+      // 같은 동기 흐름에서 combat:hit 수집기가 읽는다 — 참가자 화면 판정 팝업용
+      this.netJudge = judgeIndex(judge);
       return mul;
     });
 
@@ -1939,7 +2110,19 @@ export class BattleScene extends Phaser.Scene {
         victim.kill();
         this.koOrder.push(p.fighterId);
 
-        const killer = p.killerId ? this.findFighter(p.killerId) : null;
+        /*
+         * 격추자 찾기 — 참가자 화면에서는 이벤트에 killerId 가 없다.
+         * (setExact 경유라 출처를 모른다) 회선으로 온 [피해자, 격추자]를
+         * 먼저 봐야 모든 KO 가 "자멸…"로 표시되는 것을 막는다.
+         */
+        const victimAt = this.fighters.indexOf(victim);
+        const remoteAt = this.remoteKillers.get(victimAt);
+        this.remoteKillers.delete(victimAt);
+        const killer = p.killerId
+          ? this.findFighter(p.killerId)
+          : remoteAt !== undefined && remoteAt >= 0
+            ? (this.fighters[remoteAt] ?? null)
+            : null;
         this.playKo(victim, killer);
         killer?.say(killer.pickQuote('ko'), 0xffd54a);
 
@@ -3331,8 +3514,10 @@ export class BattleScene extends Phaser.Scene {
       hud.skillBar.width = Math.max(0, HUD_BAR_W * ready);
       hud.skillLabel.setColor(ready >= 1 ? '#4ade80' : '#5d739f');
 
-      // 장착 아이템
-      hud.itemIcon.setText(hud.fighter.getItem()?.cfg.icon ?? '');
+      // 장착 아이템 (참가자 화면은 호스트가 보낸 아이콘을 쓴다)
+      hud.itemIcon.setText(
+        hud.fighter.getItem()?.cfg.icon ?? hud.fighter.remoteItemIcon,
+      );
 
       // 캐릭터 고유 자원
       hud.sigLabel.setText(this.describeSignature(hud.fighter));
@@ -3515,6 +3700,16 @@ export class BattleScene extends Phaser.Scene {
       this.sendMyInput();
       for (const f of this.fighters) f.update(time, scaled);
       this.projectiles.update(time, scaled);
+      /*
+       * 기믹과 리듬 게이지는 참가자도 돌린다.
+       *
+       * 안 돌리면 정전 조명이 (0,0)에 얼어붙고 슬로우가 영원히 안 풀리고
+       * 리듬 마커가 정지 화면이 된다 — 걸리는 것은 회선으로 오는데 **풀리는
+       * 것은 시간이 풀어 주기 때문**이다. 수치 효과(주가 틱)는 30Hz 스냅샷의
+       * setExact 가 곧바로 덮어쓰므로 두 번 세는 일은 없다.
+       */
+      this.gimmicks.update(time, scaled);
+      this.rhythm.update(time);
       this.updateHud();
       return;
     }

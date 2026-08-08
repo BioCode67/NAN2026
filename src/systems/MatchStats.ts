@@ -124,6 +124,27 @@ export class MatchStats {
     return this.row(id);
   }
 
+  /**
+   * 호스트가 판 끝에 보낸 전적을 통째로 덮어쓴다 (참가자 화면).
+   *
+   * 참가자 쪽에는 combat:hit 이벤트가 흐르지 않아 전적이 전부 0 이었다 —
+   * 3분을 치고받고 "한 대도 못 맞혔다"가 뜨는 표. 스스로 세는 대신
+   * 호스트가 센 것을 받는다. peakStock 은 stock:changed 로 이쪽에서도
+   * 맞게 세고 있으므로 건드리지 않는다.
+   */
+  injectRemote(
+    id: string,
+    r: { dealt: number; taken: number; kos: number; hits: number; bestHit: number; bestHitName: string },
+  ): void {
+    const row = this.row(id);
+    row.dealt = r.dealt;
+    row.taken = r.taken;
+    row.kos = r.kos;
+    row.hits = r.hits;
+    row.bestHit = r.bestHit;
+    row.bestHitName = r.bestHitName;
+  }
+
   /** 이 파이터가 가장 많이 맞힌 기술 — 동률이면 먼저 쓴 쪽 */
   favouriteMove(id: string): { name: string; count: number } | null {
     const r = this.row(id);

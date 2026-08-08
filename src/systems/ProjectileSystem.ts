@@ -175,9 +175,54 @@ export class ProjectileSystem {
     this.list.splice(index, 1);
   }
 
+  /**
+   * 날아가는 탄들 — 온라인에서 회선으로 보낸다. 탄마다 [x, y, 색, 크기].
+   *
+   * 이게 없어서 참가자 화면에는 **투사체가 아예 안 보였다.** 게이츠의
+   * 블루스크린을 정통으로 맞았는데 화면에는 아무것도 날아오지 않은 것이다 —
+   * 피할 수 없는 공격만큼 억울한 것이 없다.
+   */
+  snapshot(): number[][] {
+    return this.list
+      .filter((p) => !p.dead)
+      .map((p) => [
+        Math.round(p.view.x),
+        Math.round(p.view.y),
+        (p.view as unknown as { fillColor?: number }).fillColor ?? 0xffffff,
+        Math.round(p.width),
+      ]);
+  }
+
+  /**
+   * 회선으로 받은 탄들을 그린다 (참가자 쪽).
+   *
+   * 아이템과 같은 규칙 — 개수가 맞으면 자리만 옮기고, 다르면 전부 다시
+   * 세운다. 탄은 판정이 없다(판정은 호스트가 하고 결과는 hit 으로 온다).
+   */
+  applyRemote(list: number[][]): void {
+    if (list.length !== this.remote.length) {
+      this.remote.forEach((r) => r.destroy());
+      this.remote.length = 0;
+      for (const [x, y, color, size] of list) {
+        const c = this.scene.add
+          .circle(x!, y!, Math.max(8, (size ?? 24) / 2), color ?? 0xffffff, 0.9)
+          .setStrokeStyle(3, 0xffffff, 0.8)
+          .setDepth(DEPTH.IMPACT - 1);
+        this.remote.push(c);
+      }
+      return;
+    }
+    list.forEach((row, i) => this.remote[i]?.setPosition(row[0]!, row[1]!));
+  }
+
+  /** 참가자 쪽 원격 탄 그림 */
+  private readonly remote: Phaser.GameObjects.Arc[] = [];
+
   reset(): void {
     this.list.forEach((p) => p.view.destroy());
     this.list.length = 0;
+    this.remote.forEach((r) => r.destroy());
+    this.remote.length = 0;
     // 재사용 필드 유지 (rect는 상태가 없다)
     void this.rect;
   }

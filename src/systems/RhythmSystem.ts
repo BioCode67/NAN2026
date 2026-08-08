@@ -18,6 +18,18 @@ const PERFECT: RhythmJudge = { label: 'PERFECT!', mul: 2.0, color: '#f472b6' };
 const GOOD: RhythmJudge = { label: 'GOOD', mul: 1.25, color: '#facc15' };
 const MISS: RhythmJudge = { label: 'OFF BEAT…', mul: 0.5, color: '#5d739f' };
 
+/**
+ * 판정을 번호로 주고받는 순서표 — 온라인 참가자 화면용.
+ * 판정은 호스트 시계로 계산되므로, 참가자는 번호만 받아 같은 팝업을 띄운다.
+ */
+const JUDGES: RhythmJudge[] = [PERFECT, GOOD, MISS];
+export function judgeIndex(j: RhythmJudge | null): number {
+  return j ? JUDGES.indexOf(j) : -1;
+}
+export function judgeAt(i: number): RhythmJudge | null {
+  return JUDGES[i] ?? null;
+}
+
 /** 게이지 규격 */
 const BAR_W = 420;
 const BAR_H = 16;

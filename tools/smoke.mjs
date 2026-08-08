@@ -258,6 +258,44 @@ const waitGrounded = async () => {
 };
 
 /**
+ * 봇을 세우고 플레이어를 건드리지 못하게 한다.
+ *
+ * ── 왜 필요한가 ────────────────────────────────────────────────────
+ * 한 가지 장치만 떼어 재는 검사(모션·피격 반응·연속기 갈래)는 옆에서 봇이
+ * 한 대 치는 순간 값이 통째로 뒤집힌다. 실제로 "강공격에 맞은 몸이 -27도로
+ * 젖혀져야 하는데 -13도"라는 실패가 나왔는데, 원인은 그 사이에 봇이 잽을
+ * 넣은 것이었다 — 코드는 멀쩡했다.
+ *
+ * 더 나쁜 것은 뒷일이다. 재는 동안 플레이어가 맞아 장외로 떨어지면 그 뒤의
+ * 검사들이 줄줄이 "잡기가 안 붙는다 / 상장폐지 상태다"로 실패한다. 원인과
+ * 한참 떨어진 곳에서 터지므로 읽는 사람이 가장 헷갈리는 종류다.
+ */
+const isolatePlayer = () =>
+  page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    if (!window.__parkedAis?.length) window.__parkedAis = s.ais.splice(0);
+    s.fighters.forEach((f) => {
+      f.moveHorizontal(0);
+      f.attackPhase = 'none';
+      f.currentAttack = null;
+    });
+    // 판정 자체가 안 들어오게 막는다 — 봇을 세워도 이미 나간 주먹은 날아간다
+    s.player.invulnUntil = s.time.now + 600000;
+  });
+
+/** 격리를 푼다 — 다음 검사는 평소의 판에서 돌아야 한다 */
+const releasePlayer = () =>
+  page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    if (window.__parkedAis?.length && s.ais.length === 0) {
+      s.ais.push(...window.__parkedAis);
+    }
+    window.__parkedAis = [];
+    s.player.invulnUntil = 0;
+    s.player.stunUntil = 0;
+  });
+
+/**
  * R로 판을 새로 시작하고, 실제로 새 판이 돌기 시작할 때까지 기다린다.
  * (프레임이 드문 환경에서는 R 한 번이 프레임 사이로 사라질 수 있어 재시도한다)
  */
@@ -742,6 +780,66 @@ if (JSON.stringify(chained) !== JSON.stringify(expected.chain)) {
   console.log(`  ✓ 연속기 ${expected.chain.join(' → ')}`);
 }
 await clearMoves();
+
+/*
+ * 연속기 마무리 갈래 — 같은 J 인데 어디를 누르고 있었느냐로 끝이 달라진다.
+ *
+ * 키를 안 늘리고 기술을 늘리는 방법이라, 이것이 조용히 죽으면 "공격이
+ * 단조롭다"로 되돌아간다. 그런데 겉으로는 아무 일도 안 일어난 것처럼 보인다 —
+ * 3타가 그냥 원래 3타로 나갈 뿐이라 오류도, 이상한 그림도 남지 않는다.
+ * 그런 종류의 회귀는 사람이 절대 못 잡는다.
+ */
+{
+  const branch = async (dir) => {
+    await clearMoves();
+    await page.evaluate((d) => {
+      const p = window.game.scene.getScene('Battle').player;
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.attack('light', 'neutral');
+      p.attack('light', 'neutral');
+      p.attack('light', d);
+    }, dir);
+    for (let i = 0; i < 40; i++) {
+      if ((await readMoves()).length >= 3) break;
+      await page.waitForTimeout(120);
+    }
+    return (await readMoves())[2];
+  };
+
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const up = await branch('up');
+  /*
+   * 갈래를 하나 시험할 때마다 발을 땅에 돌려놓는다.
+   * ↑ 마무리는 상대를 띄우는 기술이라 낸 쪽도 위로 솟는다. 뜬 채로 다음
+   * 갈래를 시험하면 지상 연속기가 아예 이어지지 않는다 — 갈래가 고장난 것이
+   * 아니라 지상이 아니었던 것이다.
+   */
+  await page.evaluate(() => {
+    const p = window.game.scene.getScene('Battle').player;
+    p.body.setVelocity(0, 0);
+    p.stunUntil = 0;
+  });
+  await waitGrounded();
+  const down = await branch('down');
+  await releasePlayer();
+
+  const want = { up: expected.lightUp, down: expected.lightDown };
+  if (up !== want.up || down !== want.down) {
+    errors.push(
+      `[연속기] 마무리가 방향으로 안 갈립니다 — ` +
+        `↑ 기대 ${want.up}/실제 ${up} · ↓ 기대 ${want.down}/실제 ${down}`,
+    );
+  } else {
+    console.log(
+      `  ✓ 마무리 갈래 — J J J ${expected.chain[2]} · J J ↑J ${up} · J J ↓J ${down}`,
+    );
+  }
+  await clearMoves();
+}
 
 /*
  * 프롬프트 기믹 — 오브를 깨고 문장을 입력하면 판이 실제로 바뀌어야 한다.
@@ -1267,6 +1365,7 @@ console.log('공격 모션');
 {
   await restartRound();
   await waitGrounded();
+  await isolatePlayer();
 
   const motion = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
@@ -1316,6 +1415,7 @@ console.log('공격 모션');
       );
     }
   }
+  await releasePlayer();
   await shot('attack-motion');
 }
 
@@ -1329,6 +1429,7 @@ console.log('공격 모션');
  */
 console.log('기술별 이펙트');
 {
+  await isolatePlayer();
   const fx = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
@@ -1381,6 +1482,112 @@ console.log('기술별 이펙트');
         .join(' · ')}`,
     );
   }
+  await releasePlayer();
+}
+
+/*
+ * 맞은 쪽 반응 — 무엇에 맞았는지가 맞은 몸에 쓰여 있는가.
+ *
+ * 때리는 쪽은 기술마다 갈라 놓았는데 맞는 쪽은 전부 같은 모양으로 한 번
+ * 납작해지고 끝이었다. 쳐올려 하늘로 뜨는 순간과 바닥에 꽂히는 순간이
+ * 같은 그림이면 절반만 전달된다.
+ *
+ * 두 가지를 따로 본다 — (1) 기술마다 다른 값을 **정했는가**,
+ * (2) 그 값이 실제로 화면 객체에 **발라졌는가**. 예전에 늘어남·눌림이
+ * 정의만 되고 한 번도 적용되지 않은 채 죽어 있었다. 정한 것과 보이는 것을
+ * 함께 재지 않으면 그 종류의 버그는 검사를 통과한다.
+ */
+console.log('맞은 쪽 반응');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const react = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    // 맞을 때마다 날아가므로 매번 제자리로 돌려놓는다 (장외로 나가면 죽는다)
+    const home = { x: p.x, y: p.y };
+
+    const out = {};
+    for (const slot of ['light', 'lightUp', 'lightDown', 'heavy2', 'airHeavy']) {
+      const atk = p.cfg.moves[slot];
+      if (!atk) continue;
+
+      p.setPosition(home.x, home.y);
+      p.body.setVelocity(0, 0);
+      p.alive = true;
+      p.guarding = false;
+      p.receiveHit(atk, home.x - 40);
+
+      // 정한 값 — 트윈이 풀리기 전이라 목표치 그대로다
+      const want = { kind: p.getHitReaction(), lean: p.lean.angle, sy: p.squash.y };
+
+      /*
+       * 발라진 값.
+       *
+       * 되돌아오는 트윈을 **세워 놓고** 잰다. 검사용 브라우저는 초당 열 장쯤
+       * 그리므로, 그냥 한 프레임 기다렸다 보면 200ms 짜리 반응은 이미 다
+       * 풀려서 0에 가깝다. 값이 안 발라진 것과 구별이 안 된다 —
+       * 시간에 기대는 검사는 느린 기계에서 거짓말을 한다.
+       */
+      const frozen = [
+        ...s.tweens.getTweensOf(p.lean),
+        ...s.tweens.getTweensOf(p.squash),
+      ];
+      frozen.forEach((t) => t.pause());
+      await wait(140);
+      const seen = { lean: p.visual.angle, sy: Math.abs(p.visual.scaleY) };
+      frozen.forEach((t) => t.resume());
+
+      out[slot] = { ...want, seen };
+      p.body.setVelocity(0, 0);
+      p.stunUntil = 0;
+      await wait(520);
+    }
+    p.setPosition(home.x, home.y);
+    return out;
+  });
+  await releasePlayer();
+
+  const kinds = new Set(Object.values(react).map((v) => v.kind));
+  /*
+   * 정한 값과 화면에 있는 값이 같아야 한다 — 다르면 어딘가에서 죽은 데이터다.
+   *
+   * 각도는 한 바퀴를 빼고 비교한다. 회전기는 -360도로 젖히는데 화면 객체는
+   * 각도를 -180~180 로 접어서 들고 있어서, 곧이곧대로 빼면 -360과 0이
+   * 다르다고 나온다. 한 바퀴 돈 것과 안 돈 것은 보이는 그림이 같다.
+   */
+  const wrap = (d) => Math.abs((((d % 360) + 540) % 360) - 180);
+  const lost = Object.entries(react).filter(
+    ([, v]) => wrap(v.seen.lean - v.lean) > 0.5 || Math.abs(v.seen.sy - v.sy) > 0.02,
+  );
+
+  if (kinds.size < 4) {
+    errors.push(
+      `[피격] 기술이 달라도 반응이 같습니다 — ${[...kinds].join(', ')} (${JSON.stringify(react)})`,
+    );
+  } else if (lost.length) {
+    errors.push(
+      `[피격] 정해 둔 값이 화면에 발라지지 않았습니다 — ` +
+        lost
+          .map(([k, v]) => `${k}: ${v.lean.toFixed(0)}°→${v.seen.lean.toFixed(0)}°`)
+          .join(' · '),
+    );
+  } else if (!(react.lightUp?.sy > 1) || !(react.lightDown?.sy < 1)) {
+    errors.push(
+      `[피격] 띄우기는 세로로 늘어나고 내려치기는 눌려야 합니다 — ` +
+        `위 ${react.lightUp?.sy} · 아래 ${react.lightDown?.sy}`,
+    );
+  } else {
+    console.log(
+      `  ✓ 맞은 모양이 기술마다 다르다 — ${Object.entries(react)
+        .map(([k, v]) => `${k}:${v.kind}(${Math.round(v.lean)}°)`)
+        .join(' · ')}`,
+    );
+  }
+  await shot('hit-reaction');
 }
 
 /*
@@ -1450,32 +1657,60 @@ console.log('공매도 유령');
       console.log(`  ✓ 유령이 좌우로 움직인다 (${moved}px)`);
     }
 
-    /* J 로 물건을 떨어뜨리는가 */
+    /*
+     * J 로 물건을 떨어뜨리는가.
+     *
+     * 유령은 생기자마자 1.2초 동안 못 놓는다 — 죽는 순간 누르고 있던 키가
+     * 그대로 흘러 들어가 물건이 튀어나오지 않게 하는 장치다. 그 시간을
+     * 기다리지 않고 눌러 놓고 "안 떨어진다"고 하면 검사가 거짓말을 한다.
+     */
+    await page.waitForFunction(
+      () => {
+        const s = window.game.scene.getScene('Battle');
+        const g = [...s.ghosts.values()][0];
+        return !!g && s.time.now >= g.readyAt;
+      },
+      null,
+      { polling: 100, timeout: 6000 },
+    );
+
     const before = await page.evaluate(
       () => window.game.scene.getScene('Battle').items.snapshot().length,
     );
     await page.keyboard.press('j');
     await page.waitForTimeout(700);
-    const after = await page.evaluate(
-      () => window.game.scene.getScene('Battle').items.snapshot().length,
-    );
+    const dropped = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      const g = [...s.ghosts.values()][0];
+      return { items: s.items.snapshot().length, readyAt: g.readyAt, now: s.time.now };
+    });
 
-    if (after <= before) {
-      errors.push(`[유령] J 를 눌러도 물건이 안 떨어집니다 (${before}→${after})`);
+    if (dropped.items <= before) {
+      errors.push(`[유령] J 를 눌러도 물건이 안 떨어집니다 (${before}→${dropped.items})`);
     } else {
-      console.log(`  ✓ 유령이 물건을 떨어뜨린다 (아이템 ${before} → ${after})`);
+      console.log(`  ✓ 유령이 물건을 떨어뜨린다 (아이템 ${before} → ${dropped.items})`);
     }
 
-    /* 쿨다운 — 연타해도 한 번만 */
+    /*
+     * 쿨다운 — 연타해도 한 번만.
+     *
+     * 떨어진 개수로 세면 안 된다. 무대가 스스로 물건을 뿌리는 타이머가 따로
+     * 돌고 있어서, 연타와 상관없이 하나 더 생기면 검사가 억울하게 실패한다.
+     * 유령이 **다음 발사 시각을 새로 잡았는지**를 보면 그 흔들림이 사라진다.
+     */
     await page.keyboard.press('j');
     await page.waitForTimeout(400);
     const spam = await page.evaluate(
-      () => window.game.scene.getScene('Battle').items.snapshot().length,
+      () => [...window.game.scene.getScene('Battle').ghosts.values()][0].readyAt,
     );
-    if (spam > after) {
+    if (spam !== dropped.readyAt) {
       errors.push('[유령] 연타로 물건이 계속 떨어집니다 — 살아 있는 사람이 못 놉니다');
+    } else if (!(dropped.readyAt > dropped.now)) {
+      errors.push('[유령] 물건을 놓고도 쿨다운이 안 걸립니다');
     } else {
-      console.log('  ✓ 연타해도 한 번만 (쿨다운)');
+      console.log(
+        `  ✓ 연타해도 한 번만 (다음 발사까지 ${Math.round((dropped.readyAt - dropped.now) / 100) / 10}초)`,
+      );
     }
   }
   await shot('ghost');
@@ -1721,7 +1956,18 @@ console.log('새 기믹');
   await page.evaluate(() => {
     const s = window.game.scene.getScene('Battle');
     window.__gimAis = s.ais.splice(0);
-    s.fighters.filter((f) => f.side === 'ai').forEach((f) => f.moveHorizontal(0));
+    /*
+     * 봇을 세우는 것만으로는 부족하다.
+     *
+     * 판단을 멈춰도 **이미 나가 있던 주먹**은 그대로 날아가 꽂힌다. 그러면
+     * 주가를 똑같이 맞춘 직후에 누군가 한 대 맞아서, 기믹이 제대로 돌았는데도
+     * "격차가 남아 있다"고 나온다. 재려는 것은 기믹이지 전투가 아니다.
+     */
+    s.fighters.forEach((f) => {
+      f.moveHorizontal(0);
+      f.attackPhase = 'none';
+      f.currentAttack = null;
+    });
   });
 
   const tryGimmick = async (text, check, waitMs = 500) => {

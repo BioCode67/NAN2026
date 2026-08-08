@@ -4,14 +4,15 @@ import {
   DEPTH,
   FIGHTER,
   GAME,
-  IMPACT,
+  HIT_REACTIONS,
   STAGE,
   STOCK,
   THROW,
   TIERS,
+  hitReactionOf,
   resolveMoveSlot,
 } from '../config/gameConfig';
-import type { ThrowKind } from '../config/gameConfig';
+import type { HitReaction, ThrowKind } from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import type { ItemConfig, ItemMods } from '../config/items';
 import { createFighterView } from './FighterView';
@@ -102,6 +103,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /** 스쿼시 계수. facing 반전과 충돌하지 않도록 별도 보관한다. */
   private readonly squash = { x: 1, y: 1 };
+  /**
+   * 몸이 젖혀진 각도. 스쿼시와 같은 이유로 따로 들고 있다가 매 프레임 바른다.
+   *
+   * 컨테이너에 직접 트윈을 걸면 무적 점멸(알파 트윈)과 같은 대상을 두고
+   * 싸우게 되어, 맞을 때마다 점멸이 끊기고 반투명한 채로 남는다.
+   */
+  private readonly lean = { angle: 0 };
+  /** 마지막으로 받은 피격 반응 — HUD·검사가 읽어 간다 */
+  private lastReaction: HitReaction | null = null;
   /** 방금 낸 기술 이름 — HUD가 읽어 간다 */
   private lastMove = '';
   private lastMoveAt = -99999;
@@ -136,8 +146,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 한 칸이 아니라 여러 칸을 쌓는 이유: 손이 빠르면 3타분 입력이 1타 모션이
    * 끝나기도 전에 다 들어온다. 한 칸만 기억하면 나머지가 버려져
    * "빠르게 누를수록 연속기가 덜 나가는" 이상한 게임이 된다.
+   *
+   * 개수가 아니라 **방향까지** 순서대로 쌓는다. 마무리가 방향으로 갈리므로
+   * (chainMove 참고) 몇 번 눌렀는지만 세면 J,J,↑J 의 ↑ 가 어느 타에 붙은
+   * 것인지 알 수 없다 — 마지막 방향 하나만 들고 있으면 ↑ 가 2타에 먼저
+   * 붙어 연속기가 한 타 짧아진다.
    */
-  private chainBuffered = 0;
+  private chainQueue: AttackDir[] = [];
   /** 쌓아둘 수 있는 최대 선입력 (가장 긴 연속기가 3타라 2면 충분하다) */
   private static readonly CHAIN_BUFFER_MAX = 2;
 
@@ -632,7 +647,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     target.attackPhase = 'none';
     target.currentAttack = null;
     target.chainNext = null;
-    target.chainBuffered = 0;
+    target.chainQueue.length = 0;
     target.lastMashAt = 0;
     target.mashCount = 0;
     target.body.setVelocity(0, 0);
@@ -800,6 +815,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       recovery: 0,
       range: 0,
       hitHeight: 0,
+      // 바닥에 꽂는 던지기만 아래를 향한다 — 맞은 쪽이 눌리는 반응으로 갈린다
+      hitAnchor: kind === 'down' ? 'down' : 'front',
       knockbackX: spec.kbX * heft,
       knockbackY: spec.kbY,
       hitstun: spec.hitstun,
@@ -1056,14 +1073,48 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (
       this.chainNext &&
       this.scene.time.now < this.chainUntil &&
-      dir === 'neutral' &&
       onGround &&
       this.cfg.moves[this.chainNext].type === intent
     ) {
-      return this.cfg.moves[this.chainNext];
+      return this.chainMove(this.chainNext, dir);
     }
 
     return this.cfg.moves[resolveMoveSlot(intent, dir, onGround, dashing)];
+  }
+
+  /**
+   * 연속기의 다음 타 — **어디를 누르고 있느냐로 마무리가 갈린다.**
+   *
+   * ── 왜 이렇게 했나 ────────────────────────────────────────────────
+   * "공격이 너무 단순하다"에 키를 늘려서 답하는 것은 쉬운 길이고, 보통
+   * 틀린 길이다. 손가락이 늘어난 만큼 손이 굳고, 늘어난 기술은 대부분
+   * 안 쓰인다. 몰아치는 게임들이 실제로 하는 것은 반대다 — 버튼은 그대로
+   * 두고 **같은 버튼이 상황마다 다른 것을 내준다.**
+   *
+   * 그래서 J,J 까지는 같지만 마지막에 어디를 누르고 있었는지로 갈린다.
+   *   J J J   → 정해진 3타 (쳐올림)
+   *   J J ↑J  → 띄워 올려 공중으로 이어간다
+   *   J J ↓J  → 바닥에 꽂아 끝낸다
+   * K 계열도 같다. 커맨드는 하나도 안 늘었는데 마무리가 셋이 되고,
+   * 방향기가 "따로 있는 기술"에서 "연속기의 일부"가 된다.
+   *
+   * 갈라져 나온 마무리는 연속기의 마지막 타로 취급한다 — 크기·히트스톱·
+   * 화면 번쩍임이 3타 대접을 받아야 "제대로 끝냈다"가 손에 남는다.
+   */
+  private chainMove(next: MoveSlot, dir: AttackDir): AttackConfig {
+    const straight = this.cfg.moves[next];
+    if (dir === 'neutral') return straight;
+
+    // 연속기는 약·강 두 계열뿐이다 (스킬은 이어지지 않는다)
+    const kind = straight.type === 'heavy' ? 'heavy' : 'light';
+    const alt = this.cfg.moves[resolveMoveSlot(kind, dir, true, false)];
+    return {
+      ...alt,
+      // 갈라진 마무리는 이어 칠 것이 없다 — 여기서 한 세트가 끝난다
+      chain: undefined,
+      chainStep: straight.chainStep ?? 2,
+      finisher: true,
+    };
   }
 
   /**
@@ -1086,10 +1137,10 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
      */
     if (this.attackPhase !== 'none') {
       if (!this.canChainFrom(this.currentAttack, intent, dir)) return false;
-      this.chainBuffered = Math.min(
-        BaseCharacter.CHAIN_BUFFER_MAX,
-        this.chainBuffered + 1,
-      );
+      // 누르고 있던 방향까지 함께 줄 세운다 — 실제 발동은 판정이 끝난 뒤다
+      if (this.chainQueue.length < BaseCharacter.CHAIN_BUFFER_MAX) {
+        this.chainQueue.push(dir);
+      }
       return true;
     }
 
@@ -1103,15 +1154,16 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /**
    * 지금 이 입력이 연속기로 이어질 수 있는가.
    *
-   * 방향키를 섞으면(W+J 등) 연속기가 아니라 별개의 커맨드 기술이므로 끊는다.
-   * 공중에서도 끊는다 — 지상 연속기를 공중에서 이어가면 계속 떠 있게 된다.
+   * 방향키를 섞은 것도 이어진다 — 다만 그 방향의 기술로 **갈라져 끝난다**
+   * (chainMove 참고). 공중에서는 끊는다 — 지상 연속기를 공중에서 이어가면
+   * 착지하지 않고 계속 떠 있게 된다.
    */
   private canChainFrom(
     from: AttackConfig | null,
     intent: 'light' | 'heavy',
-    dir: AttackDir,
+    _dir: AttackDir,
   ): boolean {
-    if (!from?.chain || dir !== 'neutral') return false;
+    if (!from?.chain) return false;
     if (from.type !== intent) return false;
     return this.body.blocked.down || this.body.touching.down;
   }
@@ -1123,10 +1175,27 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * HUD가 이 값을 띄워 "지금 한 번 더" 를 눈으로 보여준다.
    */
   getChainNextName(): string | null {
+    return this.getChainBranches()?.straight ?? null;
+  }
+
+  /**
+   * 지금 이어 칠 수 있는 세 갈래 (없으면 null).
+   *
+   * 갈라지는 마무리를 넣어 놓고 알려주지 않으면 없는 것과 같다. 실제로
+   * 연속기 자체가 그랬다 — HUD 에 "한 번 더"를 띄우기 전까지는 3타가 있는
+   * 줄도 몰랐다. 갈래는 그보다 더 숨어 있으므로 이름을 셋 다 보여준다.
+   */
+  getChainBranches(): { straight: string; up: string; down: string } | null {
     const slot =
       this.currentAttack?.chain ??
       (this.scene.time.now < this.chainUntil ? this.chainNext : null);
-    return slot ? this.cfg.moves[slot].name : null;
+    if (!slot) return null;
+
+    const base = this.cfg.moves[slot];
+    const kind = base.type === 'heavy' ? 'heavy' : 'light';
+    const named = (dir: AttackDir) =>
+      this.cfg.moves[resolveMoveSlot(kind, dir, true, false)].name;
+    return { straight: base.name, up: named('up'), down: named('down') };
   }
 
   /**
@@ -1248,7 +1317,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 새 모션이 시작되면 이전 타의 여운은 무효가 된다
     // (선입력은 호출부가 남은 개수를 되돌려 놓는다)
-    this.chainBuffered = 0;
+    this.chainQueue.length = 0;
     this.chainNext = null;
     this.chargeMs = 0;
 
@@ -1424,7 +1493,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.jumpsLeft = 0;
     // 맞으면 연속기는 끊긴다. 이어치기가 공짜가 되지 않게 하는 안전장치다
     this.chainNext = null;
-    this.chainBuffered = 0;
+    this.chainQueue.length = 0;
     // 연출 포즈도 끊는다 — 맞는 중에 도발 자세로 서 있으면 안 된다
     this.tauntUntil = 0;
     this.promptUntil = 0;
@@ -1441,10 +1510,33 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.sigWindowUntil = 0;
 
     this.flash();
-    this.pulseSquash(IMPACT.SQUASH_X, IMPACT.SQUASH_Y, IMPACT.SQUASH_MS);
+    /*
+     * 무엇에 맞았는지를 **몸으로** 보여준다.
+     *
+     * 전에는 어떤 기술을 맞아도 같은 값으로 한 번 납작해지고 끝이었다.
+     * 쳐올려서 하늘로 뜨는 순간에도, 바닥에 꽂히는 순간에도 같은 모양이라
+     * 때린 쪽만 화려하고 맞은 쪽은 아무 말도 하지 않았다.
+     *
+     * 방어 중에는 눌러 둔다 — 막았는데 크게 젖혀지면 막은 것처럼 안 보인다.
+     */
+    const reaction = hitReactionOf(atk);
+    const r = HIT_REACTIONS[reaction];
+    this.lastReaction = reaction;
+    const soften = guarded ? 0.35 : 1;
+    this.pulseSquash(
+      1 + (r.squashX - 1) * soften,
+      1 + (r.squashY - 1) * soften,
+      r.ms,
+    );
+    this.pulseLean(r.lean * soften, r.ms);
 
     // 맞으면 공격자 쪽을 바라본다
     this.setFacing(dir === 1 ? -1 : 1);
+  }
+
+  /** 마지막으로 받은 피격 반응 (없으면 null) */
+  getHitReaction(): HitReaction | null {
+    return this.lastReaction;
   }
 
   /** 히트 플래시 — 1프레임 흰색 점멸 */
@@ -1466,6 +1558,24 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     });
   }
 
+  /**
+   * 몸을 젖혔다가 되돌린다.
+   *
+   * 젖히는 것은 **즉시**, 돌아오는 것은 천천히. 사람이 맞을 때가 그렇고,
+   * 들어가는 것까지 부드럽게 하면 맞은 게 아니라 스스로 기울인 것처럼 보인다.
+   * 한 바퀴 도는 반응(회전기)은 360도에서 0도로 풀리면서 저절로 완성된다.
+   */
+  pulseLean(angle: number, duration: number): void {
+    this.scene.tweens.killTweensOf(this.lean);
+    this.lean.angle = angle;
+    this.scene.tweens.add({
+      targets: this.lean,
+      angle: 0,
+      duration,
+      ease: Math.abs(angle) > 180 ? 'Cubic.easeOut' : 'Back.easeOut',
+    });
+  }
+
   /** 상장폐지 (KO) */
   kill(): void {
     if (!this.alive) return;
@@ -1476,10 +1586,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.currentAttack = null;
     this.diving = null;
     this.chainNext = null;
-    this.chainBuffered = 0;
+    this.chainQueue.length = 0;
     this.body.setVelocity(0, 0);
     this.body.setAllowGravity(false);
     this.body.enable = false;
+
+    // 젖혀진 채로 굳지 않게 푼다 — KO 회전은 몸 전체가 따로 돈다
+    this.scene.tweens.killTweensOf(this.lean);
+    this.lean.angle = 0;
 
     this.setFlame(0);
     this.aura.setVisible(false);
@@ -1772,11 +1886,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
              * 선입력이 있으면 후딜을 통째로 건너뛰고 다음 타로 넘어간다 —
              * 이 캔슬이 있어야 툭툭 끊기지 않고 몰아치는 리듬이 나온다.
              */
-            if (this.chainBuffered > 0 && atk.chain) {
+            if (this.chainQueue.length > 0 && atk.chain) {
+              const dir = this.chainQueue.shift() ?? 'neutral';
               // beginAttack이 버퍼를 비우므로 남은 입력을 되돌려 놓는다
-              const carry = this.chainBuffered - 1;
-              this.beginAttack(this.cfg.moves[atk.chain]);
-              this.chainBuffered = carry;
+              const carry = dir === 'neutral' ? [...this.chainQueue] : [];
+              this.beginAttack(this.chainMove(atk.chain, dir));
+              // 갈라진 마무리는 한 세트의 끝이라 남은 선입력을 물려주지 않는다
+              this.chainQueue = carry;
               break;
             }
             this.attackPhase = 'recovery';
@@ -1850,6 +1966,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.facing * this.squash.x * this.sizeScale,
       this.squash.y * this.sizeScale,
     );
+    /*
+     * 젖혀진 각도.
+     *
+     * facing 이 음수 배율로 들어가므로 컨테이너가 좌우로 뒤집히고, 각도도
+     * 함께 뒤집혀 보인다. 그래서 "뒤로 젖혀진다"를 어느 쪽을 보고 있든
+     * 음수 하나로 쓸 수 있다 — 방향마다 부호를 뒤집을 필요가 없다.
+     */
+    this.visual.angle = this.lean.angle;
 
     /*
      * 붙잡힌 동안 몸을 떤다.

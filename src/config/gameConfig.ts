@@ -793,16 +793,82 @@ export const IMPACT = {
   SHAKE_MS: 150,
   /** 히트 플래시 지속 (ms) */
   FLASH_MS: 70,
-  /** 스쿼시 & 스트레치 지속 (ms) */
-  SQUASH_MS: 90,
-  /** 피격 시 찌그러짐 정도 */
-  SQUASH_X: 1.35,
-  SQUASH_Y: 0.68,
+  /*
+   * 피격 찌그러짐은 여기 있던 고정값(1.35 / 0.68 / 90ms)을 버리고
+   * HIT_REACTIONS 로 옮겼다 — 기술마다 다른 모양이 필요해졌기 때문이다.
+   */
   /** 임팩트 파티클 개수 */
   PARTICLE_COUNT: 14,
   /** 데미지 숫자 팝업 지속 (ms) */
   FLOATING_MS: 700,
 } as const;
+
+/* ------------------------------------------------------------------ */
+/* 맞은 쪽의 반응                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 맞은 몸이 그리는 모양.
+ *
+ * ── 왜 나눠야 하나 ────────────────────────────────────────────────
+ * 때리는 쪽은 기술마다 갈라 놓았다 — 예비동작, 내지르는 폭, 이펙트 모양,
+ * 타수별 크기까지. 그런데 **맞는 쪽은 전부 같은 모양으로 찌그러졌다.**
+ * 쳐올려서 상대가 하늘로 뜨는데 몸은 옆으로 밀릴 때와 똑같이 납작해지면,
+ * 절반만 전달된다. 무엇을 맞혔는지는 때린 쪽이 아니라 **맞은 쪽 몸**에
+ * 가장 크게 쓰여 있다.
+ *
+ * 값을 정한 기준: 실제로 날아가는 방향과 몸 모양이 어긋나지 않을 것.
+ * 위로 뜨면 세로로 늘어나고, 바닥에 꽂히면 납작해진다.
+ */
+export type HitReaction = 'launch' | 'slam' | 'blow' | 'spin' | 'jab';
+
+export interface HitReactionSpec {
+  /** 사람이 읽을 이름 — 검사와 기록에 쓴다 */
+  label: string;
+  /** 몸이 젖혀지는 각도 (음수 = 뒤로. 360이면 한 바퀴 돈다) */
+  lean: number;
+  /** 찌그러짐 */
+  squashX: number;
+  squashY: number;
+  /** 되돌아오는 시간 (ms) */
+  ms: number;
+}
+
+export const HIT_REACTIONS: Record<HitReaction, HitReactionSpec> = {
+  /** 쳐올림 — 뒤로 크게 젖혀지며 세로로 늘어난다 */
+  launch: { label: '떠오름', lean: -38, squashX: 0.82, squashY: 1.3, ms: 300 },
+  /** 바닥으로 꽂음 — 젖혀질 틈 없이 눌린다 */
+  slam: { label: '짓눌림', lean: -8, squashX: 1.46, squashY: 0.56, ms: 210 },
+  /** 후려침 — 상체가 젖혀지며 뒤로 밀려난다 */
+  blow: { label: '날아감', lean: -27, squashX: 1.34, squashY: 0.72, ms: 250 },
+  /** 회전기 — 같이 휘말려 한 바퀴 돈다 */
+  spin: { label: '휘말림', lean: -360, squashX: 1.14, squashY: 0.9, ms: 360 },
+  /** 잔타 — 짧게 흠칫한다. 여기까지 크게 만들면 3타의 무게가 죽는다 */
+  jab: { label: '흠칫', lean: -13, squashX: 1.2, squashY: 0.86, ms: 130 },
+};
+
+/**
+ * 이 공격을 맞으면 몸이 어떻게 되는가.
+ *
+ * 기술 이름이 아니라 **넉백 방향**으로 고른다. "내려찍기"라는 이름을 달고도
+ * 실제로는 상대를 띄우는 기술이 있는데(heavyDown), 이름을 따라가면 몸은
+ * 눌리는데 상대는 하늘로 뜨는 그림이 나온다. 눈에 보이는 것과 물리가
+ * 어긋나는 쪽이 훨씬 나쁘다.
+ */
+export function hitReactionOf(atk: AttackConfig): HitReaction {
+  // 아래로 꽂는 기술 (다이브) — 부호가 뒤집힌 유일한 경우라 먼저 거른다
+  if (atk.knockbackY >= 0) return 'slam';
+  if (atk.fx === 'spin') return 'spin';
+
+  const up = -atk.knockbackY;
+  const back = atk.knockbackX;
+
+  // 옆으로 미는 힘보다 띄우는 힘이 클 때만 "떠오름"이다
+  if (up >= 420 && up >= back) return 'launch';
+  if (atk.hitAnchor === 'down') return 'slam';
+  if (back >= 300) return 'blow';
+  return 'jab';
+}
 
 /* ------------------------------------------------------------------ */
 /* AI 난이도                                                           */

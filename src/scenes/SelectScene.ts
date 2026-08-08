@@ -993,9 +993,19 @@ export class SelectScene extends Phaser.Scene {
         `${c.keys} ${c.slots.map((slot) => cfg.moves[slot].name).join(' → ')}`,
     ).join('      ');
 
+    /*
+     * 마무리 갈래 — 같은 연타인데 마지막에 어디를 누르느냐로 끝이 달라진다.
+     *
+     * 커맨드 목록에 넣으면 "또 다른 키"처럼 보인다. 실제로는 이미 아는 두
+     * 버튼의 쓰임이 늘어난 것이라, 연속기 바로 밑에 붙여야 그렇게 읽힌다.
+     */
+    const branches =
+      `J J ↑J ${cfg.moves.lightUp.name} · ↓J ${cfg.moves.lightDown.name}` +
+      `      K ↑K ${cfg.moves.heavyUp.name} · ↓K ${cfg.moves.heavyDown.name}`;
+
     // 스킬은 위 줄에서 이미 설명했으므로 커맨드 목록에서는 뺀다
     this.movesText.setText(
-      `[연속기] ${chains}\n[커맨드] ` +
+      `[연속기] ${chains}\n[마무리 갈래] ${branches}\n[커맨드] ` +
         MOVE_COMMANDS.filter((c) => c.slot !== 'skill')
           .map((c) => `${c.keys} ${cfg.moves[c.slot].name}`)
           .join('  ·  '),

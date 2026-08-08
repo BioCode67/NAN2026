@@ -3319,7 +3319,7 @@ export class BattleScene extends Phaser.Scene {
 
   /** 플레이어가 지금 이어 칠 수 있는 다음 타를 하단에 띄운다 */
   private updateChainHint(): void {
-    const next = this.player.alive ? this.player.getChainNextName() : null;
+    const next = this.player.alive ? this.player.getChainBranches() : null;
 
     if (!next) {
       // 매 프레임 알파를 0으로 덮어쓰지 않는다 — 사라지는 트윈이 끊긴다
@@ -3333,7 +3333,13 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const label = `▶ 한 번 더!  ${next}`;
+    /*
+     * 갈래를 함께 보여준다.
+     *
+     * 마무리가 셋인데 화면에 하나만 적혀 있으면 나머지 둘은 없는 것과 같다.
+     * "한 번 더"만 알려주던 때에도 3타가 있는 줄 모르는 사람이 있었다.
+     */
+    const label = `▶ 한 번 더!  ${next.straight}    ↑ ${next.up}  ·  ↓ ${next.down}`;
     if (this.chainHint.text !== label) {
       this.chainHint.setText(label);
       this.tweens.killTweensOf(this.chainHint);

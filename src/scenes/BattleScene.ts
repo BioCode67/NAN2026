@@ -198,6 +198,8 @@ export class BattleScene extends Phaser.Scene {
   private netEnded = false;
   /** 참가자가 보낸 문장을 기다리는 중인 약속 (호스트) */
   private remoteSaid?: (text: string) => void;
+  /** 지금 문장을 기다리고 있는 자리 (없으면 -1) */
+  private waitingOnSlot = -1;
   /**
    * 회선이 실제로 오가고 있는가 (검사·디버그용).
    *
@@ -916,6 +918,18 @@ export class BattleScene extends Phaser.Scene {
      */
     net.onLeft = (slot, reason) => {
       if (this.netRole !== 'host') return;
+      /*
+       * 하필 그 사람 차례에 나갔다면 먼저 판부터 되돌린다.
+       *
+       * 문장을 기다리는 동안에는 **전원이 멈춰 있다.** 기다리던 사람이
+       * 창을 닫으면 아무리 기다려도 문장은 오지 않는데, 안전장치가 15초라
+       * 남은 셋은 멈춘 화면을 15초 동안 본다 — 회선이 끊긴 줄 안다.
+       * 나갔다는 것을 아는 순간이 곧 기다림이 끝나는 순간이다.
+       */
+      if (this.waitingOnSlot === slot) {
+        this.announce('입력하던 사람이 나갔습니다', '#facc15', 1400);
+        this.remoteSaid?.('');
+      }
       this.handOverToBot(slot, reason);
     };
 
@@ -1848,7 +1862,12 @@ export class BattleScene extends Phaser.Scene {
       const slot = this.humans.findIndex((h) => h.fighter === breaker);
       if (slot >= 0) {
         net.sendAsk(slot, breaker.cfg.name, breaker.cfg.colors.accent);
-        text = await this.awaitPrompt(slot === 0, breaker.cfg.name, breaker.cfg.colors.accent);
+        text = await this.awaitPrompt(
+          slot === 0,
+          breaker.cfg.name,
+          breaker.cfg.colors.accent,
+          slot,
+        );
       } else {
         text = Phaser.Utils.Array.GetRandom(AI_PROMPTS);
         breaker.say(text, breaker.cfg.colors.accent);
@@ -1945,19 +1964,26 @@ export class BattleScene extends Phaser.Scene {
    * 넷이 붙는 판에서 한 사람만 멈추면 나머지는 그동안 계속 싸워서 불공평하다 —
    * 전원이 같이 멈춰 지켜본다.
    */
-  private async awaitPrompt(mine: boolean, who: string, accent: number): Promise<string> {
+  private async awaitPrompt(
+    mine: boolean,
+    who: string,
+    accent: number,
+    slot = -1,
+  ): Promise<string> {
     const hex = `#${accent.toString(16).padStart(6, '0')}`;
     this.prompting = true;
     this.physics.world.pause();
 
     if (!mine) {
       this.announce(`${who}가 명령을 입력 중…`, hex, 2400);
+      this.waitingOnSlot = slot;
       const text = await new Promise<string>((resolve) => {
         this.remoteSaid = resolve;
         // 상대가 창을 닫거나 회선이 끊겨도 판이 영영 멈춰 있으면 안 된다
         this.time.delayedCall(15000, () => resolve(''));
       });
       this.remoteSaid = undefined;
+      this.waitingOnSlot = -1;
       this.resumeAll();
       return text;
     }

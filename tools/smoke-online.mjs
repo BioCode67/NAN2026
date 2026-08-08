@@ -513,9 +513,51 @@ try {
       };
     });
 
+    /*
+     * 하필 그 사람 차례에 나가게 만든다.
+     *
+     * 문장을 기다리는 동안에는 전원이 멈춰 있다. 기다리던 사람이 창을 닫으면
+     * 문장은 영영 오지 않는데, 안전장치가 15초라 남은 사람들은 멈춘 화면을
+     * 15초 동안 본다 — 회선이 끊긴 줄 안다. 가장 나쁜 순간에 나가는 상황을
+     * 그대로 만들어 두고, 판이 곧바로 되돌아오는지 본다.
+     */
+    await host.evaluate((idx) => {
+      const s = window.game.scene.getScene('Battle');
+      if (!s.orbs.isActive()) s.orbs.spawn(s.time.now, s.fighters[idx].x, s.fighters[idx].y - 140);
+      s.orbs.onBreak(s.fighters[idx]);
+    }, before.idx);
+
+    const asking = await leaver
+      .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 12000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!asking) {
+      errors.push('[온라인] 나갈 사람에게 입력창이 안 떠서 "차례 중 이탈"을 못 만들었습니다');
+    } else if (!(await host.evaluate(() => window.game.scene.getScene('Battle').prompting))) {
+      errors.push('[온라인] 남의 차례인데 호스트가 안 멈췄습니다');
+    }
+
+    const closedAt = Date.now();
     await leaver.close();
     pages.pop();
     await host.bringToFront();
+
+    if (asking) {
+      const back = await host
+        .waitForFunction(() => !window.game.scene.getScene('Battle').prompting, null, {
+          timeout: 9000,
+        })
+        .then(() => true)
+        .catch(() => false);
+      const took = Math.round((Date.now() - closedAt) / 100) / 10;
+
+      if (!back) {
+        errors.push('[온라인] 입력하던 사람이 나갔는데 판이 멈춘 채로 남아 있습니다');
+      } else {
+        console.log(`  ✓ 입력하던 사람이 나가도 판이 곧 되돌아온다 (${took}초)`);
+      }
+    }
 
     const handed = await host
       .waitForFunction(
@@ -543,15 +585,30 @@ try {
         const s = window.game.scene.getScene('Battle');
         const bot = s.fighters[idx];
         if (!bot || s.ais.length === 0) return -1;
+        /*
+         * 움직일 때까지 본다 — 정해진 시간만 재지 않는다.
+         *
+         * 이어받는 순간 그 캐릭터는 문장을 외치던 자세일 수도, 방금 맞아
+         * 경직 중일 수도 있다. 2초를 딱 재면 그 사이가 하필 굳어 있는 구간일 때
+         * "봇이 안 움직인다"가 되는데, 그건 이어받기가 실패한 것이 아니라
+         * 아직 차례가 아닌 것이다.
+         */
         const x0 = bot.x;
-        await new Promise((r) => setTimeout(r, 2000));
-        return Math.round(Math.abs(bot.x - x0));
+        let best = 0;
+        for (let i = 0; i < 50; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          best = Math.max(best, Math.abs(bot.x - x0));
+          if (best > 8) break;
+        }
+        return Math.round(best);
       }, before.idx);
 
       if (moved < 0) {
         errors.push('[온라인] 자리는 비었는데 이어받은 봇이 없습니다');
-      } else if (moved === 0) {
-        errors.push('[온라인] 이어받은 봇이 그 자리에 서 있기만 합니다');
+      } else if (moved <= 8) {
+        errors.push(
+          `[온라인] 이어받은 봇이 5초 동안 ${moved}px 밖에 안 움직였습니다 — 굳어 있습니다`,
+        );
       } else {
         console.log(
           `  \u2713 나간 자리를 봇이 이어받는다 — ${before.name} (${moved}px 움직임)`,

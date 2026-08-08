@@ -331,10 +331,26 @@ export class SelectScene extends Phaser.Scene {
     this.modeLabel.setText(this.modeText());
     this.modeLabel.setColor('#4ade80');
 
-    net.onLobby = () => {
+    /*
+     * 이 씬이 사라지면 회선에서 손을 뗀다.
+     *
+     * 처리기는 하나짜리 회선 객체에 꽂히고 그 객체는 씬보다 오래 산다.
+     * 전투로 넘어간 뒤에도 여기 처리기가 남아 있으면, 로비 소식이 올 때마다
+     * **이미 지워진 화면 요소**를 만지다 예외가 난다. 그 예외는 회선이
+     * 자리를 정리하던 도중에 튀어나와 정리를 통째로 멈춘다 —
+     * 나간 사람의 자리가 판에 그대로 남는 원인이었다.
+     *
+     * 내가 꽂은 것과 같은 함수일 때만 뗀다. 다음 씬이 이미 자기 것을 꽂았다면
+     * 그건 남의 것이므로 건드리면 안 된다.
+     */
+    const onLobby = () => {
       this.refreshPrompt();
       this.tryStartOnline();
     };
+    net.onLobby = onLobby;
+    this.events.once('shutdown', () => {
+      if (net.onLobby === onLobby) net.onLobby = undefined;
+    });
     net.onStart = (d) => {
       // 참가자는 호스트가 정한 대로 따라 들어간다
       this.launch({

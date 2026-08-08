@@ -20,6 +20,15 @@ import { POSE_ORDER } from '../config/spriteSheets';
  * 눈으로는 부드럽고, 그 사이는 받은 속도로 각자 이어 움직여 메운다.
  */
 const NET_SEND_MS = 33;
+/**
+ * 이만큼 아무 입력도 없으면 그 자리는 비었다고 본다.
+ *
+ * 참가자는 매 프레임(30Hz) 입력을 보내므로 4초는 아주 긴 침묵이다.
+ * 그렇다고 1초로 줄이면 잠깐 버벅인 사람이 봇으로 바뀐다.
+ */
+const QUIET_SEAT_MS = 4000;
+/** 조용한 자리를 얼마나 자주 살피는가 */
+const QUIET_CHECK_MS = 1000;
 import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
@@ -152,6 +161,8 @@ export class BattleScene extends Phaser.Scene {
     tap: { dir: -1 | 0 | 1; at: number };
     /** 회선에서 오는 입력 (온라인 대전에서 상대 쪽). 없으면 키보드를 읽는다 */
     remote?: () => InputFrame;
+    /** 온라인 자리 번호 — 나간 사람을 찾아내는 데 쓴다 */
+    slot?: number;
   }> = [];
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
@@ -212,6 +223,9 @@ export class BattleScene extends Phaser.Scene {
 
   private paused = false;
   private pauseOverlay?: Phaser.GameObjects.Container;
+
+  /** 조용해진 자리를 마지막으로 확인한 시각 */
+  private lastReapAt = 0;
 
   /** 결과 화면이 떠 있는가 — 카메라를 원점에 묶는 데 쓴다 */
   private resultShown = false;
@@ -812,6 +826,7 @@ export class BattleScene extends Phaser.Scene {
         keys: slot === 0 ? this.keys : {},
         tap: { dir: 0, at: 0 },
         remote: slot === 0 ? undefined : () => this.takeRemoteFrame(slot),
+        slot,
       }));
     } else if (this.netRole === 'guest') {
       /*
@@ -885,6 +900,23 @@ export class BattleScene extends Phaser.Scene {
         this.logPrompt(text, who, spec);
       });
       if (who) this.announce(`${who}의 명령`, '#f472b6', 900);
+    };
+
+    /*
+     * 넷 중 하나가 나갔다 — 봇이 이어받는다.
+     *
+     * ── 왜 이렇게까지 하는가 ──────────────────────────────────────
+     * 넷이 붙는 판에서 한 사람이 창을 닫는 일은 드물지 않다. 지금까지는 그
+     * 캐릭터가 그 자리에 **그대로 서 있었다**. 남은 셋은 허수아비를 상대로
+     * 남은 판을 치르게 되는데, 그건 진 사람에게도 이긴 사람에게도 판이 아니다.
+     * 자리를 봇에게 넘기면 판은 판으로 끝난다.
+     *
+     * 판을 그 자리에서 끝내 버리는 선택지도 있었지만, 셋이 잘 싸우고 있는
+     * 판을 한 사람의 사정으로 없애는 쪽이 더 나쁘다.
+     */
+    net.onLeft = (slot, reason) => {
+      if (this.netRole !== 'host') return;
+      this.handOverToBot(slot, reason);
     };
 
     net.onClose = (reason) => {
@@ -1098,6 +1130,62 @@ export class BattleScene extends Phaser.Scene {
           ),
         );
       });
+  }
+
+  /**
+   * 조용해진 자리를 정리한다 (호스트에서만).
+   *
+   * ── 왜 인사만 믿지 않는가 ────────────────────────────────────────
+   * 창을 닫을 때 "나간다"고 알려 주는 회선도 있지만, 그 인사가 아예 안 오는
+   * 경우가 훨씬 많다 — 탭을 그냥 닫거나, 노트북을 덮거나, 회선이 끊기거나,
+   * 브라우저가 죽거나. 어느 쪽이든 결과는 같다: **그 캐릭터를 아무도 조종하지
+   * 않는다.** 참가자는 매 프레임 자기 입력을 보내므로 조용해진 자리는 곧
+   * 사라진 사람이고, 그 판단에 인사는 필요 없다.
+   *
+   * 문장을 입력하는 동안에는 전원이 멈춰 입력을 보내지 않으므로 세지 않는다 —
+   * 그때 세면 문장을 오래 고민한 사람이 봇으로 바뀐다.
+   */
+  private reapQuietSeats(time: number): void {
+    if (this.netRole !== 'host' || !this.battleActive || this.prompting) return;
+    if (time - this.lastReapAt < QUIET_CHECK_MS) return;
+    this.lastReapAt = time;
+
+    for (const slot of net.quietSlots(QUIET_SEAT_MS)) {
+      net.dropSlot(slot, '소식이 끊겼습니다.');
+    }
+  }
+
+  /**
+   * 나간 사람의 캐릭터를 봇에게 넘긴다 (호스트에서만).
+   *
+   * 회선으로 오던 입력이 끊기면 그 자리는 아무 입력도 받지 못한다 —
+   * `humans` 에서 빼서 더 이상 회선 입력을 기다리지 않게 하고, 같은 캐릭터에
+   * AI를 새로 붙인다. 캐릭터·주가·위치는 그대로 두므로 판은 이어진다.
+   */
+  private handOverToBot(slot: number, reason: string): void {
+    const i = this.humans.findIndex((h) => h.remote && h.slot === slot);
+    if (i < 0) return;
+
+    const taken = this.humans[i]!;
+    const f = taken.fighter;
+    this.humans.splice(i, 1);
+
+    // 손을 뗀 순간의 입력이 눌린 채로 남으면 계속 그 방향으로 걷는다
+    f.moveHorizontal(0);
+    f.setGuard(false);
+
+    /*
+     * 봇을 새로 붙인다. 다른 봇과 똑같은 배선을 준다 — 이어받은 자리라고
+     * 스킬을 못 쓰면 그때부터 그 캐릭터만 반쪽이 된다.
+     */
+    this.ais.push(
+      new AISystem(f, () => this.pickAiTarget(f), this.difficulty, {
+        castSkill: (g) => this.castSkill(g),
+      }),
+    );
+
+    this.announce(`${f.cfg.name} — 봇이 이어받는다`, '#facc15', 1600);
+    console.info(`[net] ${reason} (자리 ${slot}) — 봇 전환`);
   }
 
   /** AI가 노릴 대상 — 자기 자신을 제외한 가장 가까운 생존자 */
@@ -3032,6 +3120,8 @@ export class BattleScene extends Phaser.Scene {
       this.rhythm.update(time);
       this.checkBlastZones();
     }
+
+    this.reapQuietSeats(time);
 
     // 판이 끝난 뒤에도 몇 번 더 보낸다 — 결과가 상대에게 닿아야 한다
     this.sendSnapshot(time);

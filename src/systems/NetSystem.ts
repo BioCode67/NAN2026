@@ -222,6 +222,14 @@ export class NetSystem {
   private slots: (string | null)[] = [];
   /** 자리별 고른 캐릭터 */
   private picks: (CharacterId | null)[] = [];
+  /**
+   * 자리별로 마지막 소식을 들은 시각.
+   *
+   * 창을 그냥 닫으면 아무 인사도 오지 않는 회선이 있다(같은 컴퓨터 경로가
+   * 그렇다). 그러면 남은 사람들은 서 있는 허수아비를 상대로 남은 판을 치른다.
+   * 참가자는 매 프레임 자기 입력을 보내므로, **조용해진 자리 = 사라진 사람**이다.
+   */
+  private heardAt = new Map<number, number>();
 
   /* --- 바깥에서 꽂는 처리기 --------------------------------------- */
   /** 로비 인원·선택이 바뀌었다 */
@@ -235,6 +243,14 @@ export class NetSystem {
   /** 기믹이 걸렸다 — 화면을 맞춘다 */
   onGimmick?: (ids: string[], text: string, who: string, note: string) => void;
   onSnapshot?: (d: NetSnapshot) => void;
+  /**
+   * 참가자 하나가 빠졌다 (호스트에서만).
+   *
+   * 방이 통째로 깨진 것이 아니라 넷 중 하나가 창을 닫은 것이다. 남은 사람들의
+   * 판은 계속되어야 하고, 빠진 사람의 캐릭터는 **누군가 이어받아야 한다** —
+   * 안 그러면 셋이 서 있는 허수아비를 상대로 남은 판을 치른다.
+   */
+  onLeft?: (slot: number, reason: string) => void;
   onClose?: (reason: string) => void;
 
   /** 지금 방에 들어와 있는 사람 수 (호스트 포함) */
@@ -373,9 +389,20 @@ export class NetSystem {
     if (this.slots.includes(id)) return;
     if (this.playerCount >= MAX_PLAYERS) return;
 
-    const slot = this.slots.length + 1;
-    this.slots.push(id);
+    /*
+     * 빈 자리를 먼저 채운다.
+     *
+     * 나간 자리는 null 로 남는다. 그때 길이만 보고 번호를 주면 1번이 비었는데도
+     * 다음 사람이 4번을 받고, 그 다음 사람은 5번 — **자리 수보다 큰 번호**가
+     * 나가서 화면에 없는 캐릭터를 조종하게 된다.
+     */
+    const free = this.slots.indexOf(null);
+    const at = free >= 0 ? free : this.slots.length;
+    this.slots[at] = id;
+    const slot = at + 1;
     this.picks[slot] = null;
+    // 막 들어온 사람이 곧바로 "조용한 자리"로 몰리면 안 된다
+    this.heardAt.set(slot, Date.now());
 
     this.transportSend({ t: 'welcome', slot }, id);
     this.broadcastLobby();
@@ -391,13 +418,52 @@ export class NetSystem {
     if (i < 0) return;
     this.slots[i] = null;
     this.picks[i + 1] = null;
+    this.heardAt.delete(i + 1);
     this.broadcastLobby();
+    // 판이 도는 중이면 그 자리를 누군가 이어받아야 한다
+    this.onLeft?.(i + 1, reason);
+  }
+
+  /**
+   * 호스트: 일정 시간 아무 입력도 오지 않은 자리들.
+   *
+   * 창을 닫았는지, 노트북을 덮었는지, 회선이 끊겼는지는 구별할 수 없고
+   * 구별할 필요도 없다 — 어느 쪽이든 그 자리는 지금 아무도 조종하지 않는다.
+   */
+  quietSlots(ms: number): number[] {
+    if (this.role !== 'host') return [];
+    const now = Date.now();
+    const out: number[] = [];
+    this.slots.forEach((id, i) => {
+      if (!id) return;
+      const at = this.heardAt.get(i + 1) ?? 0;
+      if (now - at > ms) out.push(i + 1);
+    });
+    return out;
+  }
+
+  /** 호스트: 그 자리를 비운다 (조용해진 자리를 정리할 때) */
+  dropSlot(slot: number, reason: string): void {
+    const id = this.slots[slot - 1];
+    if (id) this.dropGuest(id, reason);
   }
 
   private broadcastLobby(): void {
     const d = this.lobby;
     this.transportSend({ t: 'lobby', d });
-    this.onLobby?.(d);
+    /*
+     * 듣는 쪽이 터져도 회선 장부는 계속 정리돼야 한다.
+     *
+     * 이 알림을 듣는 것은 씬이고, 씬은 사라진다. 사라진 씬의 처리기가 죽은
+     * 화면 요소를 만지면 예외가 나는데, 그것이 여기서 위로 튀면 **자리 정리
+     * 자체가 중간에 멈춘다.** 실제로 그래서 "나간 사람의 자리가 그대로
+     * 남는" 일이 있었다 — 나간 것은 회선이 아는데 판이 못 들었다.
+     */
+    try {
+      this.onLobby?.(d);
+    } catch (err) {
+      console.warn('[net] 로비 알림을 듣던 쪽에서 오류', err);
+    }
   }
 
   /* ================================================================ */
@@ -555,6 +621,7 @@ export class NetSystem {
         this.onStart?.(msg.d);
         break;
       case 'in':
+        this.heardAt.set(msg.slot, Date.now());
         this.onInput?.(msg.slot, msg.h, msg.k);
         break;
       case 'snap':
@@ -605,3 +672,29 @@ function friendlyError(type: string): string {
 
 /** 씬끼리 넘겨 쓰는 하나짜리 회선 */
 export const net = new NetSystem();
+
+/*
+ * 창을 닫을 때 인사하고 나간다.
+ *
+ * 침묵으로도 알아채기는 하지만 그건 4초 뒤다. 그동안 남은 사람들은 멈춰 선
+ * 캐릭터를 상대한다. 닫히는 순간에 한 마디 보내 두면 그 4초가 없어진다.
+ *
+ * unload 가 아니라 pagehide 를 쓴다 — 요즘 브라우저는 뒤로 가기를 대비해
+ * 페이지를 살려 두기도 해서 unload 가 아예 안 불리는 경우가 있다.
+ */
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (net.connected) net.close();
+  });
+}
+
+/*
+ * 검사에서 회선을 들여다보는 통로.
+ *
+ * 창 여러 개를 실제로 붙여 보는 검사(smoke:online)는 "몇 자리가 살아 있는가"를
+ * 물어볼 방법이 있어야 한다. 이미 한 개짜리로 만들어 둔 것을 가리키기만 하므로
+ * 새로 드는 것은 없다.
+ */
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).__net = net;
+}

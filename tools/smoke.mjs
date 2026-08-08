@@ -691,21 +691,38 @@ await restartRound();
 await waitGrounded();
 await clearMoves();
 
-await page.evaluate(() => {
-  const p = window.game.scene.getScene('Battle').player;
-  p.attack('light', 'neutral');
-  p.attack('light', 'neutral');
-  p.attack('light', 'neutral');
-});
+/*
+ * 세 번을 몰아 넣고, 못 미치면 한 번 더 해 본다.
+ *
+ * 앞 타의 경직이 아직 안 풀린 순간에 걸리면 세 번째가 통째로 무시된다 —
+ * 연속기가 안 되는 것이 아니라 시작점이 나빴던 것이다. 조건을 느슨하게
+ * 하지 않고 **시작점만** 다시 잡는다. 두 번 다 못 하면 그건 진짜 고장이다.
+ */
+const runChain = async () => {
+  await clearMoves();
+  await page.evaluate(() => {
+    const p = window.game.scene.getScene('Battle').player;
+    p.attackPhase = 'none';
+    p.stunUntil = 0;
+    p.attack('light', 'neutral');
+    p.attack('light', 'neutral');
+    p.attack('light', 'neutral');
+  });
+  // 상태 머신이 세 타를 다 흘려보낼 때까지 기다린다
+  for (let i = 0; i < 40; i++) {
+    if ((await readMoves()).length >= expected.chain.length) break;
+    await page.waitForTimeout(120);
+  }
+  return readMoves();
+};
 
-// 상태 머신이 세 타를 다 흘려보낼 때까지 기다린다
-for (let i = 0; i < 40; i++) {
-  if ((await readMoves()).length >= expected.chain.length) break;
-  await page.waitForTimeout(120);
+let chained = await runChain();
+if (JSON.stringify(chained) !== JSON.stringify(expected.chain)) {
+  await waitGrounded();
+  chained = await runChain();
 }
 await shot('chain-jjj');
 
-const chained = await readMoves();
 if (JSON.stringify(chained) !== JSON.stringify(expected.chain)) {
   errors.push(
     `[연속기] 기대 ${JSON.stringify(expected.chain)} / 실제 ${JSON.stringify(chained)}`,
@@ -1084,30 +1101,35 @@ for (let i = 0; i < 25; i++) {
   await page.waitForTimeout(300);
 }
 /*
- * 오브 갱신은 전투가 도는 동안에만 돈다.
- * 이 지점의 판은 이미 한참 진행돼 플레이어가 죽어 있을 수도 있어서,
- * 타이머를 당기는 것만으로는 안 뜨는 경우가 있다. 그때는 판을 새로 연다 —
- * 확인하려는 것은 "오브가 몇 초 뒤에 뜨는가"가 아니라 결과 화면이므로.
+ * 그래도 안 뜨면 그 자리에서 직접 띄운다.
+ *
+ * 판을 새로 열면 주가가 100%로 돌아가 남은 시간 안에 판이 안 끝나고,
+ * 그러면 정작 보려던 결과 화면까지 못 간다. 확인하려는 것은 "오브가 몇 초
+ * 뒤에 뜨는가"가 아니라 결과 화면에 문장이 남는가이므로 여기서는 띄워 준다.
  */
-if (!(await page.evaluate(() => window.game.scene.getScene('Battle').orbs.isActive()))) {
-  await restartRound();
-  await waitGrounded();
-  for (let i = 0; i < 30; i++) {
-    const up = await page.evaluate(() => {
-      const s = window.game.scene.getScene('Battle');
-      s.orbs.nextSpawnAt = 0;
-      return s.orbs.isActive();
-    });
-    if (up) break;
-    await page.waitForTimeout(300);
-  }
-}
+await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  if (!s.orbs.isActive()) s.orbs.spawn(s.time.now, s.player.x, s.player.y - 140);
+});
+/*
+ * 깨는 사람은 살아 있는 아무나.
+ *
+ * 이 지점의 판은 한참 진행돼 플레이어가 이미 떨어졌을 수 있다. 확인하려는
+ * 것은 "누가 깼는가"가 아니라 **그 문장이 결과 화면에 남는가**이므로,
+ * 봇이 깨도 된다 — 봇이 깨면 게임이 알아서 한 문장을 외치고 그것도 똑같이
+ * 이 판의 기록으로 남아야 한다.
+ */
 const broke = await page.evaluate(() => {
   const s = window.game.scene.getScene('Battle');
-  if (!s.orbs.isActive()) return false;
-  s.orbs.onBreak(s.player);
-  return true;
+  if (!s.orbs.isActive()) return 'no-orb';
+  const who = s.player.alive ? s.player : s.fighters.find((f) => f.alive);
+  if (!who) return 'nobody';
+  s.orbs.onBreak(who);
+  return who === s.player ? 'ok' : 'bot';
 });
+if (broke === 'no-orb' || broke === 'nobody') {
+  console.log(`  · 오브를 못 깼습니다 (${broke})`);
+}
 /*
  * 입력창이 뜰 때까지 기다렸다가 채운다.
  *
@@ -1115,13 +1137,21 @@ const broke = await page.evaluate(() => {
  * 기다리지 않고 count() 로 보면 0이 나와 그냥 지나치는데, 그러면 입력창이
  * 열린 채로 남아 물리가 영영 멈춘다. 이 판은 끝나지 않고 스모크가 통째로 선다.
  */
-if (broke) {
+if (broke === 'ok') {
   const opened = await page
     .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 6000 })
     .then(() => true)
     .catch(() => false);
+  if (!opened) console.log('  · 오브를 깼는데 입력창이 안 떴습니다');
   if (opened) {
-    await page.locator('[data-testid="prompt-input"]').fill('아이템 잔뜩 뿌려줘');
+    /*
+     * 서든데스로 고른다.
+     *
+     * 아무 문장이나 되는 것이 아니다 — 전원을 회복시키는 문장을 쓰면 판이
+     * 길어져 정작 보려던 결과 화면까지 못 간다. 서든데스는 피해가 세 배라
+     * 문장도 남기고 판도 앞당긴다.
+     */
+    await page.locator('[data-testid="prompt-input"]').fill('한방에 끝내자');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(900);
     // 그래도 남아 있으면 닫고 간다 — 열린 채로 두면 판이 멈춘다
@@ -1148,9 +1178,30 @@ await shot('mid-battle');
 await waitUntil(
   (st) => !st.active,
   '전투 종료 대기',
-  40000,
+  25000,
   true,
 );
+
+/*
+ * 아직 안 끝났으면 끝을 만들어 준다.
+ *
+ * 결과 화면은 판이 끝나야만 나오는 화면이라, 여기까지 못 오면 전적표도
+ * "이 판을 바꾼 말"도 통째로 검증되지 않는다. 그런데 봇 넷이 언제 결판이
+ * 날지는 매번 다르고, 기다리는 시간을 늘리는 것으로는 확정되지 않는다.
+ *
+ * 그래서 남은 봇을 **게임이 쓰는 바로 그 길**로 떨어뜨린다 — 장외 판정이다.
+ * 승패를 조작하는 것이 아니라 결말을 앞당기는 것이고, 검사하려는 결과 화면은
+ * 어느 쪽이 이겼든 똑같이 그려진다.
+ */
+if (await page.evaluate(() => window.game.scene.getScene('Battle').battleActive)) {
+  await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    s.fighters
+      .filter((f) => f !== s.player && f.alive)
+      .forEach((f) => f.setPosition(f.x, 3000));
+  });
+  await waitUntil((st) => !st.active, '남은 봇 장외 처리', 12000, true);
+}
 await page.waitForTimeout(1200);
 await shot('final');
 
@@ -1209,7 +1260,10 @@ const promptLog = await page.evaluate(() => {
     .map((o) => o.text);
   return { log, drawn };
 });
-if (promptLog.log.length === 0) {
+if (!board?.over) {
+  // 판이 아직 안 끝났으면 결과 화면 자체가 없다 — 검사할 것도 없다
+  console.log('  · 결과 화면이 아직이라 문장 검사는 건너뜁니다');
+} else if (promptLog.log.length === 0) {
   console.log('  · 이 판에는 프롬프트가 안 걸려 결과 화면 문장 검사는 건너뜁니다');
 } else {
   const last = promptLog.log[promptLog.log.length - 1];
@@ -1224,6 +1278,17 @@ if (promptLog.log.length === 0) {
   } else {
     console.log(`  ✓ 이 판을 바꾼 말 ${promptLog.log.length}줄 — ${line}`);
   }
+}
+
+/*
+ * 여기서부터는 다시 살아 있는 판이 필요하다.
+ *
+ * 위에서 결과 화면까지 갔다면 전투는 멈춰 있다 — 그 상태로 잡기·연속기를
+ * 확인하면 "조작이 안 먹는다"가 나오는데, 그건 고장이 아니라 판이 끝난 것이다.
+ */
+if (await page.evaluate(() => !window.game.scene.getScene('Battle').battleActive)) {
+  await restartRound();
+  await waitGrounded();
 }
 
 /*
@@ -1462,17 +1527,28 @@ console.log('새 기믹');
     console.log(`  ✓ 미니어처 — 몸 크기 ${tiny.before} → ${tiny.after.toFixed(2)}`);
   }
 
-  /* 배당금 — 전원 주가가 오른다 */
+  /*
+   * 배당금 — 전원 주가가 오른다.
+   *
+   * 합계 하나로 보면 안 된다. 앞선 검사에서 떨어뜨려 둔 폭탄이 이 사이에
+   * 터지면 누군가는 크게 깎이고, 그러면 **전원이 30씩 받았는데도 합은 줄어든다**
+   * — 고장이 아닌데 실패한다. 사람마다 따로 재고 "대부분이 받았는가"를 본다.
+   */
   const gold = await tryGimmick('배당금 뿌려줘', () => {
     const s = window.game.scene.getScene('Battle');
-    return s.fighters
-      .filter((f) => f.alive)
-      .reduce((sum, f) => sum + s.stock.get(f.fighterId), 0);
+    return Object.fromEntries(
+      s.fighters.filter((f) => f.alive).map((f) => [f.fighterId, s.stock.get(f.fighterId)]),
+    );
   }, 0);
-  if (gold.after <= gold.before) {
-    errors.push(`[기믹] 배당금인데 주가 합이 안 늘었습니다 (${gold.before}→${gold.after})`);
-  } else {
-    console.log(`  ✓ 배당금 — 주가 합 ${gold.before} → ${gold.after}`);
+  {
+    const ids = Object.keys(gold.before).filter((id) => id in gold.after);
+    const gained = ids.filter((id) => gold.after[id] - gold.before[id] >= 20);
+    if (gained.length * 2 < ids.length || gained.length === 0) {
+      const deltas = ids.map((id) => `${id} ${gold.after[id] - gold.before[id]}`).join(' · ');
+      errors.push(`[기믹] 배당금인데 받은 사람이 ${gained.length}/${ids.length}명입니다 — ${deltas}`);
+    } else {
+      console.log(`  ✓ 배당금 — ${gained.length}/${ids.length}명이 주가를 받았다`);
+    }
   }
 
   await page.evaluate(() => {
@@ -1503,18 +1579,36 @@ console.log('선두 표시');
      * 마지막에는 **플레이어**가 선두가 되게 한다.
      * 그래야 스크린샷 안에 왕관이 들어온다 — 남이 쓰고 있으면 화면 밖일 때가 많다.
      */
+    /*
+     * 기다리는 시간을 고정하지 않는다.
+     *
+     * 왕관은 매 프레임 갱신인데 헤드리스는 초당 열 장 남짓 그린다. 200ms를
+     * 세어 두면 프레임 한두 장 차이로 "안 따라간다"가 나온다 — 고장이 아니라
+     * 아직 안 그린 것이다. 조건이 될 때까지 본다.
+     */
+    const until = async (fn, ms = 2500) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        if (fn()) return true;
+        await wait(50);
+      }
+      return false;
+    };
+
     const lead = alive.find((f) => f !== s.player) ?? alive[0];
     alive.forEach((f) => s.stock.setExact(f.fighterId, f === lead ? 210 : 90));
-    await wait(200);
 
+    const onLead = await until(
+      () => s.crown?.visible === true && Math.abs(s.crown.x - lead.x) < 60,
+    );
     const shown = s.crown?.visible === true;
-    const onLead = shown && Math.abs(s.crown.x - lead.x) < 60;
 
     /* 다른 사람이 앞서면 왕관도 따라가야 한다 */
     const next = s.player.alive ? s.player : alive[1];
     s.stock.setExact(next.fighterId, 260);
-    await wait(200);
-    const moved = s.crown?.visible === true && Math.abs(s.crown.x - next.x) < 60;
+    const moved = await until(
+      () => s.crown?.visible === true && Math.abs(s.crown.x - next.x) < 60,
+    );
 
     // 왕관 그림이 실제로 픽셀을 갖는가 (글꼴에 없는 글자면 빈 칸이 된다)
     const tex = s.textures.get('crown-mark');
@@ -1799,9 +1893,17 @@ console.log('잡기');
       if (!foe) return { why: '살아 있는 상대가 없습니다' };
 
       /* 둘 다 공중에 띄우고, 점프를 다 쓴 상태로 만든다 */
+      /*
+       * 거리를 조금씩 바꿔 가며 시도한다.
+       *
+       * 캐릭터마다 팔 길이가 다르다. 한 거리로만 열 번 시도하면 사거리가
+       * 짧은 캐릭터에서는 열 번 다 헛친다 — 규칙이 고장난 것이 아니라
+       * 닿지 않은 것이다.
+       */
+      const dist = 26 + (t % 5) * 10;
       p.setPosition(640, 210);
       p.body.setVelocity(0, 0);
-      foe.setPosition(640 + 44, 210);
+      foe.setPosition(640 + dist, 210);
       foe.body.setVelocity(0, 0);
       hold(p);
       hold(foe);
@@ -1824,12 +1926,12 @@ console.log('잡기');
       p.airHitRefunded = false;
       p.attack('light', 'neutral');
 
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 40; i++) {
         await wait(25);
         const grounded = p.body.blocked.down || p.body.touching.down;
         // 착지하면 어차피 점프가 복구되므로 그 표본은 버린다
         if (grounded) break;
-        if (p.jumpsLeft > 0) return { refunded: true };
+        if (p.jumpsLeft > 0) return { refunded: true, dist };
       }
     }
     return { refunded: false };

@@ -285,6 +285,7 @@ try {
         n: s.fighters.length,
         ids: s.fighters.map((f) => f.cfg.id),
         humans: s.fighters.filter((f) => f.side === 'player').length,
+        ais: s.ais.length,
         pos: s.fighters.map((f) => Math.round(f.x)),
       };
     });
@@ -297,7 +298,9 @@ try {
   } else if (new Set(a.ids).size !== a.ids.length) {
     errors.push(`[온라인] 같은 캐릭터가 두 번 나왔습니다 — ${a.ids.join()}`);
   } else {
-    console.log(`  ✓ 사람 ${a.humans}명 + 봇 ${a.n - a.humans}명 — ${a.ids.join(' · ')}`);
+    console.log(
+      `  ✓ 사람 ${a.humans}명 + 봇 ${a.n - a.humans}명 (AI 배선 ${a.ais}개) — ${a.ids.join(' · ')}`,
+    );
   }
 
   for (let i = 1; i < views.length; i++) {
@@ -484,6 +487,77 @@ try {
         }
         await shot(host, 'orb-applied-host');
       }
+    }
+  }
+
+  /* --- 한 사람이 나가면 봇이 이어받는가 --------------------------- */
+  /*
+   * 넷이 붙는 판에서 한 사람이 창을 닫는 일은 드물지 않다. 그 캐릭터가
+   * 그 자리에 그대로 서 있으면 남은 사람들은 허수아비를 상대로 남은 판을
+   * 치른다. 그건 판이 아니다 — 봇이 이어받아야 한다.
+   *
+   * 봇 수(ais)로는 확인할 수 없다. 위에서 회선을 보려고 봇 판단을 통째로
+   * 멈춰 뒀기 때문이다. 확인할 것은 **그 자리가 사람 목록에서 빠졌는가**와
+   * **그 캐릭터가 다시 움직이는가** 두 가지다.
+   */
+  {
+    const leaver = pages[pages.length - 1];
+    const before = await host.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      // 나갈 사람의 캐릭터가 목록에서 몇 번째인지 — 그 캐릭터를 지켜본다
+      const last = s.humans[s.humans.length - 1];
+      return {
+        humans: s.humans.length,
+        idx: s.fighters.indexOf(last.fighter),
+        name: last.fighter.cfg.name,
+      };
+    });
+
+    await leaver.close();
+    pages.pop();
+    await host.bringToFront();
+
+    const handed = await host
+      .waitForFunction(
+        (was) => window.game.scene.getScene('Battle').humans.length < was.humans,
+        before,
+        { timeout: 15000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    if (!handed) {
+      const now = await host.evaluate(() => window.game.scene.getScene('Battle').humans.length);
+      errors.push(
+        `[온라인] 나간 사람의 자리가 그대로 남아 있습니다 (사람 ${before.humans}\u2192${now})`,
+      );
+    } else {
+      /*
+       * 이어받은 봇이 실제로 움직이는가.
+       *
+       * 목록에서 빠지기만 하고 아무도 조종하지 않으면 허수아비는 그대로다.
+       * 이 검사 앞에서 봇 판단을 멈춰 뒀으므로, 새로 붙은 판단만 도는 상태다 —
+       * 움직이면 그건 이어받은 봇이 움직인 것이다.
+       */
+      const moved = await host.evaluate(async (idx) => {
+        const s = window.game.scene.getScene('Battle');
+        const bot = s.fighters[idx];
+        if (!bot || s.ais.length === 0) return -1;
+        const x0 = bot.x;
+        await new Promise((r) => setTimeout(r, 2000));
+        return Math.round(Math.abs(bot.x - x0));
+      }, before.idx);
+
+      if (moved < 0) {
+        errors.push('[온라인] 자리는 비었는데 이어받은 봇이 없습니다');
+      } else if (moved === 0) {
+        errors.push('[온라인] 이어받은 봇이 그 자리에 서 있기만 합니다');
+      } else {
+        console.log(
+          `  \u2713 나간 자리를 봇이 이어받는다 — ${before.name} (${moved}px 움직임)`,
+        );
+      }
+      await shot(host, 'left-handover');
     }
   }
 } catch (err) {

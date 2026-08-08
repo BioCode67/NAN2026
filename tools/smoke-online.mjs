@@ -54,7 +54,15 @@ const browser = await chromium.launch({
  * 같은 컴퓨터 경로는 BroadcastChannel 로 잇는데, 그건 같은 브라우저 프로필
  * 안에서만 오간다. 프로필을 따로 쓰면 서로를 못 본다.
  */
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+/*
+ * 창을 작게 연다.
+ *
+ * 이 검사만 큰 그림판을 여러 개 동시에 굴린다. GPU 없이 소프트웨어로 그리는
+ * 환경에서는 그 부담이 그대로 프레임 수로 나타나고, 뒤에 있는 창은 거의
+ * 멈춘다 — 그러면 회선이 멀쩡한데도 "안 따라온다"가 나온다.
+ * 회선을 보는 검사에 화면 크기는 아무 상관이 없으므로 작게 연다.
+ */
+const ctx = await browser.newContext({ viewport: { width: 640, height: 360 } });
 
 /*
  * 창은 쓸 때 하나씩 만든다.
@@ -372,58 +380,78 @@ try {
     );
 
   for (let slot = 1; slot < pages.length; slot++) {
-    /*
-     * 누르기 전에 그 캐릭터를 자유롭게 만든다.
+    /**
+     * 한 번 눌러 보고, 안 움직이면 자리를 깨끗이 만들어 한 번 더.
      *
-     * 확인하려는 것은 "그 창의 키가 그 캐릭터에 닿는가"이지 "지금 움직일 수
-     * 있는 상태인가"가 아니다. 직전까지 넷이 뒤엉켜 싸웠으므로 경직이나
-     * 공격 후딜에 걸려 있으면 눌러도 안 움직이고, 그건 회선 문제가 아니다.
+     * 확인하려는 것은 "그 창의 키가 그 캐릭터에 닿는가" 하나다. 그런데 판은
+     * 살아 움직이고 있어서 하필 그 순간 경직·잡힘·발판 끝 같은 사정이 겹치면
+     * 눌러도 안 움직인다 — 회선이 아니라 상황이다. 조건을 느슨하게 하는 대신
+     * **시작점만** 다시 잡는다. 두 번 다 안 움직이면 그건 진짜다.
      */
-    await host.evaluate((i) => {
-      const s = window.game.scene.getScene('Battle');
-      const f = s.fighters[i];
-      f.stunUntil = 0;
-      f.attackPhase = 'none';
-      f.setGuard(false);
-      f.body.setVelocity(0, 0);
-    }, slot);
-    await host.waitForTimeout(120);
+    const tryPush = async () => {
+      await host.evaluate((i) => {
+        const s = window.game.scene.getScene('Battle');
+        const f = s.fighters[i];
+        f.stunUntil = 0;
+        f.attackPhase = 'none';
+        f.grabPhase = 'none';
+        f.grabbedBy = null;
+        f.grabHoldUntil = 0;
+        s.fighters.forEach((o) => {
+          if (o.grabbing === f) o.grabbing = null;
+        });
+        f.setGuard(false);
+        /*
+         * 자리는 옮기지 않는다.
+         *
+         * 한때 "판 한가운데"라고 정한 좌표로 옮겼는데, 그 자리가 무대 밖이라
+         * 오히려 캐릭터를 장외로 떨어뜨렸다 — 확인하려던 것과 아무 상관 없는
+         * 이유로 죽여 놓고 "안 움직인다"고 적은 셈이다. 상태만 풀어 준다.
+         */
+        f.body.setVelocity(0, 0);
+      }, slot);
+      await host.waitForTimeout(400);
 
-    const before = await allX();
-    /*
-     * 누르는 창과 계산하는 창이 다르다.
-     *
-     * 키를 누르려면 참가자 창이 앞에 있어야 하는데, 판을 실제로 굴리는 것은
-     * 호스트 창이다. 참가자를 앞에 둔 채 기다리면 뒤에 있는 호스트가 프레임을
-     * 거의 안 돌려서, 입력은 다 도착했는데도 캐릭터가 13px 만 움직인다 —
-     * 회선이 아니라 **판이 멈춰 있던 것**이다.
-     *
-     * 누르는 것만 참가자 창에서 하고, 굴리는 동안에는 호스트를 앞에 둔다.
-     * 눌린 상태는 회선 너머에 그대로 남아 있으므로 계속 걷는다.
-     */
-    await focusPage(pages[slot]);
-    await pages[slot].keyboard.down('a');
-    await pages[slot].waitForTimeout(200);
-    await host.bringToFront();
-    await host.waitForTimeout(900);
-    const after = await allX();
-    await focusPage(pages[slot]);
-    await pages[slot].keyboard.up('a');
-    await host.bringToFront();
+      const before = await allX();
+      /*
+       * 누르는 창과 계산하는 창이 다르다.
+       *
+       * 키를 누르려면 참가자 창이 앞에 있어야 하는데, 판을 실제로 굴리는 것은
+       * 호스트 창이다. 참가자를 앞에 둔 채 기다리면 뒤에 있는 호스트가 프레임을
+       * 거의 안 돌려서, 입력은 다 도착했는데도 캐릭터가 몇 px 만 움직인다.
+       */
+      await focusPage(pages[slot]);
+      await pages[slot].keyboard.down('a');
+      await pages[slot].waitForTimeout(200);
+      await host.bringToFront();
+      await host.waitForTimeout(900);
+      const after = await allX();
+      await focusPage(pages[slot]);
+      await pages[slot].keyboard.up('a');
+      await host.bringToFront();
 
-    const moved = after.map((x, i) => Math.abs(x - before[i]));
-    if (moved[slot] < 20) {
-      const st = await host.evaluate(
-        () => window.game.scene.getScene('Battle').netStats,
-      );
+      return { before, after, moved: after.map((x, i) => Math.abs(x - before[i])) };
+    };
+
+    let r = await tryPush();
+    if (r.moved[slot] < 20) r = await tryPush();
+
+    if (r.moved[slot] < 20) {
+      const st = await host.evaluate(() => window.game.scene.getScene('Battle').netStats);
       errors.push(
         `[온라인] ${slot + 1}번 참가자가 눌러도 안 움직입니다 ` +
-          `(${before[slot]}→${after[slot]} · 받음 ${st.recv})`,
+          `(${r.before[slot]}→${r.after[slot]} · 받음 ${st.recv})`,
       );
     } else {
-      console.log(
-        `  ✓ ${slot + 1}번 참가자 입력이 자기 캐릭터에만 도착 — ${moved[slot].toFixed(0)}px`,
-      );
+      /* 남의 캐릭터가 따라 움직이면 그건 입력이 새는 것이다 */
+      const leaked = r.moved.filter((m, i) => i !== slot && m > 60).length;
+      if (leaked) {
+        errors.push(`[온라인] ${slot + 1}번 입력에 다른 캐릭터 ${leaked}명이 같이 움직였습니다`);
+      } else {
+        console.log(
+          `  ✓ ${slot + 1}번 참가자 입력이 자기 캐릭터에만 도착 — ${r.moved[slot].toFixed(0)}px`,
+        );
+      }
     }
   }
 

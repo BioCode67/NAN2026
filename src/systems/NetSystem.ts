@@ -62,6 +62,8 @@ export interface NetSnapshot {
   orb?: number[];
   /** 떨어져 있는 아이템들 [x, y, 종류번호] */
   item?: number[][];
+  /** 상장폐지된 사람들의 유령 [자리번호, x, 던질 수 있는가] */
+  gh?: number[][];
   /** 판이 끝났으면 이긴 자리 번호 (-1 = 전원 탈락) */
   over?: number;
 }

@@ -127,6 +127,15 @@ export class ItemSystem {
    * @param forced 지정하면 그 아이템으로 떨어뜨린다 (기믹용)
    * @param dropOffsetY 여러 개를 한꺼번에 뿌릴 때 높이를 벌리는 값
    */
+  /**
+   * 정해진 자리에 하나 떨어뜨린다.
+   *
+   * 탈락한 사람이 판에 던져 넣는 길이다 — 어디에 떨어질지는 그 사람이 정한다.
+   */
+  dropAt(x: number): void {
+    this.spawn(undefined, 0, x, -60);
+  }
+
   private spawn(forced?: ItemConfig, dropOffsetY = 0, atX?: number, atY?: number): void {
     const cfg = forced ?? rollItem(() => Phaser.Math.FloatBetween(0, 1));
 

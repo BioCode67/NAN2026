@@ -107,6 +107,23 @@ const HUD_PANEL_W = 296;
 const HUD_PANEL_H = 78;
 const HUD_GAP = 16;
 const HUD_Y = 624;
+
+/* ── 상장폐지된 사람 — 공매도 유령 ─────────────────────────────────
+ *
+ * 넷이 붙는 판에서 가장 먼저 떨어진 사람은 남은 1~2분을 구경만 한다.
+ * 그 시간이 이 게임에서 제일 재미없는 시간이고, 넷이 모여 노는 판에서는
+ * **한 사람이 빠지는 순간 판 전체의 분위기가 식는다.**
+ *
+ * 그래서 죽으면 판 위를 떠다니는 유령이 된다. 좌우로 움직이며 원하는
+ * 자리에 물건을 떨어뜨릴 수 있다 — 살아남은 사람을 도울 수도, 앞서가는
+ * 사람 머리 위에 폭탄을 떨어뜨릴 수도 있다. 이기지는 못하지만 판은 흔든다.
+ * 상장폐지된 사람이 공매도로 시장을 흔드는 그림이라 주제에도 맞는다.
+ */
+const GHOST_Y = 96;
+/** 유령이 좌우로 움직이는 속도 (px/초) */
+const GHOST_SPEED = 520;
+/** 물건을 떨어뜨린 뒤 다음까지 (ms) — 짧으면 살아 있는 사람이 못 논다 */
+const GHOST_COOLDOWN = 5200;
 /** 주가 진행바 길이 */
 const HUD_BAR_W = 186;
 
@@ -251,6 +268,9 @@ export class BattleScene extends Phaser.Scene {
   /** 사람이 나가 봇이 이어받은 자리들 */
   private takenOver = new Set<string>();
 
+  /** 상장폐지된 사람들의 유령 (자리 번호 → 상태) */
+  private ghosts = new Map<number, { x: number; readyAt: number; mark?: Phaser.GameObjects.Container }>();
+
   /** 전투가 실제로 시작된 시각 (0 = 아직) */
   private battleActiveSince = 0;
 
@@ -285,6 +305,7 @@ export class BattleScene extends Phaser.Scene {
     this.announceLabel = undefined;
     this.disposers = [];
     this.koOrder = [];
+    this.ghosts.clear();
     this.battleActiveSince = 0;
     this.rematching = false;
     this.takenOver.clear();
@@ -1087,6 +1108,19 @@ export class BattleScene extends Phaser.Scene {
     // 아이템도 — 안 보이면 상대가 왜 갑자기 세졌는지 알 수가 없다
     const items = this.items.snapshot();
     if (items.length) snap.item = items;
+    /*
+     * 유령도 보내야 한다.
+     *
+     * 참가자가 자기 유령을 각자 계산하면 "내가 여기 떨어뜨렸는데 저기 떨어졌다"가
+     * 된다. 물건이 떨어지는 자리는 호스트가 정하므로, 조준선도 호스트 것을 본다.
+     */
+    if (this.ghosts.size) {
+      snap.gh = [...this.ghosts].map(([slot, g]) => [
+        slot,
+        Math.round(g.x),
+        time >= g.readyAt ? 1 : 0,
+      ]);
+    }
     if (!this.battleActive) {
       const alive = this.fighters.findIndex((f) => f.alive);
       snap.over = alive;
@@ -1100,6 +1134,14 @@ export class BattleScene extends Phaser.Scene {
     // 늦게 도착한 옛 상태는 버린다 (되감기면 캐릭터가 뒤로 튄다)
     if (snap.n <= this.netSeq) return;
     this.netSeq = snap.n;
+
+    /* 유령 — 자리와 "던질 수 있는가"만 받는다 */
+    for (const [slot, x, ready] of snap.gh ?? []) {
+      const g = this.ghosts.get(slot!) ?? { x: x!, readyAt: 0 };
+      g.x = x!;
+      g.readyAt = ready ? 0 : Number.POSITIVE_INFINITY;
+      this.ghosts.set(slot!, g);
+    }
 
     snap.f.forEach((row, i) => {
       const f = this.fighters[i];
@@ -1295,6 +1337,99 @@ export class BattleScene extends Phaser.Scene {
     return `${i + 1}P`;
   }
 
+  /* ================================================================ */
+  /* 공매도 유령 — 상장폐지된 사람도 판에 개입한다                      */
+  /* ================================================================ */
+
+  /**
+   * 유령 한 명분 갱신 — 좌우 이동과 투하.
+   *
+   * 호스트에서만 실제로 물건이 떨어진다. 참가자 화면은 유령의 자리를
+   * 상태로 받아 그린다 — 각자 계산하면 "내가 여기 떨어뜨렸는데 저기 떨어졌다"가
+   * 되고, 그건 조작이 고장난 것으로 느껴진다.
+   */
+  private updateGhost(h: (typeof this.humans)[number]): void {
+    if (this.netRole === 'guest') return;
+
+    const frame = h.remote ? h.remote() : readKeyFrame(h.keys);
+    const g = this.ghostOf(h);
+    const dt = this.game.loop.delta / 1000;
+
+    if (frame.left) g.x -= GHOST_SPEED * dt;
+    if (frame.right) g.x += GHOST_SPEED * dt;
+    g.x = Phaser.Math.Clamp(g.x, STAGE.LEFT + 60, STAGE.RIGHT - 60);
+
+    const now = this.time.now;
+    if ((frame.tapLight || frame.tapHeavy) && now >= g.readyAt) {
+      g.readyAt = now + GHOST_COOLDOWN;
+      this.items.dropAt(g.x);
+      sound.play('surge');
+      this.announce(`${h.fighter.cfg.name}의 공매도!`, '#a78bfa', 700);
+    }
+  }
+
+  /** 이 사람의 유령 (없으면 죽은 자리에서 만든다) */
+  private ghostOf(h: (typeof this.humans)[number]): {
+    x: number;
+    readyAt: number;
+    mark?: Phaser.GameObjects.Container;
+  } {
+    const slot = h.slot ?? 0;
+    let g = this.ghosts.get(slot);
+    if (!g) {
+      g = { x: h.fighter.x, readyAt: this.time.now + 1200 };
+      this.ghosts.set(slot, g);
+      this.announce(
+        `${h.fighter.cfg.name} — 공매도 유령이 됐다  (← → 이동 · J 투하)`,
+        '#a78bfa',
+        2200,
+      );
+    }
+    return g;
+  }
+
+  /** 유령 표시를 그리고 옮긴다 (모든 화면에서 돈다) */
+  private drawGhosts(): void {
+    for (const [slot, g] of this.ghosts) {
+      /*
+       * 주인은 humans 가 아니라 fighters 에서 찾는다.
+       *
+       * 참가자 화면의 humans 에는 **자기 것 하나뿐**이라, humans 로 찾으면
+       * 남의 유령은 영영 안 그려진다. 사람은 자리 순서대로 먼저 만들어지므로
+       * 자리 번호가 곧 fighters 의 번호다 — 이 순서는 모든 화면에서 같다.
+       */
+      const owner = this.fighters[slot];
+      if (!owner) continue;
+
+      if (!g.mark) {
+        const accent = owner.cfg.colors.accent;
+        const body = this.add.circle(0, 0, 17, accent, 0.55);
+        const eye = this.add.circle(0, -3, 6, 0xffffff, 0.9);
+        const tag = this.add
+          .text(0, 24, `${slot + 1}P 유령`, {
+            fontFamily: GAME.FONT,
+            fontSize: '12px',
+            color: '#e8eeff',
+          })
+          .setOrigin(0.5);
+        g.mark = this.add.container(g.x, GHOST_Y, [body, eye, tag]).setDepth(DEPTH.OVERLAY - 1);
+
+        // 둥둥 떠 있다 — 살아 있는 캐릭터와 한눈에 구별되어야 한다
+        this.tweens.add({
+          targets: g.mark,
+          y: GHOST_Y + 10,
+          duration: 900,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+      g.mark.x = g.x;
+      // 다시 던질 수 있으면 또렷하게, 기다리는 중이면 흐리게
+      g.mark.setAlpha(this.time.now >= g.readyAt ? 1 : 0.45);
+    }
+  }
+
   /** AI가 노릴 대상 — 자기 자신을 제외한 가장 가까운 생존자 */
   private pickAiTarget(self: BaseCharacter): BaseCharacter | null {
     let best: BaseCharacter | null = null;
@@ -1396,6 +1531,16 @@ export class BattleScene extends Phaser.Scene {
   /** 사람이 조종하는 파이터 전부 — 각자 자기 입력원에서 한 프레임을 읽는다 */
   private handleAllInput(): void {
     for (const h of this.humans) {
+      /*
+       * 죽은 사람은 유령을 조종한다.
+       *
+       * humans 에서 빼지 않는 이유가 여기 있다 — 같은 입력이 살아 있을 때는
+       * 캐릭터를, 죽은 뒤에는 유령을 움직인다. 회선 경로도 그대로 쓴다.
+       */
+      if (!h.fighter.alive) {
+        this.updateGhost(h);
+        continue;
+      }
       /*
        * 입력을 "키보드를 읽는 일"과 "그 입력으로 무엇을 하는가"로 갈랐다.
        *
@@ -3295,6 +3440,7 @@ export class BattleScene extends Phaser.Scene {
     // 카메라가 정해진 뒤라야 "화면 밖"을 판단할 수 있다
     this.updateOffscreenMarkers();
     this.updateLeader();
+    this.drawGhosts();
 
     /*
      * 게스트는 판을 계산하지 않는다.

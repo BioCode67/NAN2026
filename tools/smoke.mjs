@@ -1245,6 +1245,106 @@ if (!board) {
 }
 
 /*
+ * 공매도 유령 — 상장폐지된 사람도 판에 개입한다.
+ *
+ * 넷이 붙는 판에서 가장 먼저 떨어진 사람은 남은 1~2분을 구경만 한다.
+ * 그 시간이 이 게임에서 제일 재미없는 시간이라 유령을 붙였다.
+ * 죽은 뒤에 좌우로 움직이고, 원하는 자리에 물건을 떨어뜨릴 수 있어야 한다.
+ */
+console.log('공매도 유령');
+{
+  /*
+   * 넷이 다 살아 있는 판에서 확인한다.
+   *
+   * 여기까지 오는 동안 봇들이 거의 죽어 있어서, 플레이어까지 떨어지면 판이
+   * 그대로 끝난다. 판이 끝나면 입력을 아예 안 읽으므로 유령도 안 움직인다 —
+   * 유령이 고장난 것이 아니라 확인할 상황이 아닌 것이다.
+   */
+  await restartRound();
+  await waitGrounded();
+
+  const ghost = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const me = s.player;
+
+    // 죽은 상태를 만든다 — 게임이 쓰는 장외 판정 그대로
+    me.setPosition(me.x, 3000);
+    for (let i = 0; i < 40 && me.alive; i++) await wait(100);
+    if (me.alive) return { why: '장외로 나갔는데 상장폐지되지 않았습니다' };
+
+    // 유령이 생겼는가 (첫 입력이 들어와야 만들어진다)
+    for (let i = 0; i < 20 && s.ghosts.size === 0; i++) await wait(100);
+    if (s.ghosts.size === 0) return { why: '죽었는데 유령이 안 생겼습니다' };
+
+    const g = [...s.ghosts.values()][0];
+    const x0 = g.x;
+
+    // 좌우로 움직이는가 — 키 대신 입력 한 프레임을 직접 넣는다
+    const h = s.humans.find((h) => !h.fighter.alive);
+    if (!h) return { why: '죽은 사람이 humans 에 없습니다' };
+    const held = h.keys;
+    return { x0, hasKeys: !!held, items0: s.items.snapshot().length, ok: true };
+  });
+
+  if (ghost.why) {
+    errors.push(`[유령] ${ghost.why}`);
+  } else {
+    /* 방향키로 실제로 움직이는가 */
+    await page.keyboard.down('d');
+    await page.waitForTimeout(700);
+    await page.keyboard.up('d');
+    await page.waitForTimeout(150);
+
+    const moved = await page.evaluate(
+      (x0) => {
+        const s = window.game.scene.getScene('Battle');
+        const g = [...s.ghosts.values()][0];
+        return Math.round(Math.abs(g.x - x0));
+      },
+      ghost.x0,
+    );
+
+    if (moved < 20) {
+      errors.push(`[유령] 방향키를 눌러도 유령이 안 움직입니다 (${moved}px)`);
+    } else {
+      console.log(`  ✓ 유령이 좌우로 움직인다 (${moved}px)`);
+    }
+
+    /* J 로 물건을 떨어뜨리는가 */
+    const before = await page.evaluate(
+      () => window.game.scene.getScene('Battle').items.snapshot().length,
+    );
+    await page.keyboard.press('j');
+    await page.waitForTimeout(700);
+    const after = await page.evaluate(
+      () => window.game.scene.getScene('Battle').items.snapshot().length,
+    );
+
+    if (after <= before) {
+      errors.push(`[유령] J 를 눌러도 물건이 안 떨어집니다 (${before}→${after})`);
+    } else {
+      console.log(`  ✓ 유령이 물건을 떨어뜨린다 (아이템 ${before} → ${after})`);
+    }
+
+    /* 쿨다운 — 연타해도 한 번만 */
+    await page.keyboard.press('j');
+    await page.waitForTimeout(400);
+    const spam = await page.evaluate(
+      () => window.game.scene.getScene('Battle').items.snapshot().length,
+    );
+    if (spam > after) {
+      errors.push('[유령] 연타로 물건이 계속 떨어집니다 — 살아 있는 사람이 못 놉니다');
+    } else {
+      console.log('  ✓ 연타해도 한 번만 (쿨다운)');
+    }
+  }
+  await shot('ghost');
+  await restartRound();
+  await waitGrounded();
+}
+
+/*
  * 이 판을 바꾼 말.
  *
  * 전적표는 어느 대전 게임에나 있고, 이 게임에만 있는 것은 "사람이 친 문장이
@@ -1667,6 +1767,18 @@ console.log('잡기');
       window.__savedAis = [];
     });
 
+  /*
+   * 플레이어가 살아 있어야 한다.
+   *
+   * 앞의 검사에서 일부러 떨어뜨린 뒤라 죽은 채로 들어올 수 있다. 죽은
+   * 캐릭터는 무엇을 눌러도 안 나가므로 "잡기가 안 된다"·"점프가 안 돌아온다"가
+   * 줄줄이 나오는데, 고장이 아니라 확인할 상황이 아닌 것이다.
+   */
+  if (!(await playerState())?.alive) {
+    await restartRound();
+    await waitGrounded();
+  }
+
   await freezeBots();
 
   /* --- U 키가 잡기로 이어지는가 ---------------------------------- */
@@ -1888,6 +2000,8 @@ console.log('잡기');
     const release = () => airborne.forEach((f) => f.body.setAllowGravity(true));
 
     try {
+    if (!p.alive) return { why: '플레이어가 상장폐지된 상태입니다' };
+
     for (let t = 0; t < 10; t++) {
       const foe = s.fighters.find((f) => f !== p && f.alive);
       if (!foe) return { why: '살아 있는 상대가 없습니다' };

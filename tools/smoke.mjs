@@ -1799,7 +1799,11 @@ console.log('참가자 화면 재현');
     f.playRemoteReaction('launch');
     const lean = f.lean.angle;
 
-    return { meters, fxCount, moveName, want: f.cfg.moves.heavy.name, lean };
+    /* 연타 카운터 — 호스트가 센 수 그대로 뜨는가 */
+    s.combat.playRemoteCombo(f, 5);
+    const combo = s.combat.getCombo(f.fighterId);
+
+    return { meters, fxCount, moveName, want: f.cfg.moves.heavy.name, lean, combo };
   });
   await releasePlayer();
 
@@ -1828,6 +1832,12 @@ console.log('참가자 화면 재현');
       errors.push(`[참가자] 피격 반응이 재생되지 않습니다 (기울기 ${guest.lean})`);
     } else {
       console.log(`  ✓ 피격 반응 — 떠오름 ${guest.lean}°`);
+    }
+
+    if (guest.combo !== 5) {
+      errors.push(`[참가자] 연타 카운터가 회선 값을 안 씁니다 (${guest.combo})`);
+    } else {
+      console.log('  ✓ 연타 카운터 — 호스트가 센 5 HIT 그대로');
     }
   }
   await shot('guest-replay');

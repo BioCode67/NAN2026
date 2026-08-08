@@ -358,6 +358,9 @@ export class BattleScene extends Phaser.Scene {
     this.netHits = [];
     this.netKos = [];
     this.remoteKillers = new Map();
+    // 씬 인스턴스는 재사용된다 — 앞 판의 파괴된 표시물을 들고 있으면 안 된다
+    this.killFeed = [];
+    this.netHealthText = undefined;
     this.leaderId = '';
     this.leaderAnnouncedAt = 0;
 
@@ -1080,6 +1083,9 @@ export class BattleScene extends Phaser.Scene {
             Math.max(0, HIT_REACTION_ORDER.indexOf(victim?.getHitReaction() ?? 'jab')),
             // 리듬 판정 번호 (-1 = 리듬 배틀 아님)
             this.netJudge,
+            // 연타 카운터 — 참가자 화면에도 "N HIT · 가즈아!"가 떠야 한다
+            this.fighters.indexOf(attacker ?? this.player),
+            this.combat.getCombo(e.attackerId),
           ]);
           this.netJudge = -1;
         }),
@@ -1245,10 +1251,50 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** 게스트 — 받은 모습을 그대로 그린다 */
+  /** 마지막 스냅샷이 도착한 시각 (참가자) — 회선 상태 표시가 본다 */
+  private lastSnapRecvAt = 0;
+  private netHealthText?: Phaser.GameObjects.Text;
+
+  /**
+   * 회선 상태 표시 (참가자 화면 오른쪽 위).
+   *
+   * 온라인에서 화면이 굳으면 사람은 자기 탓부터 한다 — "내가 뭘 잘못
+   * 눌렀나". 스냅샷이 끊긴 지 얼마나 됐는지를 화면이 말해 주면, 게임
+   * 문제와 회선 문제를 사람이 구별할 수 있다.
+   */
+  private updateNetHealth(time: number): void {
+    if (!this.netHealthText) {
+      this.netHealthText = this.add
+        .text(GAME.WIDTH - 14, 12, '', {
+          fontFamily: GAME.FONT,
+          fontSize: '13px',
+          fontStyle: 'bold',
+        })
+        .setOrigin(1, 0)
+        .setDepth(DEPTH.HUD + 1)
+        .setScrollFactor(0);
+      this.netHealthText.setStroke('#0b1020', 4);
+      this.lastSnapRecvAt = time;
+    }
+
+    const gap = time - this.lastSnapRecvAt;
+    if (gap < 400) {
+      // 정상 — 조용히 있는다. 초록 점을 계속 띄우면 그것도 소음이다
+      this.netHealthText.setText('');
+    } else if (gap < 2000) {
+      this.netHealthText.setText('📶 회선 지연…').setColor('#facc15');
+    } else {
+      this.netHealthText
+        .setText(`📶 연결이 끊긴 것 같습니다 (${Math.floor(gap / 1000)}초)`)
+        .setColor('#ef4444');
+    }
+  }
+
   private applySnapshot(snap: NetSnapshot): void {
     // 늦게 도착한 옛 상태는 버린다 (되감기면 캐릭터가 뒤로 튄다)
     if (snap.n <= this.netSeq) return;
     this.netSeq = snap.n;
+    this.lastSnapRecvAt = this.time.now;
 
     /* 유령 — 자리와 "던질 수 있는가"만 받는다 */
     for (const [slot, x, ready] of snap.gh ?? []) {
@@ -1329,6 +1375,8 @@ export class BattleScene extends Phaser.Scene {
       // 리듬 배틀 판정 — 호스트 시계로 판정된 것을 그대로 띄운다
       const judge = judgeAt(h[6] ?? -1);
       if (judge) this.rhythm.showJudge(h[0]!, h[1]!, judge);
+      // 연타 카운터 — 호스트가 센 수 그대로
+      this.combat.playRemoteCombo(this.fighters[h[7] ?? -1], h[8] ?? 0);
     }
     this.orbs.applyRemote(snap.orb, this.time.now);
     this.items.applyRemote(snap.item ?? []);
@@ -2065,6 +2113,55 @@ export class BattleScene extends Phaser.Scene {
    *     궁금한 것이 그거다. "상장폐지!"만으로는 내 공이었는지 알 수 없다.
    *  3. **남은 인원을 알린다** — 판이 어디까지 왔는지가 곧 긴장이다.
    */
+  /** 오른쪽 위에 쌓이는 격추 기록 */
+  private killFeed: Phaser.GameObjects.Text[] = [];
+
+  /**
+   * 킬 피드 — 누가 누구를 보냈는지가 화면 구석에 잠깐 남는다.
+   *
+   * 넷이 뒤엉킨 판에서는 가운데 배너를 놓치기 일쑤다. 놓친 사람도
+   * "아까 누가 누굴 보냈지?"를 구석에서 확인할 수 있어야 판의 흐름을
+   * 따라간다 — 난투 게임이 다들 이것을 두는 이유다.
+   */
+  private pushKillFeed(victim: BaseCharacter, killer: BaseCharacter | null): void {
+    const text = killer
+      ? `${killer.cfg.name}  ⚔  ${victim.cfg.name}`
+      : `${victim.cfg.name}  💥  자멸`;
+    const color = killer
+      ? `#${killer.cfg.colors.accent.toString(16).padStart(6, '0')}`
+      : '#ff8a8a';
+
+    const line = this.add
+      .text(GAME.WIDTH - 14, 36 + this.killFeed.length * 24, text, {
+        fontFamily: GAME.FONT,
+        fontSize: '14px',
+        color,
+        fontStyle: 'bold',
+      })
+      .setOrigin(1, 0)
+      .setDepth(DEPTH.HUD + 1)
+      .setScrollFactor(0)
+      .setAlpha(0);
+    line.setStroke('#0b1020', 4);
+
+    this.killFeed.push(line);
+    this.tweens.add({ targets: line, alpha: 1, x: '-=10', duration: 180 });
+    this.time.delayedCall(4200, () => {
+      this.tweens.add({
+        targets: line,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          line.destroy();
+          const at = this.killFeed.indexOf(line);
+          if (at >= 0) this.killFeed.splice(at, 1);
+          // 남은 줄을 위로 당긴다
+          this.killFeed.forEach((l, i) => (l.y = 36 + i * 24));
+        },
+      });
+    });
+  }
+
   private playKo(victim: BaseCharacter, killer: BaseCharacter | null): void {
     const left = this.fighters.filter((f) => f.alive).length;
 
@@ -2092,6 +2189,30 @@ export class BattleScene extends Phaser.Scene {
      * 가운데 배너만으로는 **어디서** 벌어진 일인지 안 보인다. 넷이 흩어져
      * 싸우는 판에서는 그 자리를 짚어 줘야 "저기서 터졌구나"가 된다.
      */
+    /*
+     * 카메라 펀치 — 상장폐지는 이 게임에서 가장 큰 사건이다.
+     * 흔들림만으로는 잦은 타격과 구별이 안 된다. 한 호흡 줌이 들어갔다
+     * 나오면 "방금 큰 일이 났다"가 몸으로 전달된다.
+     */
+    const cam = this.cameras.main;
+    this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 130,
+      yoyo: true,
+      hold: 90,
+      ease: 'Quad.easeOut',
+      onUpdate: (t) => {
+        if (!this.resultShown) cam.setZoom(1 + 0.09 * (t.getValue() as number));
+      },
+      onComplete: () => {
+        if (!this.resultShown) cam.setZoom(1);
+      },
+    });
+    cam.shake(200, 0.012);
+
+    this.pushKillFeed(victim, killer);
+
     const label = this.add
       .text(victim.x, victim.y - 40, killer ? `${killer.cfg.name} KO!` : 'KO!', {
         fontFamily: GAME.FONT,
@@ -3914,6 +4035,8 @@ export class BattleScene extends Phaser.Scene {
        */
       this.gimmicks.update(time, scaled);
       this.rhythm.update(time);
+      this.combat.updateRemoteLabels(time);
+      this.updateNetHealth(time);
       this.updateHud();
       return;
     }

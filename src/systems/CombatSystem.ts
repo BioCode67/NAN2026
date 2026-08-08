@@ -253,6 +253,29 @@ export class CombatSystem {
     });
   }
 
+  /**
+   * 참가자 화면의 연타 카운터 — 호스트가 센 수를 그대로 띄운다.
+   *
+   * 라벨 갱신·따라다니기·페이드는 전부 combos 맵을 보고 돌므로,
+   * 맵에 같은 값을 넣어 주면 나머지는 호스트와 같은 코드가 알아서 한다.
+   */
+  playRemoteCombo(attacker: BaseCharacter | undefined, count: number): void {
+    if (!attacker || count < 2) return;
+    this.combos.set(attacker.fighterId, {
+      count,
+      until: this.scene.time.now + COMBO_WINDOW,
+    });
+    this.showCombo(attacker, count);
+  }
+
+  /**
+   * 참가자 화면용 표시 갱신 — 판정 없이 라벨만 돌린다.
+   * (호스트는 update() 전체가 돌므로 부를 필요가 없다)
+   */
+  updateRemoteLabels(time: number): void {
+    this.tickCombos(time);
+  }
+
   /** 연타 카운터를 공격자 머리 위에 붙여 둔다 */
   private followComboLabels(): void {
     for (const [id, entry] of this.comboLabels) {

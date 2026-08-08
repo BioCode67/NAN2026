@@ -1,0 +1,17 @@
+{
+  "frameWidth": 176,
+  "frameHeight": 173,
+  "columns": 6,
+  "rows": 3,
+  "count": 18,
+  "batches": [
+    1,
+    3,
+    7
+  ],
+  "batchCounts": {
+    "1": 6,
+    "3": 6,
+    "7": 6
+  }
+}

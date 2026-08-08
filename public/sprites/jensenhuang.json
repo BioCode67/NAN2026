@@ -2,12 +2,14 @@
   "frameWidth": 261,
   "frameHeight": 256,
   "columns": 6,
-  "rows": 1,
-  "count": 6,
+  "rows": 2,
+  "count": 12,
   "batches": [
-    1
+    1,
+    7
   ],
   "batchCounts": {
-    "1": 6
+    "1": 6,
+    "7": 6
   }
 }

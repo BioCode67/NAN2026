@@ -1256,6 +1256,70 @@ if (!board) {
 }
 
 /*
+ * 공격 모션 — 눌렀을 때 몸이 실제로 움직이는가.
+ *
+ * 기술마다 "이만큼 늘어나고 이만큼 눌린다"를 정해 뒀는데 **한 번도 적용되지
+ * 않고 있었다.** 위치만 움직이니 찌르기든 내려찍기든 화면에서는 같은 동작으로
+ * 보였다 — 그림이 아니라 코드에서 죽어 있던 데이터다. 같은 일이 다시 나면
+ * 알아채려면 숫자로 봐야 한다.
+ */
+console.log('공격 모션');
+{
+  await restartRound();
+  await waitGrounded();
+
+  const motion = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const sp = p.view.sprite;
+    if (!sp) return { why: '도형 아트라 스프라이트가 없습니다' };
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const home = { x: sp.x, y: sp.y, sx: sp.scaleX, sy: sp.scaleY };
+
+    /* 선딜 — 뒤로 당기는가 */
+    p.attackPhase = 'none';
+    p.stunUntil = 0;
+    p.attack('heavy', 'neutral');
+    await wait(45);
+    const wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
+
+    /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
+    let out = { dx: 0, sx: 1, sy: 1 };
+    for (let i = 0; i < 30; i++) {
+      await wait(25);
+      if (sp.x - home.x > out.dx) {
+        out = { dx: sp.x - home.x, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
+      }
+    }
+    return { wind, out };
+  });
+
+  if (motion.why) {
+    console.log(`  · ${motion.why}`);
+  } else {
+    if (!(motion.wind.dx < -1)) {
+      errors.push(`[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(1)}px)`);
+    } else {
+      console.log(`  ✓ 예비동작 — 뒤로 ${(-motion.wind.dx).toFixed(0)}px 당긴다`);
+    }
+
+    if (motion.out.dx < 8) {
+      errors.push(`[모션] 공격해도 앞으로 안 나갑니다 (${motion.out.dx.toFixed(1)}px)`);
+    } else if (Math.abs(motion.out.sx - 1) < 0.02 && Math.abs(motion.out.sy - 1) < 0.02) {
+      errors.push(
+        `[모션] 늘어남·눌림이 적용되지 않았습니다 (가로 ${motion.out.sx.toFixed(3)} · 세로 ${motion.out.sy.toFixed(3)})`,
+      );
+    } else {
+      console.log(
+        `  ✓ 내지르기 — 앞으로 ${motion.out.dx.toFixed(0)}px · 가로 ×${motion.out.sx.toFixed(2)} · 세로 ×${motion.out.sy.toFixed(2)}`,
+      );
+    }
+  }
+  await shot('attack-motion');
+}
+
+/*
  * 공매도 유령 — 상장폐지된 사람도 판에 개입한다.
  *
  * 넷이 붙는 판에서 가장 먼저 떨어진 사람은 남은 1~2분을 구경만 한다.

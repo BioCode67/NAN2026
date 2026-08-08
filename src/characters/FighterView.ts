@@ -25,6 +25,15 @@ export interface FighterView {
   update(time: number, onGround: boolean): void;
   /** 공격 모션 트리거 — 기술마다 팔이 다르게 움직인다 */
   triggerAttack(atk: AttackConfig, durationMs: number): void;
+  /**
+   * 예비동작 — 내지르기 **전에** 살짝 뒤로 당긴다.
+   *
+   * 사람은 치기 전에 반드시 뒤로 당긴다. 그 한 순간이 없으면 주먹이
+   * "생겨나서 도착"하고, 아무리 빨라도 무게가 안 실린다. 반대로 당겼다
+   * 나가면 한 장짜리 그림도 세 장처럼 읽힌다 — 그림을 늘리지 않고
+   * 동작을 늘리는 가장 싼 방법이다.
+   */
+  triggerWindup(atk: AttackConfig, durationMs: number): void;
   /** 피격 흰색 점멸 */
   flash(): void;
   /** 상장폐지 — 회색으로 식는다 */
@@ -308,11 +317,21 @@ class SpriteView implements FighterView {
         onComplete: () => this.resetMotion(),
       });
     } else {
+      /*
+       * 늘어나고 눌리는 것까지 함께 움직인다.
+       *
+       * 기술마다 sx·sy 를 정해 뒀는데 **한 번도 쓰이지 않고 있었다** —
+       * 찌르기는 앞으로 늘어나고 내려찍기는 납작해져야 하는데, 위치만
+       * 움직이니 전부 같은 동작으로 보였다. "공격이 구분이 안 된다"의
+       * 절반이 여기서 나왔다.
+       */
       this.scene.tweens.add({
         targets: s,
         x: this.homeX + m.dx,
         y: this.homeY + m.dy,
         angle: m.angle,
+        scaleX: this.homeScaleX * m.sx,
+        scaleY: this.homeScaleY * m.sy,
         duration: out,
         ease: 'Quad.easeOut',
         onComplete: () => {
@@ -322,6 +341,8 @@ class SpriteView implements FighterView {
             x: this.homeX,
             y: this.homeY,
             angle: 0,
+            scaleX: this.homeScaleX,
+            scaleY: this.homeScaleY,
             duration: back,
             ease: 'Back.easeOut',
           });
@@ -399,6 +420,35 @@ class SpriteView implements FighterView {
         });
       });
     }
+  }
+
+  triggerWindup(atk: AttackConfig, durationMs: number): void {
+    const m = motionFor(atk);
+    if (m === NO_MOTION) return;
+
+    const s = this.sprite;
+    if (!s.active) return;
+
+    /*
+     * 당기는 폭은 내지르는 폭의 3할.
+     *
+     * 더 크게 당기면 예비동작이 공격처럼 보여서 상대가 헷갈리고, 더 작으면
+     * 안 보인다. 시간도 선딜 안에서 끝나야 한다 — 판정이 켜질 때는 이미
+     * 내지르는 중이어야 한다.
+     */
+    const pull = Math.min(180, Math.max(60, durationMs * 0.8));
+    this.scene.tweens.killTweensOf(s);
+    this.scene.tweens.add({
+      targets: s,
+      x: this.homeX - m.dx * 0.3,
+      y: this.homeY - m.dy * 0.2,
+      angle: -m.angle * 0.25,
+      // 힘을 모으는 동안에는 조금 눌린다
+      scaleX: this.homeScaleX * 1.03,
+      scaleY: this.homeScaleY * 0.95,
+      duration: pull,
+      ease: 'Sine.easeOut',
+    });
   }
 
   flash(): void {
@@ -523,6 +573,28 @@ class ShapeView implements FighterView {
       duration: Math.max(60, durationMs * 0.5),
       yoyo: true,
       ease: 'Quad.easeOut',
+    });
+  }
+
+  /**
+   * 예비동작 — 팔을 뒤로 당긴다.
+   *
+   * 도형 아트에도 똑같이 필요하다. 오히려 그림이 한 장도 없는 쪽이라
+   * 당겼다 나가는 것 말고는 "친다"를 보여줄 방법이 없다.
+   */
+  triggerWindup(atk: AttackConfig, durationMs: number): void {
+    const arm = this.art.armFront;
+    const targets: Phaser.GameObjects.GameObject[] = [arm];
+    const prop = this.art.handProp;
+    if (prop) targets.push(prop);
+
+    this.scene.tweens.killTweensOf(targets);
+    this.scene.tweens.add({
+      targets,
+      x: ARM_X - (atk.type === 'light' ? 7 : 11),
+      y: this.armHomeY - 3,
+      duration: Math.min(160, Math.max(55, durationMs * 0.8)),
+      ease: 'Sine.easeOut',
     });
   }
 

@@ -1320,6 +1320,70 @@ console.log('공격 모션');
 }
 
 /*
+ * 기술별 이펙트 — 눈으로 구분되는가.
+ *
+ * 찌르기·쳐올림·내려찍기·회전·베기가 각각 다른 모양으로 그려져야
+ * "여러 가지 공격을 하고 있다"가 전달된다. 모양은 스크린샷으로 단정하기
+ * 어려우므로 **몇 개가 어떤 굵기로 그려졌는지**를 센다 — 색 한 겹만 있던
+ * 것을 흰 심까지 두 겹으로 바꿨고, 타수가 오를수록 커지게 했다.
+ */
+console.log('기술별 이펙트');
+{
+  const fx = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    /*
+     * 개수 차이가 아니라 **새로 생긴 것**을 센다.
+     *
+     * 화면에는 타격 입자처럼 계속 생겼다 사라지는 도형이 있어서, 앞뒤 개수를
+     * 빼면 음수가 나오기도 한다. 부르기 전의 목록을 기억해 두고 그 뒤에
+     * 새로 들어온 것만 세면 정확하다.
+     */
+    const shapes = () =>
+      s.children.list.filter(
+        (o) => o.depth >= 20 && (o.type === 'Ellipse' || o.type === 'Arc'),
+      );
+
+    const out = {};
+    for (const slot of ['light', 'light3', 'heavy2', 'airHeavy']) {
+      const atk = p.cfg.moves[slot];
+      if (!atk) continue;
+      const seen = new Set(shapes());
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.spawnSwing(atk);
+      await wait(20);
+      out[slot] = { fx: atk.fx, shapes: shapes().filter((o) => !seen.has(o)).length };
+      await wait(420);
+    }
+    return out;
+  });
+
+  const kinds = new Set(Object.values(fx).map((v) => v.fx));
+  const drawn = Object.entries(fx).filter(([, v]) => v.shapes > 0);
+
+  if (drawn.length < Object.keys(fx).length) {
+    const missing = Object.entries(fx)
+      .filter(([, v]) => v.shapes === 0)
+      .map(([k]) => k);
+    errors.push(`[이펙트] 아무것도 안 그려진 기술이 있습니다 — ${missing.join(', ')}`);
+  } else if (kinds.size < 3) {
+    errors.push(`[이펙트] 기술이 달라도 같은 모양입니다 — ${[...kinds].join(', ')}`);
+  } else if (Object.values(fx).some((v) => v.shapes < 2)) {
+    errors.push(
+      `[이펙트] 흰 심이 안 그려졌습니다 (배경에 묻힙니다) — ${JSON.stringify(fx)}`,
+    );
+  } else {
+    console.log(
+      `  ✓ 기술마다 다른 이펙트 — ${Object.entries(fx)
+        .map(([k, v]) => `${k}:${v.fx}(${v.shapes}겹)`)
+        .join(' · ')}`,
+    );
+  }
+}
+
+/*
  * 공매도 유령 — 상장폐지된 사람도 판에 개입한다.
  *
  * 넷이 붙는 판에서 가장 먼저 떨어진 사람은 남은 1~2분을 구경만 한다.

@@ -2065,118 +2065,201 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const color = this.cfg.colors.accent;
     const ms = Math.max(120, atk.active);
 
+    /*
+     * 타수가 오를수록 커진다.
+     *
+     * 1타 · 2타 · 3타는 피해도 히트스톱도 이미 다르다. 그런데 화면에 그려지는
+     * 크기가 같으면 **연속기를 넣고 있다는 사실이 눈에 안 보인다.**
+     * 마무리 타가 눈에 띄게 커야 "세 번 쳤다"가 하나의 흐름으로 읽힌다.
+     */
+    const step = atk.chainStep ?? 1;
+    const power = atk.type === 'light' && step === 1 ? 0.92 : 1 + (step - 1) * 0.28;
+
+    /*
+     * 흰 심을 함께 그린다.
+     *
+     * 이펙트가 캐릭터 색 반투명 하나뿐이라, 배경이 화려한 무대에서는 그대로
+     * 묻혔다 — 모양은 서로 다른데 **눈에 안 들어와서** 다 같아 보였다.
+     * 안쪽에 흰 심을 겹치면 어느 배경에서도 형태가 먼저 읽히고,
+     * 바깥의 캐릭터 색이 누구의 기술인지를 말해 준다.
+     */
     switch (atk.fx ?? 'slash') {
       case 'thrust':
-        this.fxThrust(area, color, ms);
+        this.fxThrust(area, color, ms, power);
         break;
       case 'rising':
-        this.fxRising(area, color, ms);
+        this.fxRising(area, color, ms, power);
         break;
       case 'slam':
-        this.fxSlam(area, color, ms);
+        this.fxSlam(area, color, ms, power);
         break;
       case 'spin':
-        this.fxSpin(area, color, ms);
+        this.fxSpin(area, color, ms, power);
         break;
       default:
-        this.fxSlash(area, color, ms);
+        this.fxSlash(area, color, ms, power);
     }
+  }
+
+  /**
+   * 이펙트 한 겹 — 흰 심과 색 테두리를 같은 궤적으로 함께 움직인다.
+   *
+   * 두 겹을 각각 만들어 두 번 트윈하면 코드가 두 배가 되고 둘이 어긋난다.
+   * 만드는 곳을 하나로 모아 두면 어느 기술이든 같은 방식으로 밝아진다.
+   */
+  private fxLayers(
+    make: (fill: number, alpha: number, thin: boolean) => Phaser.GameObjects.Shape,
+    tween: (targets: Phaser.GameObjects.Shape[], ms: number) => void,
+    color: number,
+    ms: number,
+  ): void {
+    const outer = make(color, 0.62, false);
+    const core = make(0xffffff, 0.9, true);
+    outer.setDepth(DEPTH.IMPACT);
+    core.setDepth(DEPTH.IMPACT + 1);
+    tween([outer, core], ms);
   }
 
   /* --- 기술별 스윙 이펙트 ------------------------------------------ */
 
   /** 베기 — 앞으로 넓게 퍼지는 호 */
-  private fxSlash(a: HitArea, color: number, ms: number): void {
-    const swing = this.scene.add
-      .ellipse(a.cx, a.cy, a.w * 1.1, a.h * 0.9, color, 0.35)
-      .setDepth(DEPTH.IMPACT);
-
-    this.scene.tweens.add({
-      targets: swing,
-      scaleX: 1.4,
-      scaleY: 0.7,
-      alpha: 0,
-      duration: ms,
-      ease: 'Quad.easeOut',
-      onComplete: () => swing.destroy(),
-    });
-  }
-
-  /** 찌르기 — 가늘고 길게 뻗는 선 */
-  private fxThrust(a: HitArea, color: number, ms: number): void {
-    const line = this.scene.add
-      .ellipse(this.x + this.facing * 20, a.cy, a.w * 0.5, a.h * 0.34, color, 0.5)
-      .setDepth(DEPTH.IMPACT);
-
-    this.scene.tweens.add({
-      targets: line,
-      x: a.cx + this.facing * a.w * 0.2,
-      scaleX: 2.2,
-      alpha: 0,
-      duration: ms,
-      ease: 'Quad.easeOut',
-      onComplete: () => line.destroy(),
-    });
-  }
-
-  /** 쳐올림 — 위로 솟구치는 기둥 */
-  private fxRising(a: HitArea, color: number, ms: number): void {
-    const column = this.scene.add
-      .ellipse(a.cx, a.cy + a.h * 0.3, a.w * 0.7, a.h * 0.6, color, 0.42)
-      .setDepth(DEPTH.IMPACT);
-
-    this.scene.tweens.add({
-      targets: column,
-      y: a.cy - a.h * 0.35,
-      scaleX: 0.6,
-      scaleY: 1.6,
-      alpha: 0,
-      duration: ms * 1.1,
-      ease: 'Cubic.easeOut',
-      onComplete: () => column.destroy(),
-    });
-  }
-
-  /** 내려찍기 — 지면을 따라 좌우로 퍼지는 납작한 링 */
-  private fxSlam(a: HitArea, color: number, ms: number): void {
-    for (const dir of [-1, 1]) {
-      const wave = this.scene.add
-        .ellipse(this.x, a.cy + a.h * 0.3, a.w * 0.25, a.h * 0.5)
+  private fxSlash(a: HitArea, color: number, ms: number, power = 1): void {
+    /*
+     * 초승달로 그린다.
+     *
+     * 꽉 찬 타원은 "빛 덩어리"라 어느 방향으로 휘둘렀는지가 안 보인다.
+     * 테두리만 남기고 앞쪽으로 눕히면 궤적이 읽히고, 찌르기(직선)·
+     * 내려찍기(바닥 링)와 실루엣부터 갈린다.
+     */
+    for (const [stroke, width] of [
+      [color, 9 * power],
+      [0xffffff, 4 * power],
+    ] as const) {
+      const arc = this.scene.add
+        .ellipse(a.cx, a.cy, a.w * 0.95 * power, a.h * 1.05 * power)
         .setDepth(DEPTH.IMPACT);
-      wave.isFilled = false;
-      wave.setStrokeStyle(5, color, 0.9);
+      arc.isFilled = false;
+      arc.setStrokeStyle(width, stroke, 0.95);
+      arc.setAngle(this.facing * -18);
 
       this.scene.tweens.add({
-        targets: wave,
-        x: this.x + dir * a.w * 0.42,
-        scaleX: 2.6,
-        scaleY: 0.7,
+        targets: arc,
+        scaleX: 1.45,
+        scaleY: 0.62,
+        angle: this.facing * 22,
         alpha: 0,
-        duration: ms * 1.2,
-        ease: 'Cubic.easeOut',
-        onComplete: () => wave.destroy(),
+        duration: ms,
+        ease: 'Quad.easeOut',
+        onComplete: () => arc.destroy(),
       });
     }
   }
 
-  /** 회전 — 몸 주위를 도는 링 */
-  private fxSpin(a: HitArea, color: number, ms: number): void {
-    const ring = this.scene.add
-      .ellipse(this.x, this.y, a.w * 0.5, a.h * 0.5)
-      .setDepth(DEPTH.IMPACT);
-    ring.isFilled = false;
-    ring.setStrokeStyle(5, color, 0.85);
+  /** 찌르기 — 가늘고 길게 뻗는 선 */
+  private fxThrust(a: HitArea, color: number, ms: number, power = 1): void {
+    this.fxLayers(
+      (fill, alpha, thin) =>
+        this.scene.add.ellipse(
+          this.x + this.facing * 20,
+          a.cy,
+          a.w * 0.5 * power,
+          a.h * (thin ? 0.16 : 0.34) * power,
+          fill,
+          alpha,
+        ),
+      (targets, dur) =>
+        this.scene.tweens.add({
+          targets,
+          x: a.cx + this.facing * a.w * 0.2,
+          scaleX: 2.4,
+          alpha: 0,
+          duration: dur,
+          ease: 'Quad.easeOut',
+          onComplete: () => targets.forEach((t) => t.destroy()),
+        }),
+      color,
+      ms,
+    );
+  }
 
-    this.scene.tweens.add({
-      targets: ring,
-      scaleX: 2.2,
-      scaleY: 1.6,
-      angle: 180 * this.facing,
-      alpha: 0,
-      duration: ms,
-      ease: 'Quad.easeOut',
-      onComplete: () => ring.destroy(),
-    });
+  /** 쳐올림 — 위로 솟구치는 기둥 */
+  private fxRising(a: HitArea, color: number, ms: number, power = 1): void {
+    this.fxLayers(
+      (fill, alpha, thin) =>
+        this.scene.add.ellipse(
+          a.cx,
+          a.cy + a.h * 0.3,
+          a.w * (thin ? 0.34 : 0.7) * power,
+          a.h * 0.6 * power,
+          fill,
+          alpha,
+        ),
+      (targets, dur) =>
+        this.scene.tweens.add({
+          targets,
+          y: a.cy - a.h * 0.35,
+          scaleX: 0.6,
+          scaleY: 1.7,
+          alpha: 0,
+          duration: dur * 1.1,
+          ease: 'Cubic.easeOut',
+          onComplete: () => targets.forEach((t) => t.destroy()),
+        }),
+      color,
+      ms,
+    );
+  }
+
+  /** 내려찍기 — 지면을 따라 좌우로 퍼지는 납작한 링 */
+  private fxSlam(a: HitArea, color: number, ms: number, power = 1): void {
+    for (const dir of [-1, 1]) {
+      for (const [stroke, width, alpha] of [
+        [color, 6 * power, 0.95],
+        [0xffffff, 3 * power, 0.95],
+      ] as const) {
+        const wave = this.scene.add
+          .ellipse(this.x, a.cy + a.h * 0.3, a.w * 0.25 * power, a.h * 0.5 * power)
+          .setDepth(DEPTH.IMPACT);
+        wave.isFilled = false;
+        wave.setStrokeStyle(width, stroke, alpha);
+
+        this.scene.tweens.add({
+          targets: wave,
+          x: this.x + dir * a.w * 0.42,
+          scaleX: 2.8,
+          scaleY: 0.7,
+          alpha: 0,
+          duration: ms * 1.2,
+          ease: 'Cubic.easeOut',
+          onComplete: () => wave.destroy(),
+        });
+      }
+    }
+  }
+
+  /** 회전 — 몸 주위를 도는 링 */
+  private fxSpin(a: HitArea, color: number, ms: number, power = 1): void {
+    for (const [stroke, width] of [
+      [color, 7 * power],
+      [0xffffff, 3 * power],
+    ] as const) {
+      const ring = this.scene.add
+        .ellipse(this.x, this.y, a.w * 0.5 * power, a.h * 0.5 * power)
+        .setDepth(DEPTH.IMPACT);
+      ring.isFilled = false;
+      ring.setStrokeStyle(width, stroke, 0.95);
+
+      this.scene.tweens.add({
+        targets: ring,
+        scaleX: 2.3,
+        scaleY: 1.6,
+        angle: 180 * this.facing,
+        alpha: 0,
+        duration: ms,
+        ease: 'Quad.easeOut',
+        onComplete: () => ring.destroy(),
+      });
+    }
   }
 
   /**

@@ -78,6 +78,41 @@ const GRID = argv.includes('--grid') ? parseGrid(gridArg) : null;
 const bandArg = argv[argv.indexOf('--label-band') + 1];
 const [BAND_BOTTOM, BAND_TOP] = parseBand(bandArg);
 
+/**
+ * 쓸 칸만 골라내기 (--pick 1,2,3,4,5,8).
+ *
+ * ── 왜 필요한가 ──────────────────────────────────────────────────
+ * "6칸을 한 줄로" 라고 시켜도 생성기는 곧잘 다르게 그린다. 두 줄로 나누거나,
+ * 달리기를 신나서 다섯 장 그려 여덟 칸이 되거나. 그런데 **그 안에 필요한
+ * 여섯 개는 대개 다 들어 있다.**
+ *
+ * 다시 뽑으라고 하면 캐릭터 열다섯 명 × 세 묶음 = 마흔다섯 장을 매번
+ * 운에 맡기게 된다. 그림을 보고 쓸 칸을 골라 주는 편이 훨씬 싸다 —
+ * 번호는 왼쪽 위에서 오른쪽 아래로 1부터다.
+ *
+ * 고른 순서가 곧 나오는 순서다. 칸 순서가 뒤바뀐 시안도 --pick 으로 바로잡는다.
+ */
+/** 가장자리 배경색 번짐을 걷어낼까 (--defringe) */
+const DEFRINGE = argv.includes('--defringe');
+
+const pickArg = argv[argv.indexOf('--pick') + 1];
+const PICK = argv.includes('--pick') ? parsePick(pickArg) : null;
+
+/** 나올 시트의 가로 칸 수 (--cols 6). 안 주면 고른 개수만큼 한 줄로 */
+const colsArg = argv[argv.indexOf('--cols') + 1];
+const COLS = argv.includes('--cols') ? Number(colsArg) : null;
+
+function parsePick(text) {
+  const parts = String(text ?? '')
+    .split(',')
+    .map((v) => Number(v.trim()));
+  if (!parts.length || parts.some((v) => !Number.isInteger(v) || v < 1)) {
+    console.error('--pick 은 1부터 세는 칸 번호 목록입니다. 예: --pick 1,2,3,4,5,8');
+    process.exit(1);
+  }
+  return parts;
+}
+
 function parseBand(text) {
   if (!argv.includes('--label-band')) return [0, 0];
   const parts = String(text ?? '').split(',').map(Number);
@@ -99,7 +134,8 @@ function parseGrid(text) {
 
 if (!inPath || !outPath) {
   console.error(
-    '사용법: node tools/process-sheet.mjs <입력.png> <출력.png> [--grid 5x3] [--label-band 0.12]',
+    '사용법: node tools/process-sheet.mjs <입력.png> <출력.png> ' +
+      '[--grid 5x3] [--label-band 0.12] [--pick 1,2,3,4,5,8] [--cols 6] [--defringe]',
   );
   process.exit(1);
 }
@@ -469,6 +505,96 @@ if (!hasAlpha) {
   if (removed) console.log(`갇힌 체크무늬 제거: ${removed}px`);
 }
 
+/* --- 1.5 배경색 잔상 걷어내기 --------------------------------------- */
+
+/*
+ * 배경색이 캐릭터 가장자리에 번진 자리를 지운다.
+ *
+ * ── 무엇이 문제였나 ──────────────────────────────────────────────
+ * 생성기가 스피드선이나 모션 블러를 그리면 그 반투명한 부분이 배경(마젠타)과
+ * 섞여 "마젠타도 아니고 캐릭터도 아닌" 중간색이 된다. 색 거리로 재는 배경
+ * 판정은 이걸 배경으로 안 보고, **캐릭터 옆에 분홍 얼룩이 그대로 붙어
+ * 게임 화면에 나온다.**
+ *
+ * ── 왜 배경에 닿은 것만 지우는가 ─────────────────────────────────
+ * 처음에는 그림 전체에서 "배경색에 가까운 픽셀"을 지웠는데, 그건 캐릭터
+ * 안쪽의 진짜 색까지 먹었다 (분홍 옷을 입은 캐릭터가 뚫렸다).
+ * 번짐은 정의상 **배경과 맞닿은 가장자리**에서만 생긴다. 배경에 닿은 곳에서
+ * 안쪽으로 몇 겹만 갉아 들어가면, 얼룩은 사라지고 몸통은 건드리지 않는다.
+ *
+ * 회색 계열 배경(체크무늬)에는 적용하지 않는다 — 캐릭터의 회색 정장과
+ * 구별할 방법이 없어서, 지우려 들면 옷을 지운다.
+ *
+ * ── 왜 기본으로 켜지 않는가 ──────────────────────────────────────
+ * 먼저 만든 시트 다섯 장에는 이 규칙이 안 맞는다. 그때는 "캐릭터에 배경색을
+ * 쓰지 말 것"이라는 조건 없이 뽑았고, 실제로 배경색에 가까운 색이 옷과
+ * 이펙트에 들어 있다 — 켜 두면 멀쩡한 시트가 조각난다(13칸이 12칸이 됐다).
+ * 그래서 새 묶음 경로(merge-sheets)에서만 켠다.
+ */
+if (DEFRINGE && !hasAlpha) {
+  /** 채도가 뚜렷한 배경색만 대상 (마젠타 등) */
+  const vivid = tones.filter((t) => Math.max(...t) - Math.min(...t) > 60);
+  /** 가장자리에서 몇 겹까지 갉아 들어갈까 */
+  const FRINGE_ROUNDS = 6;
+
+  if (vivid.length) {
+    /** 이 픽셀이 배경색 쪽으로 치우쳐 있는가 */
+    const looksBg = (i) => {
+      const px = [data[i], data[i + 1], data[i + 2]];
+      return vivid.some((t) => {
+        // 배경에서 밝은 채널과 어두운 채널을 갈라 본다 (마젠타면 R·B / G)
+        const hi = px.filter((_, c) => t[c] > 140);
+        const lo = px.filter((_, c) => t[c] < 90);
+        if (hi.length < 2 || !lo.length) return false;
+        return Math.min(...hi) > 110 && Math.min(...hi) - Math.max(...lo) > 45;
+      });
+    };
+
+    let wiped = 0;
+    for (let round = 0; round < FRINGE_ROUNDS; round++) {
+      const eat = [];
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const p = y * W + x;
+          if (bg[p]) continue;
+          // 배경에 맞닿아 있는가
+          const touches =
+            (x > 0 && bg[p - 1]) ||
+            (x < W - 1 && bg[p + 1]) ||
+            (y > 0 && bg[p - W]) ||
+            (y < H - 1 && bg[p + W]);
+          if (!touches) continue;
+          if (looksBg(p * 4)) eat.push(p);
+        }
+      }
+      if (!eat.length) break;
+      for (const p of eat) bg[p] = 1;
+      wiped += eat.length;
+    }
+
+    /*
+     * 안쪽에 갇힌 얼룩도 지운다.
+     *
+     * 블러가 캐릭터 **위로** 겹쳐 그려지면 그 얼룩은 사방이 캐릭터라 가장자리
+     * 갉기로는 닿지 않는다. 실제로 날아가는 자세 칸에서 얼굴 위에 분홍 덩어리가
+     * 그대로 남았다.
+     *
+     * 이 경로(--defringe)로 들어오는 묶음은 "캐릭터에 배경색을 절대 쓰지 말 것"을
+     * 조건으로 뽑은 것들이다. 그러니 배경색 쪽으로 뚜렷하게 치우친 픽셀은
+     * 위치와 무관하게 전부 번짐이다.
+     */
+    let inner = 0;
+    for (let p = 0; p < W * H; p++) {
+      if (bg[p] || !looksBg(p * 4)) continue;
+      bg[p] = 1;
+      inner++;
+    }
+    wiped += inner;
+
+    if (wiped) console.log(`배경색 잔상 제거: ${wiped}px (안쪽 ${inner}px)`);
+  }
+}
+
 const bgCount = bg.reduce((a, v) => a + v, 0);
 console.log(`배경 픽셀: ${((bgCount / (W * H)) * 100).toFixed(1)}%`);
 
@@ -829,7 +955,25 @@ sprites.sort((a, b) => {
   return a.x0 - b.x0;
 });
 
-const frames = GRID ? sliceByGrid() : sprites;
+const found = GRID ? sliceByGrid() : sprites;
+
+/*
+ * 고른 칸만 남긴다.
+ *
+ * 번호가 실제 칸 수를 넘으면 조용히 빠지는 대신 멈춘다 — 한 칸이 조용히
+ * 빠지면 그 뒤 포즈가 전부 한 칸씩 밀리고, 그건 화면에서 "가만히 있는데
+ * 공격 자세가 나온다"로 나타난다. 찾기 매우 어렵다.
+ */
+if (PICK) {
+  const over = PICK.filter((n) => n > found.length);
+  if (over.length) {
+    console.error(
+      `--pick 에 없는 칸이 있습니다: ${over.join(', ')}번 (이 그림은 ${found.length}칸)`,
+    );
+    process.exit(1);
+  }
+}
+const frames = PICK ? PICK.map((n) => found[n - 1]) : found;
 
 /**
  * 격자를 알고 있을 때 — 칸마다 내용의 경계상자만 잡는다.
@@ -893,9 +1037,10 @@ function sliceByGrid() {
 
 console.log(
   GRID
-    ? `격자 지정 ${GRID.cols}x${GRID.rows} → 프레임 ${frames.length}개`
-    : `검출된 프레임: ${frames.length}개`,
+    ? `격자 지정 ${GRID.cols}x${GRID.rows} → 프레임 ${found.length}개`
+    : `검출된 프레임: ${found.length}개`,
 );
+if (PICK) console.log(`고른 칸: ${PICK.join(', ')} → ${frames.length}개`);
 frames.forEach((f, i) =>
   console.log(`  [${i}] ${f.x1-f.x0+1}x${f.y1-f.y0+1} @(${f.x0},${f.y0})`),
 );
@@ -909,7 +1054,13 @@ if (!frames.length) {
 
 const cellW = Math.max(...frames.map((f) => f.x1 - f.x0 + 1)) + PADDING * 2;
 const cellH = Math.max(...frames.map((f) => f.y1 - f.y0 + 1)) + PADDING * 2;
-const cols = GRID ? GRID.cols : Math.min(frames.length, 6);
+/*
+ * 나올 시트의 가로 칸 수.
+ *
+ * 고른 칸이 있으면 **고른 개수만큼 한 줄**로 낸다. 묶음 하나는 한 줄이
+ * 기본이고, 그래야 합치는 쪽(merge-sheets)이 6칸 묶음으로 읽는다.
+ */
+const cols = COLS ?? (PICK ? frames.length : GRID ? GRID.cols : Math.min(frames.length, 6));
 const rows = Math.ceil(frames.length / cols);
 
 const out = new PNG({ width: cellW * cols, height: cellH * rows });

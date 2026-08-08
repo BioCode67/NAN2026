@@ -37,9 +37,24 @@ const key = args.find((a) => !a.startsWith('--'));
 const colsArg = args.indexOf('--cols');
 const COLS = colsArg >= 0 ? Number(args[colsArg + 1]) : DEFAULT_COLS;
 
+/**
+ * 묶음 한 장을 어떤 격자로 자를 것인가 (--grid 6x1, 끄려면 --no-grid).
+ *
+ * ── 왜 기본으로 격자를 쓰는가 ────────────────────────────────────
+ * 자동 검출은 "덩어리를 찾아 칸으로 묶는" 방식이라 그림에 따라 무너진다.
+ * 실제로 워런 버피 묶음에서 6칸짜리가 3개·22개·4개로 잡혔다 — 이펙트가
+ * 옆 칸까지 번지면 두 칸이 한 덩어리가 되고, 반대로 지폐가 흩날리면
+ * 한 칸이 여러 덩어리로 부서진다.
+ *
+ * 그런데 **묶음은 정의상 6칸 한 줄**이다. 프롬프트에 그렇게 적어서 시켰다.
+ * 아는 것을 굳이 추측하게 두면 그림이 멀쩡한데도 포즈가 밀린다.
+ */
+const gridIdx = args.indexOf('--grid');
+const GRID = args.includes('--no-grid') ? null : gridIdx >= 0 ? args[gridIdx + 1] : '6x1';
+
 if (!key) {
   console.error(
-    '사용법: node tools/merge-sheets.mjs <key> [--cols 6]\n' +
+    '사용법: node tools/merge-sheets.mjs <key> [--cols 6] [--grid 6x1] [--no-grid]\n' +
       '  예: node tools/merge-sheets.mjs elonmusk\n' +
       '  입력 파일: art-source/<key>_b1.png, _b2.png, …',
   );
@@ -95,9 +110,24 @@ for (const f of inputs) {
   const out = `${TMP}/${key}_b${f.index}.png`;
   console.log(`\n[b${f.index}] 전처리…`);
 
-  const r = spawnSync(process.execPath, ['tools/process-sheet.mjs', f.path, out], {
-    stdio: 'inherit',
-  });
+  const r = spawnSync(
+    process.execPath,
+    [
+      'tools/process-sheet.mjs',
+      f.path,
+      out,
+      ...(GRID ? ['--grid', GRID] : []),
+      /*
+       * 가장자리 번짐 제거는 여기서만 켠다.
+       *
+       * 새 묶음은 "캐릭터에 배경색을 절대 쓰지 말 것"이라는 조건으로 뽑으므로,
+       * 배경색 쪽으로 치우친 가장자리는 정의상 전부 번짐이다.
+       * (먼저 만든 시트 다섯 장은 그 조건 없이 뽑아서 이 규칙이 안 맞는다)
+       */
+      '--defringe',
+    ],
+    { stdio: 'inherit' },
+  );
   if (r.status !== 0) {
     console.error(`b${f.index} 전처리에 실패했습니다.`);
     process.exit(1);

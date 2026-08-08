@@ -303,7 +303,7 @@ console.log('\n묶음 일부만 뽑은 시트');
   /* applyLayout 이 묶음 정보를 우선하는가 — 18칸을 V1(15칸)으로 오인하면 안 된다 */
   const def = { key: 'x', displayHeight: 100, poses: {} };
   const version = applyLayout(def, 18, [1, 3, 7]);
-  if (!version.startsWith('V3-부분')) fail(`18칸 + 묶음정보 → V3 부분이어야 하는데 ${version}`);
+  if (!version.startsWith('V4-부분')) fail(`18칸 + 묶음정보 → 부분 시트여야 하는데 ${version}`);
   if (def.poses.attackJ !== 6) fail(`18칸 시트의 attackJ 가 6번이어야 하는데 ${def.poses.attackJ}`);
 
   /* 묶음 정보와 칸 수가 안 맞으면 믿지 않고 프레임 수로 되돌아가야 한다 */

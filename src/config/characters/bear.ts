@@ -99,6 +99,18 @@ export const bear: CharacterConfig = {
       cry: '바닥까지 간다.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '공포 조장' },
+    lightBack: { name: '숏 커버링' },
+    heavyFwd: { name: '곰의 돌진' },
+    heavyBack: { name: '포지션 축소' },
+    dashSlide: { name: '하락 활강' },
+    airUp: { name: '반등 차단' },
+    airBack: { name: '뒷발톱' },
+
     skill: {
       name: '리먼 브라더스',
       damage: 27,

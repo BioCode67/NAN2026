@@ -1,6 +1,6 @@
 # 공매도 곰 — 스프라이트 프롬프트
 
-총 **42장**을 7개 묶음으로 나눠 뽑는다.
+총 **54장**을 9개 묶음으로 나눠 뽑는다.
 
 ## 순서
 
@@ -14,7 +14,7 @@
 art-source/shortseller_b1.png    (1번 묶음)
 art-source/shortseller_b2.png    (2번 묶음)
 ...
-art-source/shortseller_b7.png
+art-source/shortseller_b9.png
 ```
 
 4. 전처리 + 합치기는 한 줄로 끝난다.
@@ -34,6 +34,8 @@ npm run sheet:merge -- shortseller
 | 5 | `5-스킬 · 프롬프트.txt` | SKILL_CHARGE, SKILL_L, SKILL_L2, SKILL_FX, PROMPT_CAST, PROMPT_FX |
 | 6 | `6-아이템 · 도발.txt` | ITEM_GET, ITEM_HOLD, ITEM_THROW, ITEM_SWING, TAUNT, DOWN |
 | 7 | `7-피격 · 결과 · 초상.txt` | HIT, HIT_AIR, KNOCKBACK, WIN, LOSE, PORTRAIT |
+| 8 | `8-앞뒤 커맨드.txt` | ATTACK_J_FWD, ATTACK_J_BACK, ATTACK_K_FWD, ATTACK_K_BACK, DASH_SLIDE, AIR_UP |
+| 9 | `9-잡기 · 대기.txt` | GRAB, GRAB_HOLD, GRABBED, THROW, AIR_BACK, IDLE_B |
 
 ## 잘 안 나올 때
 

@@ -94,6 +94,18 @@ export const zuck: CharacterConfig = {
       cry: '그라운드로 가시죠.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '친구 요청 폭탄' },
+    lightBack: { name: '차단' },
+    heavyFwd: { name: '경쟁사 복제' },
+    heavyBack: { name: '계정 비활성화' },
+    dashSlide: { name: '뉴스피드 스크롤' },
+    airUp: { name: '아바타 부양' },
+    airBack: { name: '뒷광고' },
+
     skill: {
       name: '이용약관 동의',
       damage: 22,

@@ -135,6 +135,18 @@ export const jobs: CharacterConfig = {
       cry: '이제 399달러입니다.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '한 발 더' },
+    lightBack: { name: '프로토타입 회수' },
+    heavyFwd: { name: '유니바디 압착' },
+    heavyBack: { name: '리콜 통보' },
+    dashSlide: { name: '미끄러지는 인터페이스' },
+    airUp: { name: '공중 부양 발표' },
+    airBack: { name: '이어폰 잭 제거' },
+
     skill: {
       name: '스포트라이트 펀치',
       damage: 34,

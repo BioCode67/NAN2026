@@ -90,6 +90,18 @@ export const jensen: CharacterConfig = {
     airHeavy: { name: '그래픽카드 강타', damage: 18, startup: 116, range: 110 },
     airDive: { name: '재고 소진', damage: 21, startup: 84 },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '워프 스케줄링' },
+    lightBack: { name: '스로틀링' },
+    heavyFwd: { name: '데이터센터 증설' },
+    heavyBack: { name: '공급 조절' },
+    dashSlide: { name: '냉각 팬 활주' },
+    airUp: { name: '클럭 부스트' },
+    airBack: { name: '백플레이트 강타' },
+
     skill: {
       name: '지포스 나우',
       damage: 20,

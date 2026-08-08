@@ -173,6 +173,35 @@ function motionFor(atk: AttackConfig): Motion {
     return { dx: 28, dy: 2, angle: 20, sx: 1.16, sy: 0.94, ghosts: 5 };
   }
 
+  /*
+   * 앞·뒤 커맨드 — 몸이 가는 방향이 정반대다.
+   *
+   * 여기서 갈라 두지 않으면 앞으로 파고드는 기술과 빠지면서 내는 기술이
+   * 화면에서 똑같이 보인다. 커맨드를 나눈 이유가 통째로 사라지는 자리다.
+   * 뒤 기술은 **몸은 뒤로 가는데 판정은 앞에 남는다** — 그 어긋남이 곧
+   * 견제기라는 뜻이고, 잔상이 지나온 자리를 남겨 그것을 읽히게 한다.
+   */
+  if (atk.slot === 'lightFwd' || atk.slot === 'heavyFwd') {
+    return heavy
+      ? { dx: 30, dy: 0, angle: 22, sx: 1.2, sy: 0.94, ghosts: 4 }
+      : { dx: 20, dy: -2, angle: 14, sx: 1.14, sy: 0.98, ghosts: 2 };
+  }
+  if (atk.slot === 'lightBack' || atk.slot === 'heavyBack') {
+    return heavy
+      ? { dx: -22, dy: -6, angle: -20, sx: 1.16, sy: 1.04, ghosts: 4 }
+      : { dx: -14, dy: -4, angle: -14, sx: 1.1, sy: 1.02, ghosts: 2 };
+  }
+
+  /* 슬라이딩 — 바닥에 눕다시피 깔려 미끄러진다 */
+  if (atk.slot === 'dashSlide') {
+    return { dx: 34, dy: 20, angle: 62, sx: 1.24, sy: 0.72, ghosts: 6 };
+  }
+
+  /* 공중 뒤차기 — 등 뒤로 다리를 뻗는다 */
+  if (atk.slot === 'airBack') {
+    return { dx: -20, dy: 4, angle: -26, sx: 1.18, sy: 0.96, ghosts: 3 };
+  }
+
   /* 스킬 — 크게 젖혔다 내지른다 */
   if (atk.type === 'skill') {
     return { dx: 12, dy: -10, angle: -8, sx: 1.12, sy: 1.08, ghosts: 4 };

@@ -94,6 +94,18 @@ export const bull: CharacterConfig = {
       cry: '위로 갔다 아래로!',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '전진 뿔치기' },
+    lightBack: { name: '뒤로 가는 법' },
+    heavyFwd: { name: '정면 돌파' },
+    heavyBack: { name: '뒷발차기' },
+    dashSlide: { name: '흙먼지 활주' },
+    airUp: { name: '뿔 치켜올리기' },
+    airBack: { name: '공중 뒷발질' },
+
     skill: {
       name: '월스트리트',
       damage: 28,

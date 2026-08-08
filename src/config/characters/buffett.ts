@@ -97,6 +97,18 @@ export const buffett: CharacterConfig = {
       cry: '남들이 겁낼 때가 살 때다.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '저점 매수 진입' },
+    lightBack: { name: '현금 비중 확대' },
+    heavyFwd: { name: '경영권 인수' },
+    heavyBack: { name: '관망' },
+    dashSlide: { name: '안전 마진' },
+    airUp: { name: '주가 상승' },
+    airBack: { name: '연차 보고서' },
+
     skill: {
       name: '오마하의 현인',
       damage: 28,

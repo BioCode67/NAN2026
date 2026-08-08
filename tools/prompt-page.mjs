@@ -39,19 +39,25 @@ const fileName = (batch) => `${batch.id}묶음-${batch.title.replace(/[\s·]/g, 
 /* ------------------------------------------------------------------ */
 
 /**
- * 이 캐릭터가 끝낸 묶음 번호들.
+ * 이 캐릭터의 시트 상태.
  *
- * `batches` 가 없는 시트는 묶음을 나누기 전에 만든 옛 시트라 전부 끝난 것으로
- * 본다 — 실제로 15칸 시트 하나로 게임이 돌아가고 있다.
+ * ── 옛 시트를 "다 됐다"로 세지 않는다 ─────────────────────────────
+ * `batches` 가 없는 시트는 묶음을 나누기 전에 만든 15칸짜리다. 한동안 그것을
+ * "전부 끝남"으로 셌는데, 그러면 진행표에 다섯 명이 전부 초록으로 뜬다.
+ * 화면에는 그림이 나오니 거짓말은 아니지만, **앞으로 뽑아야 할 칸을 감춘다** —
+ * 진행표를 보는 이유가 바로 그것을 보려는 것인데.
+ *
+ * 그래서 따로 표시한다: 게임은 돌아가되, 묶음은 하나도 안 끝난 상태다.
  */
-function doneBatches(key) {
+function sheetState(key) {
   const path = `public/sprites/${key}.json`;
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return { done: [], legacy: false };
   try {
     const meta = JSON.parse(readFileSync(path, 'utf8'));
-    return Array.isArray(meta.batches) ? meta.batches : BATCHES.map((b) => b.id);
+    if (Array.isArray(meta.batches)) return { done: meta.batches, legacy: false };
+    return { done: [], legacy: true };
   } catch {
-    return [];
+    return { done: [], legacy: false };
   }
 }
 
@@ -124,9 +130,9 @@ function buildIndex(list) {
   const head = `| 캐릭터 | ${BATCHES.map((b) => b.id).join(' | ')} |`;
   const sep = `|---|${BATCHES.map(() => ':-:').join('|')}|`;
   const rows = list
-    .map(({ c, done }) => {
+    .map(({ c, done, legacy }) => {
       const cells = BATCHES.map((b) => (done.includes(b.id) ? '✅' : '·')).join(' | ');
-      return `| ${c.inGameName} | ${cells} |`;
+      return `| ${c.inGameName}${legacy ? ' ▨' : ''} | ${cells} |`;
     })
     .join('\n');
 
@@ -149,8 +155,16 @@ GitHub 웹에서 열면 회색 상자마다 복사 단추가 붙습니다. 휴�
 
 1묶음(이동)을 **모든 캐릭터에 대해 먼저** 끝내는 편이 낫습니다. 1묶음 결과가
 그 캐릭터의 기준 그림이 되고, 2묶음부터는 그것을 참조 이미지로 함께 넣어야
-같은 인물로 나옵니다. 그리고 게임에 넣었을 때 체감이 가장 크게 바뀌는 것이
-1(이동) → 3(지상 연속기) → 7(피격·결과·초상) 순서입니다.
+같은 인물로 나옵니다.
+
+그 다음은 **화면에 얼마나 자주 나오는가** 순서입니다:
+**1(이동) → 3(지상 연속기) → 8(앞뒤 커맨드) → 7(피격·결과·초상) → 4 → 2 → 9 → 5 → 6.**
+
+8묶음이 3묶음 바로 다음인 이유: 커맨드가 스물하나로 늘면서 **앞·뒤 기술이
+평상시 제일 많이 나가는 기술**이 됐습니다. 상대 쪽으로 걸으며 치면 앞 기술,
+빠지면서 치면 뒤 기술이라, 가만히 서서 치는 중립기보다 자주 나옵니다.
+그림이 없으면 그 자리에 기본 공격 그림이 대신 들어가서, 새로 늘린 기술이
+전부 같아 보입니다.
 
 | 묶음 | 남은 사람 | 이 묶음의 요령 |
 |---|---|---|
@@ -161,6 +175,10 @@ ${links}
 ${head}
 ${sep}
 ${rows}
+
+▨ 표시는 **묶음을 나누기 전에 만든 옛 15칸 시트**가 있다는 뜻입니다. 게임은
+그 그림으로 돌아가지만 새 묶음과는 자리가 다르므로, 1묶음부터 새로 뽑으면
+그 순간부터 새 그림으로 갈립니다 (게임 쪽은 손댈 것이 없습니다).
 
 ---
 
@@ -181,11 +199,10 @@ _이 문서는 \`npm run art:md\` 가 만듭니다. 손으로 고치지 마세�
 
 /* ------------------------------------------------------------------ */
 
-const list = Object.entries(CHARACTERS).map(([id, c]) => ({
-  id,
-  c,
-  done: doneBatches(c.key),
-}));
+const list = Object.entries(CHARACTERS).map(([id, c]) => {
+  const st = sheetState(c.key);
+  return { id, c, done: st.done, legacy: st.legacy };
+});
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });

@@ -65,6 +65,43 @@ console.log('명단 정합성');
 }
 
 /* ------------------------------------------------------------------ */
+/* 1.5 슬롯 목록이 게임과 어긋나지 않는가                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 검사 도구는 타입을 못 읽으므로 슬롯 목록을 따로 들고 있다. 그 목록이
+ * 뒤처지면 **새로 늘린 기술은 검사에서 아예 안 보인다** — 이름이 겹쳐도,
+ * 한 캐릭터만 빠뜨려도 조용히 통과한다. 실제로 커맨드를 열넷에서 스물하나로
+ * 늘렸을 때 검사는 "20명 모두 커맨드 14개"라고 초록불을 켰다.
+ *
+ * 그래서 타입 선언을 글자로 읽어 맞춰 본다. 목록이 둘인 것은 어쩔 수 없지만,
+ * 어긋난 채로 지나가는 것은 막을 수 있다.
+ */
+console.log('\n슬롯 목록');
+{
+  const src = readFileSync('src/types/index.ts', 'utf8');
+  const block = /export type MoveSlot =([\s\S]*?);\n/.exec(src)?.[1] ?? '';
+  const declared = [...block.matchAll(/\|\s*'([a-zA-Z0-9]+)'/g)].map((m) => m[1]);
+
+  const only = (a, b) => a.filter((x) => !b.includes(x));
+  const missingHere = only(declared, MOVE_SLOTS);
+  const extraHere = only(MOVE_SLOTS, declared);
+
+  if (!declared.length) {
+    fail('src/types/index.ts 에서 MoveSlot 을 못 읽었습니다');
+  } else if (missingHere.length || extraHere.length) {
+    if (missingHere.length) {
+      fail(`tools/roster-source.mjs 에 빠진 슬롯: ${missingHere.join(', ')}`);
+    }
+    if (extraHere.length) {
+      fail(`tools/roster-source.mjs 에만 있는 슬롯: ${extraHere.join(', ')}`);
+    }
+  } else {
+    pass(`MoveSlot ${declared.length}개 — 타입과 검사 도구가 같은 목록을 봅니다`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 2. 캐릭터마다 빠진 것이 없는가                                       */
 /* ------------------------------------------------------------------ */
 

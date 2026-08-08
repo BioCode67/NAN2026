@@ -143,6 +143,18 @@ export const musk: CharacterConfig = {
       cry: '재진입 시작!',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '인수 제안' },
+    lightBack: { name: '트윗 삭제' },
+    heavyFwd: { name: '사이버트럭 돌진' },
+    heavyBack: { name: '궤도 이탈' },
+    dashSlide: { name: '터널 굴착' },
+    airUp: { name: '중력 탈출' },
+    airBack: { name: '역추진' },
+
     skill: {
       name: '로켓 드롭',
       damage: 28,

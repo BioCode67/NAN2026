@@ -474,6 +474,62 @@ export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
     shake: 0.008,
   },
 
+
+  /**
+   * 앞+J — 파고들며 찌른다.
+   *
+   * 상대 쪽으로 누르며 치는 기술이라 **거리를 좁히면서 나가야** 의미가 있다.
+   * 리치는 짧지만 lunge 로 몸이 따라 들어가므로, 도망가는 상대를 붙잡는
+   * 용도가 된다. 대신 넉백이 작아 붙은 거리를 스스로 다시 벌리지 않는다.
+   */
+  lightFwd: {
+    type: 'light',
+    slot: 'lightFwd',
+    name: '전진 찌르기',
+    damage: 10,
+    startup: 86,
+    active: 96,
+    recovery: 196,
+    range: 70,
+    hitHeight: 78,
+    hitAnchor: 'front',
+    fx: 'thrust',
+    lunge: 260,
+    knockbackX: 190,
+    knockbackY: -120,
+    hitstun: 230,
+    hitstop: 75,
+    shake: 0.009,
+  },
+
+  /**
+   * 뒤+J — 빠지면서 앞을 긁는다.
+   *
+   * 몸은 뒤로 물러나는데 판정은 앞에 남는 견제기다. 몰릴 때 숨 쉴 구멍이
+   * 있어야 붙어서 두들기는 쪽도 함부로 들어오지 못한다 — 방어와 회피만으로는
+   * "그 자리에서 깨질 때까지 맞는" 상황이 계속 나온다.
+   */
+  lightBack: {
+    type: 'light',
+    slot: 'lightBack',
+    name: '물러서며 긁기',
+    damage: 8,
+    startup: 74,
+    active: 84,
+    recovery: 210,
+    range: 86,
+    hitHeight: 88,
+    hitAnchor: 'front',
+    fx: 'slash',
+    // 스스로 뒤로 빠진다 (음수 lunge)
+    lunge: -300,
+    knockbackX: 260,
+    knockbackY: -140,
+    hitstun: 220,
+    hitstop: 70,
+    shake: 0.008,
+  },
+
   /* --- 지상 강공격 계열 ------------------------------------------ */
 
   /**
@@ -593,6 +649,87 @@ export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
     shake: 0.018,
   },
 
+
+  /**
+   * 앞+K — 몸을 실어 밀어붙인다.
+   *
+   * 이 게임에서 가장 멀리 파고드는 지상기. 느린 대신 맞으면 상대가 크게
+   * 날아가므로, 장외로 밀어내는 마무리 수단이 된다.
+   */
+  heavyFwd: {
+    type: 'heavy',
+    slot: 'heavyFwd',
+    name: '몸통 밀어붙이기',
+    damage: 20,
+    startup: 178,
+    active: 112,
+    recovery: 300,
+    range: 96,
+    hitHeight: 96,
+    hitAnchor: 'front',
+    fx: 'thrust',
+    lunge: 520,
+    knockbackX: 620,
+    knockbackY: -240,
+    hitstun: 320,
+    hitstop: 95,
+    shake: 0.013,
+  },
+
+  /**
+   * 뒤+K — 거리를 벌리며 크게 후린다.
+   *
+   * 물러나면서 내는 큰 기술이라 헛치면 크게 굳는다. 대신 들어오는 상대를
+   * 정확히 맞히면 그대로 다시 멀어진다 — 도망 다니며 싸우는 선택지가
+   * 성립하려면 이런 것이 하나는 있어야 한다.
+   */
+  heavyBack: {
+    type: 'heavy',
+    slot: 'heavyBack',
+    name: '거리 벌리기',
+    damage: 18,
+    startup: 168,
+    active: 104,
+    recovery: 330,
+    range: 108,
+    hitHeight: 92,
+    hitAnchor: 'front',
+    fx: 'slash',
+    lunge: -420,
+    knockbackX: 560,
+    knockbackY: -300,
+    hitstun: 330,
+    hitstop: 92,
+    shake: 0.012,
+  },
+
+  /**
+   * 대시 중 K — 미끄러지며 발밑을 쓸어버린다.
+   *
+   * 같은 대시에서 J 는 어깨로 들이받고(dashAttack) K 는 미끄러진다.
+   * 하나뿐이던 돌진기가 둘로 갈리고, 낮게 깔리는 판정이라 서서 막는
+   * 상대에게 통한다.
+   */
+  dashSlide: {
+    type: 'heavy',
+    slot: 'dashSlide',
+    name: '슬라이딩',
+    damage: 15,
+    startup: 96,
+    active: 130,
+    recovery: 300,
+    range: 118,
+    hitHeight: 44,
+    hitAnchor: 'down',
+    fx: 'slash',
+    lunge: 700,
+    knockbackX: 380,
+    knockbackY: -160,
+    hitstun: 300,
+    hitstop: 85,
+    shake: 0.011,
+  },
+
   /* --- 공중 --------------------------------------------------------- */
 
   /** 공중 J — 빠른 견제. 착지 전에 한 번 더 끼워 넣는 용도 */
@@ -665,6 +802,58 @@ export const MOVE_TEMPLATES: Record<MoveSlot, AttackConfig> = {
     },
   },
 
+
+  /**
+   * 공중 W + J/K — 머리 위를 걷어 올린다.
+   *
+   * 공중전이 "지나가며 한 번 치기"에서 벗어나려면 **위를 치는 수단**이
+   * 있어야 한다. 나보다 높이 뜬 상대를 계속 쫓아 올라가며 이어칠 수 있고,
+   * 2단 점프와 짝지으면 공중 연속기가 성립한다.
+   */
+  airUp: {
+    type: 'light',
+    slot: 'airUp',
+    name: '공중 올려차기',
+    damage: 11,
+    startup: 66,
+    active: 108,
+    recovery: 150,
+    range: 62,
+    hitHeight: 128,
+    hitAnchor: 'up',
+    fx: 'rising',
+    knockbackX: 140,
+    knockbackY: -560,
+    hitstun: 320,
+    hitstop: 82,
+    shake: 0.011,
+  },
+
+  /**
+   * 공중 뒤 + J/K — 뒤쫓아 온 상대를 걷어찬다.
+   *
+   * 도망치며 뛰는 동안 뒤가 완전히 무방비였다. 뒤로 내는 판정 하나가
+   * 붙으면 쫓는 쪽도 생각할 것이 생긴다.
+   */
+  airBack: {
+    type: 'heavy',
+    slot: 'airBack',
+    name: '공중 뒤차기',
+    damage: 15,
+    startup: 92,
+    active: 116,
+    recovery: 180,
+    range: 88,
+    hitHeight: 84,
+    hitAnchor: 'front',
+    fx: 'slash',
+    knockbackX: 520,
+    knockbackY: -260,
+    hitstun: 340,
+    hitstop: 95,
+    shake: 0.013,
+  },
+
   /* --- 시그니처 스킬 ------------------------------------------------ */
 
   /** L — 캐릭터마다 완전히 다르므로 템플릿은 뼈대만 준다 */
@@ -695,13 +884,20 @@ export const MOVE_COMMANDS: Array<{ slot: MoveSlot; keys: string }> = [
   { slot: 'light', keys: 'J' },
   { slot: 'lightUp', keys: 'W+J' },
   { slot: 'lightDown', keys: 'S+J' },
+  { slot: 'lightFwd', keys: '앞+J' },
+  { slot: 'lightBack', keys: '뒤+J' },
   { slot: 'heavy', keys: 'K' },
-  { slot: 'dashAttack', keys: '대시 중 J/K' },
   { slot: 'heavyUp', keys: 'W+K' },
   { slot: 'heavyDown', keys: 'S+K' },
+  { slot: 'heavyFwd', keys: '앞+K' },
+  { slot: 'heavyBack', keys: '뒤+K' },
+  { slot: 'dashAttack', keys: '대시 중 J' },
+  { slot: 'dashSlide', keys: '대시 중 K' },
   { slot: 'airLight', keys: '공중 J' },
   { slot: 'airHeavy', keys: '공중 K' },
-  { slot: 'airDive', keys: '공중 S+K' },
+  { slot: 'airUp', keys: '공중 W+J/K' },
+  { slot: 'airBack', keys: '공중 뒤+J/K' },
+  { slot: 'airDive', keys: '공중 S+J/K' },
   { slot: 'skill', keys: 'L' },
 ];
 
@@ -769,18 +965,30 @@ export function resolveMoveSlot(
   dashing = false,
 ): MoveSlot {
   if (!onGround) {
+    /*
+     * 공중에서 방향을 섞으면 약·강을 가리지 않고 같은 기술로 모은다.
+     * 공중은 이미 발판이 없어 불안한 곳이라, 여기서까지 여덟 갈래로 나누면
+     * 무엇을 냈는지 스스로도 모르게 된다. 위·아래·뒤 셋만 갈라 둔다.
+     */
     if (dir === 'down') return 'airDive';
+    if (dir === 'up') return 'airUp';
+    if (dir === 'back') return 'airBack';
     return intent === 'light' ? 'airLight' : 'airHeavy';
   }
   /*
-   * 대시 중에는 방향과 무관하게 돌진 공격이 나간다.
+   * 대시 중에는 위·아래를 눌러도 돌진기가 나간다.
    * 대시하면서 방향키를 함께 잡고 있는 일이 잦은데, 그때마다 상단기가 나가면
    * "달려가서 쳤는데 엉뚱한 게 나온다"가 된다.
+   *
+   * 다만 J 와 K 는 가른다 — 어깨로 들이받는 것과 미끄러져 발밑을 쓰는 것은
+   * 쓰임이 전혀 다르고, 달리는 중에도 그 둘은 구별해서 내고 싶다.
    */
-  if (dashing) return 'dashAttack';
+  if (dashing) return intent === 'light' ? 'dashAttack' : 'dashSlide';
 
   if (dir === 'up') return intent === 'light' ? 'lightUp' : 'heavyUp';
   if (dir === 'down') return intent === 'light' ? 'lightDown' : 'heavyDown';
+  if (dir === 'forward') return intent === 'light' ? 'lightFwd' : 'heavyFwd';
+  if (dir === 'back') return intent === 'light' ? 'lightBack' : 'heavyBack';
   return intent;
 }
 

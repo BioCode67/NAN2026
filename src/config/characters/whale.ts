@@ -111,6 +111,18 @@ export const whale: CharacterConfig = {
       cry: '비켜.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '지느러미 밀기' },
+    lightBack: { name: '잠수 후퇴' },
+    heavyFwd: { name: '고래 돌진' },
+    heavyBack: { name: '물살 가르기' },
+    dashSlide: { name: '수면 활주' },
+    airUp: { name: '분수 뿜기' },
+    airBack: { name: '등지느러미 강타' },
+
     skill: {
       name: '고래가 움직인다',
       damage: 31,

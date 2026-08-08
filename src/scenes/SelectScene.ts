@@ -849,7 +849,8 @@ export class SelectScene extends Phaser.Scene {
     }));
     const half = Math.ceil(rows.length / 2);
     const TOP = 330;
-    const ROW_H = 34;
+    // 커맨드가 스물하나로 늘면서 한 단이 열 줄이 됐다 — 줄 간격을 좁혀 담는다
+    const ROW_H = 30;
 
     parts.push(
       this.add
@@ -1000,8 +1001,8 @@ export class SelectScene extends Phaser.Scene {
      * 버튼의 쓰임이 늘어난 것이라, 연속기 바로 밑에 붙여야 그렇게 읽힌다.
      */
     const branches =
-      `J J ↑J ${cfg.moves.lightUp.name} · ↓J ${cfg.moves.lightDown.name}` +
-      `      K ↑K ${cfg.moves.heavyUp.name} · ↓K ${cfg.moves.heavyDown.name}`;
+      `J J 다음에 ↑ ${cfg.moves.lightUp.name} · ↓ ${cfg.moves.lightDown.name}` +
+      ` · 앞 ${cfg.moves.lightFwd.name} · 뒤 ${cfg.moves.lightBack.name}`;
 
     // 스킬은 위 줄에서 이미 설명했으므로 커맨드 목록에서는 뺀다
     this.movesText.setText(

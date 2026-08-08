@@ -568,6 +568,16 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.view.setPose(pose);
   }
 
+  /**
+   * 지정한 쪽을 바라본다.
+   *
+   * 뒤로 빠지며 내는 기술에 쓴다 — 뒤로 걸으면 바라보는 방향이 따라 돌아
+   * 등을 보인 채로 치게 되고, 판정이 상대 반대쪽에 생긴다.
+   */
+  faceToward(dir: -1 | 1): void {
+    this.setFacing(dir);
+  }
+
   /** 회피 중인가 — 이동·공격을 막는 데 쓴다 */
   isDodging(): boolean {
     return this.scene.time.now < this.dodgeUntil;

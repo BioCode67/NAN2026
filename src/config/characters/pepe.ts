@@ -144,6 +144,18 @@ export const pepe: CharacterConfig = {
       cry: '너도 떠내려갈 거야.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '다가오는 광대' },
+    lightBack: { name: '하수구로 후퇴' },
+    heavyFwd: { name: '풍선 다발 돌진' },
+    heavyBack: { name: '웃으며 물러나기' },
+    dashSlide: { name: '미끄러운 하수구' },
+    airUp: { name: '풍선 상승' },
+    airBack: { name: '뒤통수 광대' },
+
     skill: {
       name: '리츠고!',
       damage: 24,

@@ -14,7 +14,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const DIR = 'src/config/characters';
 
-/** 커맨드 슬롯 14개 — 하나라도 빠지면 그 캐릭터는 그 기술을 못 쓴다 */
+/**
+ * 커맨드 슬롯 — 하나라도 빠지면 그 캐릭터는 그 기술을 못 쓴다.
+ *
+ * src/types 의 MoveSlot 과 같은 목록이어야 한다. 여기가 뒤처지면 새로 늘린
+ * 기술은 **검사에서 아예 안 보인다** — 이름이 겹쳐도, 한 캐릭터만 빠뜨려도
+ * 통과한다. 슬롯을 늘릴 때 같이 고쳐야 하는 자리다.
+ */
 export const MOVE_SLOTS = [
   'light',
   'light2',
@@ -22,12 +28,19 @@ export const MOVE_SLOTS = [
   'heavy',
   'heavy2',
   'dashAttack',
+  'dashSlide',
   'lightUp',
   'lightDown',
+  'lightFwd',
+  'lightBack',
   'heavyUp',
   'heavyDown',
+  'heavyFwd',
+  'heavyBack',
   'airLight',
   'airHeavy',
+  'airUp',
+  'airBack',
   'airDive',
   'skill',
 ];

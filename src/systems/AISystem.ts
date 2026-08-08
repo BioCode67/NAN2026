@@ -278,7 +278,7 @@ export class AISystem {
 
         if (this.attackCooldown <= 0) {
           // 막고 선 상대는 때려서 못 뚫는다 — 잡아야 한다
-          if (!this.tryGrab(target, time)) this.swing(dy);
+          if (!this.tryGrab(target, time)) this.swing(dy, Math.abs(target.x - this.self.x));
         }
         break;
       }
@@ -355,7 +355,7 @@ export class AISystem {
    * 링크마다 정확한 타이밍을 계산하지는 않는다 — 판정 중에 누르면 선입력으로
    * 쌓이고, 끝난 직후에 누르면 여운으로 이어지므로 대충 눌러도 성립한다.
    */
-  private swing(dy: number): void {
+  private swing(dy: number, gap: number): void {
     // 막은 채로는 못 친다
     this.releaseGuard();
 
@@ -374,7 +374,7 @@ export class AISystem {
       Phaser.Math.FloatBetween(0, 1) < this.difficulty.heavyRatio
         ? 'heavy'
         : 'light';
-    const atkDir = this.pickAttackDir(dy);
+    const atkDir = this.pickAttackDir(dy, gap);
 
     // 실제로 나갈 기술을 먼저 물어봐야 딜레이를 정확히 잴 수 있다
     const atk = this.self.resolveMove(intent, atkDir);
@@ -402,20 +402,37 @@ export class AISystem {
    *
    * @param dy 상대 Y - 자기 Y (음수면 상대가 위에 있다)
    */
-  private pickAttackDir(dy: number): AttackDir {
+  private pickAttackDir(dy: number, gap: number): AttackDir {
     const onGround =
       this.self.body.blocked.down || this.self.body.touching.down;
 
-    // 공중에서 상대가 아래에 있으면 급강하 찍기로 마무리를 노린다
-    if (!onGround) return dy > 40 ? 'down' : 'neutral';
+    if (!onGround) {
+      // 공중에서 상대가 아래에 있으면 급강하 찍기로 마무리를 노린다
+      if (dy > 40) return 'down';
+      // 위에 있으면 올려차기로 쫓아 올라간다
+      if (dy < -50) return 'up';
+      return Phaser.Math.FloatBetween(0, 1) < 0.2 ? 'back' : 'neutral';
+    }
 
     // 상대가 머리 위에 있으면 상단기로 쳐올린다
     if (dy < -70) return 'up';
 
-    // 그 외에는 중립기 위주로 두고 가끔 하단기를 섞는다
+    /*
+     * 거리로 앞·뒤를 고른다.
+     *
+     * 봇이 방향을 섞지 않으면 커맨드를 스물하나로 늘린 의미가 플레이어
+     * 쪽에만 남는다. 맞는 쪽에서도 "이 녀석이 여러 가지를 한다"가 느껴져야
+     * 기술이 늘었다는 것이 전달된다. 무작위로 뿌리지 않고 **거리에 맞춰**
+     * 고르는 것이 중요하다 — 붙어 있는데 파고드는 기술을 내면 헛치고,
+     * 멀리 있는데 물러서며 치면 아무 일도 일어나지 않는다.
+     */
     const roll = Phaser.Math.FloatBetween(0, 1);
-    if (roll < 0.22) return 'down';
-    if (roll < 0.34) return 'up';
+    if (gap > 130) return roll < 0.55 ? 'forward' : 'neutral';
+    if (gap < 60 && roll < 0.3) return 'back';
+
+    if (roll < 0.2) return 'down';
+    if (roll < 0.32) return 'up';
+    if (roll < 0.46) return 'forward';
     return 'neutral';
   }
 

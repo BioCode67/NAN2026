@@ -782,6 +782,142 @@ if (JSON.stringify(chained) !== JSON.stringify(expected.chain)) {
 await clearMoves();
 
 /*
+ * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 앞 기술, 반대로 누르면 뒤 기술.
+ *
+ * 두 가지가 각각 죽을 수 있어서 따로 잰다.
+ *  1. 슬롯 해석 — 'forward' 라는 방향이 앞 기술로 이어지는가
+ *  2. 입력 매핑 — 누른 방향키가 'forward' 로 읽히는가
+ * 2가 특히 조용히 죽는다. 바라보는 방향을 기준으로 잡으면 걸을 때마다
+ * 방향이 따라 돌아 **뒤 기술이 영영 안 나오는데**, 화면에는 앞 기술이
+ * 멀쩡히 나가므로 아무 문제 없어 보인다.
+ *
+ * 키보드로 넣지 않고 입력 한 프레임을 직접 만들어 넘긴다. 헤드리스에서는
+ * 키 하나 누르는 데 100ms 넘게 걸려서, 누르는 사이에 걸어가 위치가 바뀌고
+ * 앞뒤 기준 자체가 달라진다 — 조작이 아니라 검사가 흔들리는 것이다.
+ */
+console.log('앞뒤 커맨드');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const cmd = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    /* 상대를 오른쪽에 세워 둔다 — 앞뒤의 기준점이 된다 */
+    const foe = s.fighters.find((f) => f !== p && f.alive);
+    if (!foe) return { why: '살아 있는 상대가 없습니다' };
+    p.setPosition(p.x, p.y);
+    foe.setPosition(p.x + 220, p.y);
+    foe.body.setVelocity(0, 0);
+
+    const frame = (over) => ({
+      left: false, right: false, up: false, down: false,
+      jumpHeld: false, heavyHeld: false,
+      tapLeft: false, tapRight: false, tapJump: false,
+      tapLight: false, tapHeavy: false, tapSkill: false,
+      tapGrab: false, tapTaunt: false, releaseJump: false,
+      ...over,
+    });
+
+    const press = async (over) => {
+      window.__moves = [];
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.chainUntil = 0;
+      p.chainNext = null;
+      foe.setPosition(p.x + 220, p.y);
+      s.handleInput(p, frame(over), { dir: 0, at: 0 });
+      await wait(160);
+      return window.__moves[0] ?? null;
+    };
+
+    /* 오른쪽에 상대 → 오른쪽으로 누르며 J 는 앞, 왼쪽으로 누르며 J 는 뒤 */
+    const fwdJ = await press({ right: true, tapLight: true });
+    const backJ = await press({ left: true, tapLight: true });
+    const fwdK = await press({ right: true, tapHeavy: true });
+    const backK = await press({ left: true, tapHeavy: true });
+    const plain = await press({ tapLight: true });
+
+    /* 슬롯 해석은 직접 물어본다 */
+    const byDir = {};
+    for (const [intent, dir] of [
+      ['light', 'forward'], ['light', 'back'],
+      ['heavy', 'forward'], ['heavy', 'back'],
+    ]) {
+      byDir[`${intent}:${dir}`] = p.resolveMove(intent, dir).name;
+    }
+
+    const m = p.cfg.moves;
+    return {
+      pressed: { fwdJ, backJ, fwdK, backK, plain },
+      byDir,
+      want: {
+        fwdJ: m.lightFwd.name, backJ: m.lightBack.name,
+        fwdK: m.heavyFwd.name, backK: m.heavyBack.name,
+        plain: m.light.name,
+      },
+    };
+  });
+  await releasePlayer();
+
+  if (cmd.why) {
+    errors.push(`[앞뒤] ${cmd.why}`);
+  } else {
+    const wrong = Object.entries(cmd.want).filter(([k, v]) => cmd.pressed[k] !== v);
+    if (wrong.length) {
+      errors.push(
+        `[앞뒤] 누른 방향이 기술로 안 이어집니다 — ` +
+          wrong.map(([k, v]) => `${k}: 기대 ${v}/실제 ${cmd.pressed[k]}`).join(' · '),
+      );
+    } else {
+      console.log(
+        `  ✓ 상대 쪽 → ${cmd.pressed.fwdJ}/${cmd.pressed.fwdK} · ` +
+          `반대쪽 → ${cmd.pressed.backJ}/${cmd.pressed.backK} · 가만히 → ${cmd.pressed.plain}`,
+      );
+    }
+  }
+  await shot('cmd-fwd-back');
+}
+
+/*
+ * 대시 중 J 와 K 가 갈리는가.
+ *
+ * 전에는 대시 중이면 방향도 버튼도 무시하고 돌진 공격 하나였다. 어깨로
+ * 들이받는 것과 미끄러져 발밑을 쓰는 것은 쓰임이 전혀 다른데, 한 슬롯이
+ * 둘을 삼키면 K 를 눌러도 J 가 나가고 아무도 눈치채지 못한다.
+ */
+console.log('대시 공격 두 갈래');
+{
+  const dash = await page.evaluate(() => {
+    const p = window.game.scene.getScene('Battle').player;
+    return { j: p.cfg.moves.dashAttack.name, k: p.cfg.moves.dashSlide.name };
+  });
+  const slots = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    // 대시 중 상태를 만들어 두고 무엇으로 해석되는지 물어본다
+    p.dashUntil = s.time.now + 400;
+    const out = {
+      j: p.resolveMove('light', 'neutral').name,
+      k: p.resolveMove('heavy', 'neutral').name,
+    };
+    p.dashUntil = 0;
+    return out;
+  });
+
+  if (slots.j !== dash.j || slots.k !== dash.k) {
+    errors.push(
+      `[대시] J/K 가 안 갈립니다 — J 기대 ${dash.j}/실제 ${slots.j} · K 기대 ${dash.k}/실제 ${slots.k}`,
+    );
+  } else {
+    console.log(`  ✓ 대시 중 J ${slots.j} · K ${slots.k}`);
+  }
+}
+
+/*
  * 연속기 마무리 갈래 — 같은 J 인데 어디를 누르고 있었느냐로 끝이 달라진다.
  *
  * 키를 안 늘리고 기술을 늘리는 방법이라, 이것이 조용히 죽으면 "공격이

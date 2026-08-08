@@ -90,6 +90,18 @@ export const altman: CharacterConfig = {
     airHeavy: { name: '파인 튜닝', damage: 17, startup: 110 },
     airDive: { name: '정렬 실패', damage: 21, startup: 80, cry: '통제가 안 돼!' },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '컨텍스트 주입' },
+    lightBack: { name: '안전 정지' },
+    heavyFwd: { name: '사전 학습' },
+    heavyBack: { name: '배포 연기' },
+    dashSlide: { name: '추론 가속' },
+    airUp: { name: '성능 도약' },
+    airBack: { name: '시스템 프롬프트' },
+
     skill: {
       name: '범용 인공지능',
       damage: 21,

@@ -106,6 +106,18 @@ export const bezos: CharacterConfig = {
       cry: '착륙합니다.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '라스트 마일' },
+    lightBack: { name: '수취 거부' },
+    heavyFwd: { name: '지게차 밀어내기' },
+    heavyBack: { name: '재고 회수' },
+    dashSlide: { name: '컨베이어 벨트' },
+    airUp: { name: '드론 상승' },
+    airBack: { name: '배송 실패' },
+
     skill: {
       name: '프라임 데이',
       damage: 27,

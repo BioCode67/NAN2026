@@ -93,6 +93,18 @@ export const son: CharacterConfig = {
     airHeavy: { name: '지분 매각', damage: 19, startup: 118 },
     airDive: { name: '전액 손실', damage: 24, startup: 84, cry: '다 태웠다!' },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '추가 출자' },
+    lightBack: { name: '지분 희석' },
+    heavyFwd: { name: '대규모 인수' },
+    heavyBack: { name: '투자 철회' },
+    dashSlide: { name: '라운드 참여' },
+    airUp: { name: '밸류에이션 급등' },
+    airBack: { name: '뒷북 투자' },
+
     skill: {
       name: '한 방에 간다',
       damage: 26,

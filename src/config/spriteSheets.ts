@@ -17,6 +17,8 @@ export type Pose =
   | 'airJ'
   | 'airK'
   | 'dive'
+  | 'airUp'
+  | 'airBack'
   /* 지상 연속기 */
   | 'attackJ'
   | 'attackJ2'
@@ -24,11 +26,16 @@ export type Pose =
   | 'attackK'
   | 'attackK2'
   | 'dashAttack'
+  | 'dashSlide'
   /* 방향 커맨드 */
   | 'attackJUp'
   | 'attackJDown'
   | 'attackKUp'
   | 'attackKDown'
+  | 'attackJFwd'
+  | 'attackJBack'
+  | 'attackKFwd'
+  | 'attackKBack'
   /* 스킬 · 프롬프트 */
   | 'skillCharge'
   | 'skill'
@@ -72,6 +79,9 @@ export const POSE_ORDER: Pose[] = [
   'grab', 'grabHold', 'grabbed', 'throw',
   'guard', 'dizzy', 'taunt', 'down',
   'hit', 'hitAir', 'knockback', 'win', 'lose',
+  // ↓ 앞뒤 커맨드·공중 확장에서 늘어난 포즈. 반드시 뒤에만 붙일 것
+  'attackJFwd', 'attackJBack', 'attackKFwd', 'attackKBack',
+  'dashSlide', 'airUp', 'airBack',
 ];
 
 /** 커맨드 무브 → 재생할 포즈 */
@@ -84,10 +94,17 @@ export const MOVE_POSE: Record<MoveSlot, Pose> = {
   dashAttack: 'dashAttack',
   lightUp: 'attackJUp',
   lightDown: 'attackJDown',
+  lightFwd: 'attackJFwd',
+  lightBack: 'attackJBack',
   heavyUp: 'attackKUp',
   heavyDown: 'attackKDown',
+  heavyFwd: 'attackKFwd',
+  heavyBack: 'attackKBack',
+  dashSlide: 'dashSlide',
   airLight: 'airJ',
   airHeavy: 'airK',
+  airUp: 'airUp',
+  airBack: 'airBack',
   airDive: 'dive',
   skill: 'skill',
 };
@@ -118,13 +135,27 @@ export const POSE_FALLBACK: Partial<Record<Pose, Pose>> = {
   attackJUp: 'attackJ',
   attackJDown: 'attackJ',
   airJ: 'attackJ',
+  /*
+   * 앞·뒤 커맨드는 위·아래보다 **기본기에 가깝다.**
+   * 상단기 그림으로 대신하면 앞으로 파고드는 기술에서 팔이 하늘을 향한다.
+   * 몸이 하는 일이 다르므로 기본 약·강공격 쪽으로 떨어뜨린다.
+   */
+  attackJFwd: 'attackJ',
+  attackJBack: 'attackJ',
   // 강공격 계열 → 기본 강공격
   attackK2: 'attackK',
   attackKUp: 'attackK',
   attackKDown: 'attackK',
+  attackKFwd: 'attackK',
+  attackKBack: 'attackK',
   airK: 'attackK',
   dive: 'attackK',
   dashAttack: 'attackK',
+  // 미끄러지는 그림이 없으면 달려드는 그림이 그나마 가깝다
+  dashSlide: 'dashAttack',
+  // 공중 올려차기는 상단기, 뒤차기는 공중 강공격이 가장 가깝다
+  airUp: 'attackKUp',
+  airBack: 'airK',
   /*
    * 잡기 — 전용 그림이 없어도 손을 뻗는 그림(attackJ)이면 읽힌다.
    * 잡힌 쪽은 맞는 자세, 붙잡고 선 자세는 서 있는 그림으로 떨어진다.
@@ -416,10 +447,26 @@ const V3_CELLS: string[] = [
   /* 5묶음 스킬 */ 'skillCharge', 'skill', 'skill', 'fx:skill', 'promptCast', 'fx:prompt',
   /* 6묶음 아이템 */ 'itemGet', 'itemHold', 'itemThrow', 'itemSwing', 'taunt', 'down',
   /* 7묶음 결과 */ 'hit', 'hitAir', 'knockback', 'win', 'lose', 'fx:portrait',
+  /*
+   * 8묶음 앞뒤 커맨드 — 커맨드가 열넷에서 스물하나로 늘면서 생긴 자리다.
+   * 앞으로 파고드는 기술과 빠지면서 내는 기술은 몸이 하는 일이 정반대라,
+   * 한 그림으로 돌려 쓰면 방향을 나눈 의미가 통째로 사라진다.
+   */
+  /* 8묶음 앞뒤 */ 'attackJFwd', 'attackJBack', 'attackKFwd', 'attackKBack', 'dashSlide', 'airUp',
+  /*
+   * 9묶음 잡기 — 지금까지 잡기는 전용 그림이 하나도 없어서, 붙잡고 선 자세가
+   * 그냥 서 있는 그림이었다. 무슨 일이 벌어지는 중인지 화면만 봐서는 모른다.
+   * 마지막 칸의 IDLE_B 는 대기 자세 두 번째 칸이다 — 두 장이 오가면
+   * 가만히 서 있어도 숨을 쉰다.
+   */
+  /* 9묶음 잡기 */ 'grab', 'grabHold', 'grabbed', 'throw', 'airBack', 'idle',
 ];
 
 /** 한 묶음에 들어가는 칸 수 */
 const V3_BATCH_SIZE = 6;
+
+/** 묶음 총 개수 — 프롬프트 생성기(art-characters.mjs)와 반드시 같아야 한다 */
+export const TOTAL_BATCHES = V3_CELLS.length / V3_BATCH_SIZE;
 
 interface BuiltLayout {
   poses: Partial<Record<Pose, PoseFrames>>;
@@ -466,8 +513,27 @@ export function buildV3Layout(batches: number[]): BuiltLayout {
 /* 규격 자동 판별                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 9묶음을 다 담은 시트(54칸).
+ *
+ * 손으로 표를 하나 더 적지 않고 배치 조립기에서 뽑는다 — 칸 순서가 적힌
+ * 곳이 둘이면 반드시 한쪽만 고쳐지고, 그때 증상은 "그림은 멀쩡한데 게임에서
+ * 엉뚱한 자세가 나온다"로 나타난다. 원인과 하나도 안 닮은 증상이다.
+ */
+const BUILT_V4 = buildV3Layout(
+  Array.from({ length: TOTAL_BATCHES }, (_, i) => i + 1),
+);
+
 /** 프레임 수로 고르는 규격표 — 위에서부터 처음 맞는 것을 쓴다 */
 const LAYOUTS = [
+  {
+    name: 'V4',
+    minFrames: TOTAL_BATCHES * V3_BATCH_SIZE,
+    poses: BUILT_V4.poses,
+    explosionFrame: BUILT_V4.explosionFrame,
+    promptFrame: BUILT_V4.promptFrame,
+    portraitFrame: BUILT_V4.portraitFrame,
+  },
   {
     name: 'V3',
     minFrames: 42,
@@ -506,7 +572,9 @@ export function applyLayout(
     def.explosionFrame = built.explosionFrame;
     def.promptFrame = built.promptFrame;
     def.portraitFrame = built.portraitFrame;
-    return batches.length === 7 ? 'V3' : `V3-부분(${batches.join('·')}묶음)`;
+    return batches.length === TOTAL_BATCHES
+      ? 'V4'
+      : `V4-부분(${batches.join('·')}묶음)`;
   }
 
   const spec = LAYOUTS.find((l) => frameCount >= l.minFrames) ?? LAYOUTS[LAYOUTS.length - 1]!;

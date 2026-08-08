@@ -1581,8 +1581,29 @@ export class BattleScene extends Phaser.Scene {
     const onGround = p.body.blocked.down || p.body.touching.down;
     const reversed = this.gimmicks.isReversed();
 
-    /* 공격 방향 — 같은 버튼이라도 W/S를 함께 누르면 다른 기술이 나간다 */
-    const dir: AttackDir = up ? 'up' : down ? 'down' : 'neutral';
+    /*
+     * 공격 방향 — 같은 버튼이라도 어디를 누르고 있느냐로 다른 기술이 나간다.
+     *
+     * 앞·뒤는 **바라보는 방향이 아니라 상대가 있는 쪽**을 기준으로 잡는다.
+     * 바라보는 방향은 걸을 때마다 곧바로 따라 돌기 때문에, 그것을 기준으로
+     * 삼으면 누르는 쪽이 언제나 "앞"이 되고 뒤 기술은 영영 안 나온다.
+     *
+     * 조작 반전 룰이 걸려 있으면 손이 누르는 것과 캐릭터가 가는 곳이 반대다.
+     * 여기서도 그것을 먼저 풀어 두어야, 반전 중에 앞 기술을 내려다 뒤 기술이
+     * 나오는 일이 없다.
+     */
+    const held: -1 | 0 | 1 = left && !right ? -1 : right && !left ? 1 : 0;
+    const heldWorld = (reversed ? -held : held) as -1 | 0 | 1;
+    const toFoe = this.directionToNearestFoe(p);
+    const dir: AttackDir = up
+      ? 'up'
+      : down
+        ? 'down'
+        : heldWorld === 0
+          ? 'neutral'
+          : heldWorld === toFoe
+            ? 'forward'
+            : 'back';
 
     /*
      * 잡힌 상태 — 여기서 할 수 있는 건 몸부림뿐이다.
@@ -1635,9 +1656,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     /* 조작 반전 룰이 걸려 있으면 좌우가 뒤집힌다 */
-    let move: -1 | 0 | 1 = left && !right ? -1 : right && !left ? 1 : 0;
-    if (reversed) move = -move as -1 | 0 | 1;
-    p.moveHorizontal(move);
+    p.moveHorizontal(heldWorld);
 
     // 방어 중 점프는 회피로 쓰이므로 여기서는 뛰지 않는다
     if (tapJump && !wantGuard) p.jump();
@@ -1659,6 +1678,16 @@ export class BattleScene extends Phaser.Scene {
      */
     if (tapGrab) p.grab();
 
+    /*
+     * 뒤 기술은 **상대를 보면서** 물러난다.
+     *
+     * 뒤로 걸으면 바라보는 방향이 따라 돌아 등을 보인 채로 치게 된다.
+     * 그러면 판정이 상대 반대쪽에 생겨서 "분명히 눌렀는데 안 맞는다"가 된다.
+     * 격투 게임에서 뒤로 걷는 동안 상대를 계속 보고 있는 것과 같은 이유다.
+     */
+    if ((tapLight || tapHeavy) && dir === 'back' && toFoe !== 0) {
+      p.faceToward(toFoe);
+    }
     if (tapLight) p.attack('light', dir);
     if (tapHeavy) p.attack('heavy', dir);
     // 누르고 있으면 선딜 구간에서 힘을 모은다 (차지 강공격)
@@ -1668,6 +1697,33 @@ export class BattleScene extends Phaser.Scene {
 
     p.setGuard(wantGuard && !dodged && !p.isDodging());
     if (down && !onGround) p.fastFall();
+  }
+
+  /**
+   * 가장 가까운 살아 있는 상대가 어느 쪽에 있는가 (-1 왼쪽 / 1 오른쪽).
+   *
+   * 앞·뒤 커맨드의 기준점이다. 넷이 붙는 판이라 "상대"가 하나로 정해지지
+   * 않으므로 **제일 가까운 사람**을 본다 — 지금 실제로 싸우고 있는 상대가
+   * 보통 제일 가깝고, 그 사람을 기준으로 앞뒤를 잡는 것이 손에 맞는다.
+   *
+   * 아무도 없으면 0 을 돌려준다. 그때는 어느 쪽을 눌러도 중립기가 나간다 —
+   * 기준이 없는데 앞뒤를 억지로 정하면 같은 입력이 상황마다 다른 것을 낸다.
+   */
+  private directionToNearestFoe(me: BaseCharacter): -1 | 0 | 1 {
+    let best: number | null = null;
+    let bestGap = Infinity;
+    for (const f of this.fighters) {
+      if (f === me || !f.alive) continue;
+      const gap = Math.abs(f.x - me.x);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = f.x;
+      }
+    }
+    if (best === null) return 0;
+    // 거의 겹쳐 서 있으면 방향을 정할 수 없다 (한 픽셀 차이로 앞뒤가 뒤집힌다)
+    if (Math.abs(best - me.x) < 8) return 0;
+    return best > me.x ? 1 : -1;
   }
 
   /**

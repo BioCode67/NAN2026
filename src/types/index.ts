@@ -166,7 +166,22 @@ export type AttackPhase = 'none' | 'startup' | 'active' | 'recovery';
  * 같은 J/K라도 W(위)·S(아래)를 함께 누르면 다른 기술이 나간다.
  * 캐릭터 한 명이 J·K·L 세 동작만 갖는 단조로움을 없애는 축이다.
  */
-export type AttackDir = 'neutral' | 'up' | 'down';
+export type AttackDir =
+  | 'neutral'
+  /** 위 (W) */
+  | 'up'
+  /** 아래 (S) */
+  | 'down'
+  /**
+   * 상대 쪽으로 (앞).
+   *
+   * 바라보는 방향이 아니라 **가장 가까운 상대가 있는 쪽**을 기준으로 잡는다.
+   * 바라보는 방향은 걸을 때마다 곧바로 따라 도므로, 그것을 기준으로 삼으면
+   * 앞이 언제나 앞이고 뒤가 영영 나오지 않는다.
+   */
+  | 'forward'
+  /** 상대 반대쪽으로 (뒤) — 빠지면서 치는 견제 */
+  | 'back';
 
 /**
  * 커맨드 무브 슬롯 — 캐릭터 한 명이 가지는 기술 목록.
@@ -190,18 +205,32 @@ export type MoveSlot =
   | 'lightUp'
   /** S + J */
   | 'lightDown'
+  /** 앞 + J — 상대 쪽으로 파고들며 치는 전진기 */
+  | 'lightFwd'
+  /** 뒤 + J — 빠지면서 앞을 긁는 견제기 */
+  | 'lightBack'
   /** K */
   | 'heavy'
   /** W + K — 솟구치며 띄우는 상승기 */
   | 'heavyUp'
   /** S + K — 지면을 내려찍는 광역기 */
   | 'heavyDown'
+  /** 앞 + K — 몸을 실어 밀어붙이는 돌파기 */
+  | 'heavyFwd'
+  /** 뒤 + K — 거리를 벌리며 크게 후리는 반격기 */
+  | 'heavyBack'
+  /** 대시 중 K — 미끄러지며 발밑을 쓸어버린다 */
+  | 'dashSlide'
   /** 공중 J */
   | 'airLight'
   /** 공중 K */
   | 'airHeavy'
   /** 공중 S + J/K — 내리꽂는 급강하 */
   | 'airDive'
+  /** 공중 W + J/K — 머리 위를 걷어 올린다 */
+  | 'airUp'
+  /** 공중 뒤 + J/K — 뒤쫓아 온 상대를 걷어찬다 */
+  | 'airBack'
   /** L */
   | 'skill';
 

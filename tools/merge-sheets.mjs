@@ -2,13 +2,13 @@
 /**
  * 배치 이미지 여러 장을 시트 한 장으로 합친다.
  *
- * gen-prompts.mjs 는 42장을 7묶음으로 나눠 뽑게 한다. 그렇게 받은 가로 띠
+ * gen-prompts.mjs 는 54장을 9묶음으로 나눠 뽑게 한다. 그렇게 받은 가로 띠
  * 여러 장을 게임이 쓰는 균일 격자 시트 하나로 만드는 것이 이 도구다.
  *
  *   npm run sheet:merge -- elonmusk
  *   npm run sheet:merge -- elonmusk --cols 6
  *
- * 입력: art-source/<key>_b1.png … _b7.png
+ * 입력: art-source/<key>_b1.png … _b9.png
  * 출력: public/sprites/<key>.png + <key>.json
  *
  * ── 왜 process-sheet 를 그대로 쓰지 않는가 ────────────────────────
@@ -22,6 +22,15 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node
 import { dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { PNG } from 'pngjs';
+
+/**
+ * 묶음 총 개수.
+ *
+ * spriteSheets.ts 의 TOTAL_BATCHES · art-characters.mjs 의 BATCHES 와 같아야 한다.
+ * 여기만 뒤처지면 새로 뽑은 8·9묶음이 조용히 무시된다 — 올렸는데 아무 일도
+ * 안 일어나고, 이유는 화면 어디에도 안 나온다.
+ */
+const TOTAL_BATCHES = 9;
 
 /** 최종 시트의 열 수 — 42장이면 7행 x 6열이 된다 */
 const DEFAULT_COLS = 6;
@@ -91,7 +100,7 @@ if (!inputs.length) {
  * 스무 명을 채울 수 있는 길을 막아 둘 이유가 없다.
  */
 const missing = [];
-for (let i = 1; i <= 7; i++) {
+for (let i = 1; i <= TOTAL_BATCHES; i++) {
   if (!inputs.some((f) => f.index === i)) missing.push(i);
 }
 

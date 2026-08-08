@@ -94,6 +94,18 @@ export const bot: CharacterConfig = {
       cry: '반복 반복 반복 반복',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '문장 완성' },
+    lightBack: { name: '답변 철회' },
+    heavyFwd: { name: '장문 출력' },
+    heavyBack: { name: '거절 응답' },
+    dashSlide: { name: '토큰 스트림' },
+    airUp: { name: '확률 상승' },
+    airBack: { name: '이전 답변 참조' },
+
     skill: {
       name: '저는 언어 모델이라',
       damage: 24,

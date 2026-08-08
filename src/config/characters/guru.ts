@@ -96,6 +96,18 @@ export const guru: CharacterConfig = {
       cry: '지금이 저점입니다!',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '매수 신호' },
+    lightBack: { name: '손절 권유' },
+    heavyFwd: { name: '몰빵 추천' },
+    heavyBack: { name: '발 빼기' },
+    dashSlide: { name: '추세 추종' },
+    airUp: { name: '급등 예측' },
+    airBack: { name: '뒤늦은 정정' },
+
     skill: {
       name: '무조건 오릅니다',
       damage: 24,

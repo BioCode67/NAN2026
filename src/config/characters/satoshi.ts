@@ -100,6 +100,18 @@ export const satoshi: CharacterConfig = {
       cry: '여기가 바닥이야!',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '트랜잭션 전파' },
+    lightBack: { name: '익명 후퇴' },
+    heavyFwd: { name: '체인 확장' },
+    heavyBack: { name: '개인키 은닉' },
+    dashSlide: { name: '블록 전파' },
+    airUp: { name: '가격 급등' },
+    airBack: { name: '이중 지불' },
+
     skill: {
       name: '제네시스 블록',
       damage: 29,

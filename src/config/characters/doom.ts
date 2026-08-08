@@ -95,6 +95,18 @@ export const doom: CharacterConfig = {
       cry: '검은 월요일이다.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '다가오는 위기' },
+    lightBack: { name: '한 발 물러선 경고' },
+    heavyFwd: { name: '파국 선언' },
+    heavyBack: { name: '안전 자산 도피' },
+    dashSlide: { name: '폭락 활강' },
+    airUp: { name: '변동성 급등' },
+    airBack: { name: '뒤늦은 예언' },
+
     skill: {
       name: '내가 그랬지',
       damage: 20,

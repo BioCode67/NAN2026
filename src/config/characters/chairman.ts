@@ -103,6 +103,18 @@ export const chairman: CharacterConfig = {
       cry: '내려간다.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '어프로치' },
+    lightBack: { name: '백스윙' },
+    heavyFwd: { name: '정리 해고' },
+    heavyBack: { name: '계열 분리' },
+    dashSlide: { name: '카트 활주' },
+    airUp: { name: '승진 발령' },
+    airBack: { name: '뒷돈' },
+
     skill: {
       name: '이사회 소집',
       damage: 30,

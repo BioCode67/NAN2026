@@ -137,6 +137,18 @@ export const linus: CharacterConfig = {
       cry: 'Talk is cheap.',
     },
 
+    /*
+     * 앞·뒤 커맨드 — 상대 쪽으로 누르며 치면 파고들고, 반대로 누르면 빠지며 친다.
+     * 대시 중 K 는 미끄러지고, 공중에서는 위·뒤로도 낼 수 있다.
+     */
+    lightFwd: { name: '풀 리퀘스트' },
+    lightBack: { name: '리버트' },
+    heavyFwd: { name: '메인테이너 폭언' },
+    heavyBack: { name: '브랜치 분기' },
+    dashSlide: { name: '디스크 스왑' },
+    airUp: { name: '빌드 성공' },
+    airBack: { name: '백포팅' },
+
     skill: {
       name: '커널 패닉',
       damage: 12,

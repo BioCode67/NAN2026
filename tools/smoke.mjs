@@ -120,7 +120,13 @@ const installRecorder = () =>
   page.evaluate(() => {
     const scene = window.game?.scene?.getScene('Battle');
     const p = scene?.player;
-    if (!p) return null;
+    /*
+     * 판이 갈리는 순간에는 씬 객체가 살아 있어도 그 안의 player 가 아직
+     * **앞 판의 파괴된 파이터**를 가리킨다. 그 상태로 canAct() 를 부르면
+     * 이미 없어진 씬을 들여다보다 터진다 — 게임이 아니라 이 검사가 너무
+     * 이른 순간을 들여다본 것이다. 파괴된 객체는 scene 이 비어 있다.
+     */
+    if (!p || !p.scene?.time) return null;
 
     window.__moves ??= [];
 
@@ -178,6 +184,7 @@ const dismissPrompt = async () => {
 /** 플레이어의 현재 상태를 읽는다 */
 const playerState = () =>
   page.evaluate(() => {
+   try {
     const scene = window.game?.scene?.getScene('Battle');
     const p = scene?.player;
     if (!p) return null;
@@ -202,6 +209,10 @@ const playerState = () =>
        */
       recorded: !!p.__recorded,
     };
+   } catch {
+     /* 판이 갈리는 중이면 아직 읽을 수 없다 — 다음 폴링에서 다시 본다 */
+     return null;
+   }
   });
 
 /**

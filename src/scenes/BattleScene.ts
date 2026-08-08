@@ -1446,7 +1446,16 @@ export class BattleScene extends Phaser.Scene {
    * 그때 세면 문장을 오래 고민한 사람이 봇으로 바뀐다.
    */
   private reapQuietSeats(time: number): void {
-    if (this.netRole !== 'host' || !this.battleActive || this.prompting) return;
+    /*
+     * 프롬프트 입력 중에도 회수기는 돈다.
+     *
+     * 전에는 prompting 이면 쉬었다 — 판이 멈췄으니 침묵이 정상이라고 봤다.
+     * 그런데 참가자들은 판이 멈춰도 입력 프레임을 계속 보내므로(사람이
+     * 있다는 신호), 진짜로 조용해지는 자리는 **끊긴 자리**뿐이다. 하필
+     * 문장을 입력하던 사람이 이탈 신호도 없이 사라지면, 이 회수기 말고는
+     * 아무도 판을 되살릴 수 없다 — 전원이 영원히 그 사람을 기다린다.
+     */
+    if (this.netRole !== 'host' || !this.battleActive) return;
 
     /*
      * 판이 막 열린 동안은 세지 않는다.
@@ -3850,6 +3859,17 @@ export class BattleScene extends Phaser.Scene {
 
     // 프롬프트 입력 중에는 판이 멈춘다 (물리는 이미 pause 상태)
     if (this.prompting) {
+      /*
+       * 멈춘 판에서도 두 가지는 돈다.
+       *
+       * 참가자의 입력 전송 — 이것이 "사람이 아직 있다"는 신호다. 끊으면
+       * 판이 멈춘 동안 전원이 침묵으로 보여 회수기가 아무도 못 가린다.
+       * 호스트의 침묵 자리 회수 — 하필 문장을 입력하던 사람이 이탈 신호
+       * 없이 사라지면(창 강제 종료·회선 단절) 이 회수기 말고는 아무도
+       * 판을 되살릴 수 없다. 전원이 영원히 그 사람을 기다리게 된다.
+       */
+      if (this.netRole === 'guest') this.sendMyInput();
+      if (this.netRole === 'host') this.reapQuietSeats(time);
       this.updateHud();
       return;
     }

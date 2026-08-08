@@ -490,6 +490,36 @@ try {
     }
   }
 
+  /* --- 사람 자리를 사람이라고 부르는가 ----------------------------- */
+  /*
+   * 넷이 붙으면 3·4번 자리에 진짜 사람이 앉는다. 그 자리를 "CPU"라고 적으면
+   * 판 내내 사람이 봇 취급을 받고, 그 사람이 이기면 결과 화면에도
+   * "봇 승리…"라고 뜬다. HUD 가 자리 이름을 어떻게 부르는지 본다.
+   */
+  {
+    const seats = await host.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      return s.huds.map((h) => ({
+        id: h.fighter.fighterId,
+        side: h.fighter.side,
+        label: h.seatLabel.text,
+      }));
+    });
+
+    const wrong = seats.filter(
+      (h) => h.side === 'player' && !/^\dP$/.test(h.label),
+    );
+    if (wrong.length) {
+      errors.push(
+        `[온라인] 사람 자리를 봇처럼 적었습니다 — ${wrong
+          .map((h) => `${h.id}="${h.label}"`)
+          .join(' · ')}`,
+      );
+    } else {
+      console.log(`  ✓ 자리 이름 — ${seats.map((h) => h.label).join(' · ')}`);
+    }
+  }
+
   /* --- 한 사람이 나가면 봇이 이어받는가 --------------------------- */
   /*
    * 넷이 붙는 판에서 한 사람이 창을 닫는 일은 드물지 않다. 그 캐릭터가
@@ -610,8 +640,19 @@ try {
           `[온라인] 이어받은 봇이 5초 동안 ${moved}px 밖에 안 움직였습니다 — 굳어 있습니다`,
         );
       } else {
+        const relabelled = await host.evaluate((idx) => {
+          const s = window.game.scene.getScene('Battle');
+          const f = s.fighters[idx];
+          return s.huds.find((h) => h.fighter === f)?.seatLabel.text ?? '';
+        }, before.idx);
+
+        if (!relabelled.includes('봇')) {
+          errors.push(
+            `[온라인] 봇이 이어받은 자리가 아직 사람으로 적혀 있습니다 — "${relabelled}"`,
+          );
+        }
         console.log(
-          `  \u2713 나간 자리를 봇이 이어받는다 — ${before.name} (${moved}px 움직임)`,
+          `  \u2713 나간 자리를 봇이 이어받는다 — ${before.name} (${moved}px 움직임 · "${relabelled}")`,
         );
       }
       await shot(host, 'left-handover');

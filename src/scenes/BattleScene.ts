@@ -70,6 +70,8 @@ import type {
 /** HUD 한 칸(파이터 1명분) */
 interface FighterHud {
   fighter: BaseCharacter;
+  /** 자리 이름 (1P·2P·CPU…) — 나간 자리를 봇이 이어받으면 바뀐다 */
+  seatLabel: Phaser.GameObjects.Text;
   percent: Phaser.GameObjects.Text;
   tierLabel: Phaser.GameObjects.Text;
   bar: Phaser.GameObjects.Rectangle;
@@ -78,6 +80,26 @@ interface FighterHud {
   itemIcon: Phaser.GameObjects.Text;
   /** 캐릭터 고유 자원 표시 (지분·부스터·풍선…) */
   sigLabel: Phaser.GameObjects.Text;
+}
+
+/**
+ * 자리 색 — 1P 파랑, 2P 분홍, 3P 보라, 4P 노랑.
+ *
+ * 넷이 뒤엉키면 화면에서 자기 캐릭터를 놓친다. 자리마다 색을 고정해 두고
+ * HUD부터 결과 화면까지 같은 색을 쓴다.
+ */
+const SEAT_COLORS = ['#38bdf8', '#f472b6', '#a78bfa', '#facc15'];
+const BOT_COLOR = '#7f93bd';
+
+/** 자리 번호 — 사람 파이터는 P1·P2… 로 이름이 붙어 있다 */
+function seatIndex(f: BaseCharacter): number {
+  const m = /^P(\d+)$/.exec(f.fighterId);
+  return m ? Number(m[1]) - 1 : -1;
+}
+
+function seatColor(f: BaseCharacter): string {
+  const i = seatIndex(f);
+  return i >= 0 ? (SEAT_COLORS[i] ?? SEAT_COLORS[0]!) : BOT_COLOR;
 }
 
 /** HUD 패널 규격 — 4명이 한 줄에 들어가야 한다 */
@@ -226,6 +248,9 @@ export class BattleScene extends Phaser.Scene {
   private paused = false;
   private pauseOverlay?: Phaser.GameObjects.Container;
 
+  /** 사람이 나가 봇이 이어받은 자리들 */
+  private takenOver = new Set<string>();
+
   /** 조용해진 자리를 마지막으로 확인한 시각 */
   private lastReapAt = 0;
 
@@ -254,6 +279,7 @@ export class BattleScene extends Phaser.Scene {
     this.announceLabel = undefined;
     this.disposers = [];
     this.koOrder = [];
+    this.takenOver.clear();
     this.battleActive = false;
     // 씬 객체는 판마다 새로 만들어지지 않는다 — 앞 판의 값이 남으면 카메라가 묶인 채 시작한다
     this.resultShown = false;
@@ -1198,8 +1224,32 @@ export class BattleScene extends Phaser.Scene {
       }),
     );
 
+    this.takenOver.add(f.fighterId);
+    const hud = this.huds.find((h) => h.fighter === f);
+    hud?.seatLabel.setText(this.seatName(f)).setColor(BOT_COLOR);
+
     this.announce(`${f.cfg.name} — 봇이 이어받는다`, '#facc15', 1600);
     console.info(`[net] ${reason} (자리 ${slot}) — 봇 전환`);
+  }
+
+  /**
+   * 이 자리를 뭐라고 부를 것인가.
+   *
+   * ── 왜 따로 두는가 ──────────────────────────────────────────────
+   * 전에는 "내 것이면 1P, player2 면 2P, 나머지는 전부 CPU"였다. 사람이
+   * 둘일 때는 맞는 말이지만 **온라인에서 넷이 붙으면 3번·4번 자리에 앉은
+   * 진짜 사람이 판 내내 "CPU (중간)"으로 표시된다.** 이긴 사람이 3번이면
+   * 결과 화면에도 "봇 승리…"라고 뜬다.
+   *
+   * 자리 번호는 파이터 이름(P1·P2…)에 이미 들어 있고 그 순서는 모든 화면에서
+   * 같다. 그것을 그대로 쓴다.
+   */
+  private seatName(f: BaseCharacter): string {
+    const i = seatIndex(f);
+    if (i < 0) return `CPU (${this.difficulty.label})`;
+    // 사람이 나가 봇이 이어받은 자리 — 사람인 척하면 안 된다
+    if (this.takenOver.has(f.fighterId)) return `${i + 1}P 자리 · 봇`;
+    return `${i + 1}P`;
   }
 
   /** AI가 노릴 대상 — 자기 자신을 제외한 가장 가까운 생존자 */
@@ -2037,9 +2087,17 @@ export class BattleScene extends Phaser.Scene {
      * 판정을 내리지 않고 **누가 이겼는지만** 말한다.
      */
     const versus = !!this.player2;
-    const playerWon = versus
-      ? winner === this.player || winner === this.player2
-      : winner?.side === 'player';
+    /*
+     * 사람이 이겼는가.
+     *
+     * 사람이 셋·넷일 수 있으므로 "나 아니면 2P"로 세면 안 된다 —
+     * 3번 자리가 이겨도 사람이 이긴 것이다.
+     */
+    // winner 는 없을 수 있다 — 전원이 동시에 장외로 나가면 아무도 안 남는다
+    const winnerSeat = winner ? seatIndex(winner) : -1;
+    const humanWon =
+      !!winner && winnerSeat >= 0 && !this.takenOver.has(winner.fighterId);
+    const playerWon = versus ? humanWon : winner?.side === 'player';
 
     /*
      * 결과 화면 배경.
@@ -2069,15 +2127,23 @@ export class BattleScene extends Phaser.Scene {
     this.canContinue = playerWon && !versus;
 
     /* 2인 대전은 누가 이겼는지가 곧 제목이다 */
-    const humanWinner =
-      winner === this.player ? '1P 승리!' : winner === this.player2 ? '2P 승리!' : '봇 승리…';
+    /*
+     * 누가 이겼는지 자리 이름으로 말한다.
+     *
+     * 전에는 "나 아니면 2P, 그 밖은 전부 봇"이라 **온라인에서 3번 자리가
+     * 이기면 "봇 승리…"** 라고 떴다. 자리 번호는 파이터 이름에 이미 있고
+     * 모든 화면에서 같으므로 그것을 쓴다.
+     */
+    const humanWinner = !winner
+      ? '무승부…'
+      : humanWon
+        ? `${winnerSeat + 1}P 승리!`
+        : '봇 승리…';
     const titleText = versus ? humanWinner : playerWon ? '승리!' : '패배…';
     const titleColor = versus
-      ? winner === this.player
-        ? '#38bdf8'
-        : winner === this.player2
-          ? '#f472b6'
-          : '#ef4444'
+      ? playerWon && winner
+        ? seatColor(winner)
+        : '#ef4444'
       : playerWon
         ? '#4ade80'
         : '#ef4444';
@@ -2823,20 +2889,10 @@ export class BattleScene extends Phaser.Scene {
        * 그렇다 — 옆 사람 것과 내 것을 헷갈리면 그 판은 끝난 것이나 같다.
        * 1P는 파랑, 2P는 분홍으로 고정해 두고 결과 화면까지 같은 색을 쓴다.
        */
-      const label =
-        fighter === this.player
-          ? '1P'
-          : fighter === this.player2
-            ? '2P'
-            : `CPU (${this.difficulty.label})`;
-      const labelColor =
-        fighter === this.player
-          ? '#38bdf8'
-          : fighter === this.player2
-            ? '#f472b6'
-            : '#7f93bd';
+      const label = this.seatName(fighter);
+      const labelColor = seatColor(fighter);
 
-      ui(
+      const seatLabel = ui(
         this.add.text(x + 58, y + 27, label, {
           fontFamily: GAME.FONT,
           fontSize: '10px',
@@ -2913,6 +2969,7 @@ export class BattleScene extends Phaser.Scene {
 
       this.huds.push({
         fighter,
+        seatLabel,
         percent,
         tierLabel,
         bar,

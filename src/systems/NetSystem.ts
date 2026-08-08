@@ -85,6 +85,8 @@ type Message =
   | { t: 'pick'; slot: number; c: CharacterId }
   | { t: 'lobby'; d: NetLobby }
   | { t: 'start'; d: NetStart }
+  /** 판이 끝난 뒤 방장이 누른 "한 판 더" — 전원이 함께 새 판으로 간다 */
+  | { t: 'again'; d: NetStart }
   | { t: 'in'; slot: number; h: number; k: number }
   | { t: 'snap'; d: NetSnapshot }
   | { t: 'bye'; slot: number };
@@ -251,6 +253,8 @@ export class NetSystem {
   /** 기믹이 걸렸다 — 화면을 맞춘다 */
   onGimmick?: (ids: string[], text: string, who: string, note: string) => void;
   onSnapshot?: (d: NetSnapshot) => void;
+  /** 방장이 한 판 더를 눌렀다 — 같은 사람들로 다시 붙는다 */
+  onAgain?: (d: NetStart) => void;
   /**
    * 참가자 하나가 빠졌다 (호스트에서만).
    *
@@ -477,6 +481,21 @@ export class NetSystem {
     return out;
   }
 
+  /**
+   * 지금 있는 자리들의 시계를 되감는다.
+   *
+   * 판이 새로 열리는 순간에 부른다. 화면 전환·씬 로딩 때문에 참가자가
+   * 첫 입력을 보내기까지 몇 초가 걸리는데, 그 침묵을 "사라진 사람"으로
+   * 세면 **아직 들어오지도 않은 사람이 봇으로 바뀐다.** 느린 기계일수록
+   * 그렇게 된다.
+   */
+  markAllHeard(): void {
+    const now = Date.now();
+    this.slots.forEach((id, i) => {
+      if (id) this.heardAt.set(i + 1, now);
+    });
+  }
+
   /** 호스트: 그 자리를 비운다 (조용해진 자리를 정리할 때) */
   dropSlot(slot: number, reason: string): void {
     const id = this.slots[slot - 1];
@@ -518,6 +537,17 @@ export class NetSystem {
   /** 호스트: 판을 연다 */
   sendStart(d: NetStart): void {
     this.transportSend({ t: 'start', d });
+  }
+
+  /**
+   * 방장 → 전원. 같은 사람들로 한 판 더.
+   *
+   * 판이 끝나면 결과 화면에서 각자 R 을 눌렀는데, 그러면 누른 사람만 새 판으로
+   * 가고 나머지는 결과 화면에 남는다 — **방이 거기서 깨진다.** 넷이 모이는 데
+   * 든 수고를 한 판으로 끝내지 않으려면 다시 붙는 길이 한 번에 열려야 한다.
+   */
+  sendAgain(d: NetStart): void {
+    this.transportSend({ t: 'again', d });
   }
 
   /** 참가자 → 호스트. 누르고 있는 것과 스쳐 간 눌림을 함께 */
@@ -655,6 +685,9 @@ export class NetSystem {
         break;
       case 'start':
         this.onStart?.(msg.d);
+        break;
+      case 'again':
+        this.onAgain?.(msg.d);
         break;
       case 'in':
         this.heardAt.set(msg.slot, Date.now());

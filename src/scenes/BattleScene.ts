@@ -251,6 +251,12 @@ export class BattleScene extends Phaser.Scene {
   /** 사람이 나가 봇이 이어받은 자리들 */
   private takenOver = new Set<string>();
 
+  /** 전투가 실제로 시작된 시각 (0 = 아직) */
+  private battleActiveSince = 0;
+
+  /** 다음 판을 이미 열었는가 (R 연타로 두 번 열리지 않게) */
+  private rematching = false;
+
   /** 조용해진 자리를 마지막으로 확인한 시각 */
   private lastReapAt = 0;
 
@@ -279,6 +285,8 @@ export class BattleScene extends Phaser.Scene {
     this.announceLabel = undefined;
     this.disposers = [];
     this.koOrder = [];
+    this.battleActiveSince = 0;
+    this.rematching = false;
     this.takenOver.clear();
     this.battleActive = false;
     // 씬 객체는 판마다 새로 만들어지지 않는다 — 앞 판의 값이 남으면 카메라가 묶인 채 시작한다
@@ -889,6 +897,15 @@ export class BattleScene extends Phaser.Scene {
   private bindNet(): void {
     if (!this.netRole) return;
 
+    /*
+     * 판이 열리는 순간 자리들의 시계를 되감는다.
+     *
+     * 참가자가 첫 입력을 보내기까지는 화면 전환과 씬 로딩만큼 시간이 걸린다.
+     * 그 침묵을 "사라진 사람"으로 세면 아직 들어오지도 않은 사람이 봇으로
+     * 바뀐다 — 느린 기계일수록 그렇게 된다.
+     */
+    net.markAllHeard();
+
     net.onInput = (slot, held, taps) => {
       this.netStats.recv++;
       const f = unpackFrame(held, taps);
@@ -942,6 +959,21 @@ export class BattleScene extends Phaser.Scene {
      * 판을 그 자리에서 끝내 버리는 선택지도 있었지만, 셋이 잘 싸우고 있는
      * 판을 한 사람의 사정으로 없애는 쪽이 더 나쁘다.
      */
+    /* 방장이 "한 판 더"를 눌렀다 — 참가자는 그대로 따라간다 */
+    net.onAgain = (d) => {
+      if (this.netRole !== 'guest' || this.rematching) return;
+      this.rematching = true;
+      this.scene.start('Battle', {
+        playerId: d.chars[0]!,
+        humanIds: d.chars,
+        netSlot: net.slot,
+        aiIds: d.bots,
+        stageId: d.stageId,
+        duel: true,
+        netRole: 'guest',
+      } satisfies BattleSceneData);
+    };
+
     net.onLeft = (slot, reason) => {
       if (this.netRole !== 'host') return;
       /*
@@ -1187,6 +1219,17 @@ export class BattleScene extends Phaser.Scene {
    */
   private reapQuietSeats(time: number): void {
     if (this.netRole !== 'host' || !this.battleActive || this.prompting) return;
+
+    /*
+     * 판이 막 열린 동안은 세지 않는다.
+     *
+     * 인트로가 끝나 전투가 시작될 때, 참가자 쪽은 아직 무대를 그리는 중일 수
+     * 있다. 그 몇 초를 침묵으로 세면 첫 판이 시작되자마자 사람이 봇으로
+     * 바뀐다 — 실제로 그렇게 됐다.
+     */
+    if (this.battleActiveSince === 0) this.battleActiveSince = time;
+    if (time - this.battleActiveSince < QUIET_SEAT_MS) return;
+
     if (time - this.lastReapAt < QUIET_CHECK_MS) return;
     this.lastReapAt = time;
 
@@ -1340,9 +1383,9 @@ export class BattleScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.RIGHT,
     ]);
 
-    kb.on('keydown-R', () => this.scene.start('Battle', this.battleData));
+    kb.on('keydown-R', () => this.onRestartKey());
     kb.on('keydown-SPACE', () => this.startNextRound());
-    kb.on('keydown-ESC', () => this.scene.start('Select'));
+    kb.on('keydown-ESC', () => this.leaveToSelect());
     kb.on('keydown-P', () => this.togglePause());
     kb.on('keydown-M', () => {
       const muted = sound.toggleMute();
@@ -2214,11 +2257,22 @@ export class BattleScene extends Phaser.Scene {
 
     this.buildScoreboard();
 
-    const keys = versus
-      ? 'R : 한 판 더      ESC : 캐릭터 선택'
-      : playerWon
-        ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
-        : 'R : 다시하기      ESC : 캐릭터 선택';
+    /*
+     * 안내는 **누르면 실제로 되는 것**만 적는다.
+     *
+     * 온라인에서 다음 판을 여는 것은 방장뿐이다. 참가자 화면에도 "R : 한 판 더"
+     * 라고 적어 두면 눌러도 아무 일이 없고, 그건 고장으로 읽힌다.
+     * 대신 무엇을 기다리는 중인지 알려 준다.
+     */
+    const keys = this.netRole
+      ? this.netRole === 'host'
+        ? 'R : 다 같이 한 판 더      ESC : 방 나가기'
+        : '방장이 다음 판을 시작합니다…      ESC : 방 나가기'
+      : versus
+        ? 'R : 한 판 더      ESC : 캐릭터 선택'
+        : playerWon
+          ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
+          : 'R : 다시하기      ESC : 캐릭터 선택';
 
     const keyLabel = this.add
       .text(GAME.WIDTH / 2, 690, keys, {
@@ -2231,7 +2285,7 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.OVERLAY + 1);
 
     // 이겼을 때는 다음 상대 안내가 눈에 띄어야 한다 — 여기서 멈추면 안 되므로
-    if (playerWon) {
+    if (playerWon || this.netRole) {
       this.tweens.add({
         targets: keyLabel,
         alpha: { from: 1, to: 0.45 },
@@ -2454,6 +2508,77 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(DEPTH.OVERLAY + 1);
     }
+  }
+
+  /**
+   * R — 다시 한 판.
+   *
+   * ── 온라인에서는 혼자 눌러선 안 된다 ────────────────────────────
+   * 전에는 누구든 R 을 누르면 **그 사람만** 새 판으로 갔다. 넷이 붙은 판에서
+   * 한 사람이 누르면 그 화면만 새 판이 시작되고 나머지 셋은 결과 화면에
+   * 남는다 — 방이 거기서 깨진다. 넷을 모으는 데 든 수고가 한 판으로 끝난다.
+   *
+   * 그래서 온라인에서는 **방장이 누르고 전원이 함께 간다.** 참가자의 R 은
+   * 아무 일도 하지 않고, 대신 결과 화면이 "방장이 다음 판을 시작합니다"라고
+   * 알려 준다 — 눌러도 안 되는 키를 안내에 적어 두면 고장으로 읽힌다.
+   */
+  private onRestartKey(): void {
+    if (!this.netRole) {
+      this.scene.start('Battle', this.battleData);
+      return;
+    }
+    if (this.netRole !== 'host') return;
+    this.startRematch();
+  }
+
+  /**
+   * 방장이 여는 다음 판 — 같은 사람, 같은 캐릭터, 다른 무대.
+   *
+   * 무대를 바꾸는 이유는 연승 도전과 같다. 같은 자리에서 또 하면 두 번째
+   * 판은 첫 판의 반복이 되고, 무대가 바뀌면 같은 캐릭터로도 다른 판이 된다.
+   */
+  private startRematch(): void {
+    if (this.netRole !== 'host' || this.rematching) return;
+    this.rematching = true;
+
+    const humanIds = this.battleData.humanIds ?? [this.battleData.playerId];
+    const bots = this.battleData.aiIds ?? [];
+    const stage = pickStage(this.stage.id);
+    const d = { chars: humanIds, bots, stageId: stage.id };
+
+    /*
+     * 알리고 곧바로 간다 — 기다리지 않는다.
+     *
+     * 처음에는 "참가자가 먼저 넘어가도록" 260ms 뒤에 넘어갔는데, 그 사이를
+     * 씬 타이머에 맡긴 것이 문제였다. 판이 끝난 화면에서는 그 타이머가 늘
+     * 도는 것이 아니어서, **가끔 아무 일도 일어나지 않고 결과 화면에 그대로
+     * 남았다.** 알림은 이미 보냈으니 기다릴 이유도 없다.
+     */
+    try {
+      net.sendAgain(d);
+    } catch {
+      /* 회선이 끊겼어도 내 판은 다시 연다 — 여기서 멈추면 아무것도 못 한다 */
+    }
+
+    this.scene.start('Battle', {
+      ...this.battleData,
+      humanIds,
+      aiIds: bots,
+      stageId: stage.id,
+    } satisfies BattleSceneData);
+  }
+
+  /**
+   * ESC — 방을 나간다.
+   *
+   * 온라인에서 그냥 선택 화면으로 넘어가면 회선은 열린 채 남는다. 남은
+   * 사람들은 그 자리가 비었다는 것을 침묵으로만 알게 되고(4초), 방장이
+   * 나간 경우에는 아무도 판을 계산하지 않는 방이 남는다. 나갈 때는 나간다고
+   * 말하고 나간다.
+   */
+  private leaveToSelect(): void {
+    if (this.netRole) net.close();
+    this.scene.start('Select');
   }
 
   /**

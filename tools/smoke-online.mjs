@@ -13,6 +13,14 @@
  * 붙은 뒤에 어긋나는 것만 실패로 센다.
  */
 
+/*
+ * ── 여러 창을 동시에 기다릴 때는 시간 간격으로 본다 ─────────────────
+ * waitForFunction 의 기본 폴링은 requestAnimationFrame 이다. 그런데 창이
+ * 여러 개면 하나를 뺀 나머지는 항상 뒤에 있고, 뒤에 있는 창에서는 rAF 가
+ * 돌지 않아 **조건을 평가할 기회조차 없다.** 그러면 실제로는 멀쩡히 넘어간
+ * 창이 "안 따라왔다"로 잡힌다 — 앞에 있는 창만 통과하는 이상한 실패가 된다.
+ * polling 을 시간 간격으로 두면 뒤에 있는 창도 제대로 본다.
+ */
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 
@@ -76,6 +84,20 @@ async function openPage(i) {
   pages.push(page);
   return page;
 }
+
+/**
+ * 이 창에 키보드를 준다.
+ *
+ * bringToFront 만으로는 키가 안 들어가는 경우가 있다 — 창은 앞에 왔는데
+ * 그림판에 포커스가 없어서, 누른 키가 아무 데도 도착하지 않는다. 그러면
+ * "회선으로 입력이 안 간다"처럼 보이지만 실제로는 **누른 적이 없는 것**이다.
+ * 그림판을 한 번 눌러 주면 확실해진다 (전투 중 클릭은 게임에 영향이 없다).
+ */
+const focusPage = async (page) => {
+  await page.bringToFront();
+  await page.locator('canvas').click({ position: { x: 8, y: 8 } }).catch(() => {});
+  await page.waitForTimeout(120);
+};
 
 const shot = async (page, name) => {
   step++;
@@ -202,7 +224,7 @@ try {
         return n === want;
       },
       PLAYERS,
-      { timeout: 20000 },
+      { timeout: 20000, polling: 200 },
     )
     .then(() => true)
     .catch(() => false);
@@ -224,6 +246,7 @@ try {
       p
         .waitForFunction(() => window.game.scene.getScene('Select')?.online === true, null, {
           timeout: 20000,
+          polling: 200,
         })
         .then(() => true)
         .catch(() => false),
@@ -290,6 +313,7 @@ try {
       };
     });
 
+  await host.bringToFront();
   const views = await Promise.all(pages.map(read));
   const a = views[0];
 
@@ -322,7 +346,7 @@ try {
   await host.waitForFunction(
     () => window.game.scene.getScene('Battle').battleActive === true,
     null,
-    { timeout: 20000 },
+    { timeout: 20000, polling: 200 },
   );
 
   /*
@@ -348,13 +372,44 @@ try {
     );
 
   for (let slot = 1; slot < pages.length; slot++) {
+    /*
+     * 누르기 전에 그 캐릭터를 자유롭게 만든다.
+     *
+     * 확인하려는 것은 "그 창의 키가 그 캐릭터에 닿는가"이지 "지금 움직일 수
+     * 있는 상태인가"가 아니다. 직전까지 넷이 뒤엉켜 싸웠으므로 경직이나
+     * 공격 후딜에 걸려 있으면 눌러도 안 움직이고, 그건 회선 문제가 아니다.
+     */
+    await host.evaluate((i) => {
+      const s = window.game.scene.getScene('Battle');
+      const f = s.fighters[i];
+      f.stunUntil = 0;
+      f.attackPhase = 'none';
+      f.setGuard(false);
+      f.body.setVelocity(0, 0);
+    }, slot);
+    await host.waitForTimeout(120);
+
     const before = await allX();
-    await pages[slot].bringToFront();
+    /*
+     * 누르는 창과 계산하는 창이 다르다.
+     *
+     * 키를 누르려면 참가자 창이 앞에 있어야 하는데, 판을 실제로 굴리는 것은
+     * 호스트 창이다. 참가자를 앞에 둔 채 기다리면 뒤에 있는 호스트가 프레임을
+     * 거의 안 돌려서, 입력은 다 도착했는데도 캐릭터가 13px 만 움직인다 —
+     * 회선이 아니라 **판이 멈춰 있던 것**이다.
+     *
+     * 누르는 것만 참가자 창에서 하고, 굴리는 동안에는 호스트를 앞에 둔다.
+     * 눌린 상태는 회선 너머에 그대로 남아 있으므로 계속 걷는다.
+     */
+    await focusPage(pages[slot]);
     await pages[slot].keyboard.down('a');
-    await pages[slot].waitForTimeout(800);
-    await pages[slot].keyboard.up('a');
-    await host.waitForTimeout(350);
+    await pages[slot].waitForTimeout(200);
+    await host.bringToFront();
+    await host.waitForTimeout(900);
     const after = await allX();
+    await focusPage(pages[slot]);
+    await pages[slot].keyboard.up('a');
+    await host.bringToFront();
 
     const moved = after.map((x, i) => Math.abs(x - before[i]));
     if (moved[slot] < 20) {
@@ -387,7 +442,7 @@ try {
       .waitForFunction(
         () => window.game.scene.getScene('Battle').items.snapshot().length > 0,
         null,
-        { timeout: 20000 },
+        { timeout: 20000, polling: 200 },
       )
       .then(() => true)
       .catch(() => false);
@@ -450,7 +505,7 @@ try {
       });
 
       const asked = await guest
-        .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 12000 })
+        .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 12000, polling: 200 })
         .then(() => true)
         .catch(() => false);
 
@@ -468,7 +523,7 @@ try {
           .waitForFunction(
             () => window.game.scene.getScene('Battle').gimmicks.getActive().length > 0,
             null,
-            { timeout: 12000 },
+            { timeout: 12000, polling: 200 },
           )
           .then(() => true)
           .catch(() => false);
@@ -486,6 +541,125 @@ try {
           console.log(`  ✓ 참가자의 문장이 호스트 판에 걸린다 — ${what}`);
         }
         await shot(host, 'orb-applied-host');
+      }
+    }
+  }
+
+  /* --- 판이 끝나면 다 같이 한 판 더 --------------------------------- */
+  /*
+   * 넷을 모으는 데는 수고가 든다. 코드를 부르고, 들어오고, 각자 캐릭터를 고른다.
+   * 그 판이 끝나고 다시 붙을 길이 없으면 그 수고가 한 판으로 끝난다.
+   *
+   * 전에는 각자 R 을 눌렀는데 그러면 **누른 사람만** 새 판으로 가고 나머지는
+   * 결과 화면에 남았다 — 방이 거기서 깨졌다. 방장이 누르면 전원이 함께
+   * 가는지 본다.
+   */
+  {
+    /*
+     * 판이 굴러가기를 기다릴 때는 **호스트 창이 앞에** 있어야 한다.
+     *
+     * 판을 계산하는 것은 호스트뿐인데, 창이 여럿이면 뒤에 있는 창은 프레임이
+     * 거의 안 돈다. 참가자 창에서 뭔가 한 직후에는 호스트가 뒤에 있으므로,
+     * 그대로 기다리면 "판이 안 끝난다"가 나온다 — 게임이 아니라 브라우저다.
+     */
+    await host.bringToFront();
+
+    // 판을 끝낸다 — 게임이 쓰는 장외 판정 그대로
+    await host.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.fighters.filter((f) => f !== s.player && f.alive).forEach((f) => f.setPosition(f.x, 3000));
+    });
+
+    const ended = await Promise.all(
+      pages.map((p) =>
+        p
+          .waitForFunction(() => !window.game.scene.getScene('Battle').battleActive, null, {
+            timeout: 20000,
+            polling: 200,
+          })
+          .then(() => true)
+          .catch(() => false),
+      ),
+    );
+
+    if (ended.some((e) => !e)) {
+      errors.push(`[온라인] 결과 화면까지 못 간 창이 있습니다 (${ended.join('/')})`);
+    } else {
+      await shot(guests[0], 'result-guest');
+
+      /* 참가자가 눌러도 혼자 넘어가면 안 된다 */
+      await focusPage(guests[0]);
+      await guests[0].keyboard.press('r');
+      await guests[0].waitForTimeout(700);
+      const guestJumped = await guests[0].evaluate(
+        () => window.game.scene.getScene('Battle').battleActive,
+      );
+      if (guestJumped) {
+        errors.push('[온라인] 참가자가 R 을 눌러 혼자 새 판으로 갔습니다 — 방이 깨집니다');
+      } else {
+        console.log('  ✓ 참가자의 R 은 혼자 넘어가지 않는다');
+      }
+
+      /* 방장이 누르면 전원이 함께 */
+      await focusPage(host);
+      await host.keyboard.press('r');
+
+      /*
+       * 창마다 직접 물어본다.
+       *
+       * 창이 여럿이면 뒤에 있는 쪽은 프레임이 드물게 돈다. 여기서 재는 것은
+       * "따라왔는가"이지 "몇 초 만에 따라왔는가"가 아니므로, 넉넉히 두고
+       * 일정 간격으로 물어보는 편이 정확하다.
+       */
+      const waitActive = async (p) => {
+        for (let i = 0; i < 60; i++) {
+          const on = await p
+            .evaluate(() => window.game.scene.getScene('Battle')?.battleActive === true)
+            .catch(() => false);
+          if (on) return true;
+          await p.waitForTimeout(500);
+        }
+        return false;
+      };
+      const again = [];
+      for (const p of pages) again.push(await waitActive(p));
+
+      if (again.some((a) => !a)) {
+        const diag = await Promise.all(
+          pages.map((p) =>
+            p.evaluate(() => {
+              const g = window.game;
+              const s = g.scene.getScene('Battle');
+              return {
+                battle: g.scene.isActive('Battle'),
+                select: g.scene.isActive('Select'),
+                active: s?.battleActive,
+                intro: !!s?.introRunning,
+                stage: s?.stage?.id,
+                remat: s?.rematching,
+                fighters: s?.fighters?.length,
+              };
+            }),
+          ),
+        );
+        console.log(`    (진단) ${JSON.stringify(diag)}`);
+        errors.push(`[온라인] 방장이 한 판 더를 눌렀는데 안 따라온 창이 있습니다 (${again.join('/')})`);
+      } else {
+        const same = await Promise.all(
+          pages.map((p) =>
+            p.evaluate(() => {
+              const s = window.game.scene.getScene('Battle');
+              return { stage: s.stage.id, ids: s.fighters.map((f) => f.cfg.id).join() };
+            }),
+          ),
+        );
+        const diff = same.filter((v) => v.stage !== same[0].stage || v.ids !== same[0].ids);
+        if (diff.length) {
+          errors.push(`[온라인] 다음 판이 창마다 다릅니다 — ${JSON.stringify(same)}`);
+        } else {
+          console.log(`  ✓ 방장이 누르면 다 같이 다음 판 — ${same[0].stage} · 같은 캐릭터`);
+        }
+        await shot(host, 'rematch');
       }
     }
   }
@@ -551,6 +725,7 @@ try {
      * 15초 동안 본다 — 회선이 끊긴 줄 안다. 가장 나쁜 순간에 나가는 상황을
      * 그대로 만들어 두고, 판이 곧바로 되돌아오는지 본다.
      */
+    await host.bringToFront();
     await host.evaluate((idx) => {
       const s = window.game.scene.getScene('Battle');
       if (!s.orbs.isActive()) s.orbs.spawn(s.time.now, s.fighters[idx].x, s.fighters[idx].y - 140);
@@ -558,7 +733,7 @@ try {
     }, before.idx);
 
     const asking = await leaver
-      .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 12000 })
+      .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 12000, polling: 200 })
       .then(() => true)
       .catch(() => false);
 
@@ -577,6 +752,7 @@ try {
       const back = await host
         .waitForFunction(() => !window.game.scene.getScene('Battle').prompting, null, {
           timeout: 9000,
+          polling: 200,
         })
         .then(() => true)
         .catch(() => false);
@@ -593,7 +769,7 @@ try {
       .waitForFunction(
         (was) => window.game.scene.getScene('Battle').humans.length < was.humans,
         before,
-        { timeout: 15000 },
+        { timeout: 15000, polling: 200 },
       )
       .then(() => true)
       .catch(() => false);
@@ -636,8 +812,21 @@ try {
       if (moved < 0) {
         errors.push('[온라인] 자리는 비었는데 이어받은 봇이 없습니다');
       } else if (moved <= 8) {
+        const why = await host.evaluate((idx) => {
+          const s = window.game.scene.getScene('Battle');
+          const f = s.fighters[idx];
+          return {
+            alive: f?.alive,
+            side: f?.side,
+            x: Math.round(f?.x ?? -1),
+            ais: s.ais.length,
+            aimed: s.ais.some((a) => a.self === f),
+            active: s.battleActive,
+            prompting: s.prompting,
+          };
+        }, before.idx);
         errors.push(
-          `[온라인] 이어받은 봇이 5초 동안 ${moved}px 밖에 안 움직였습니다 — 굳어 있습니다`,
+          `[온라인] 이어받은 봇이 5초 동안 ${moved}px 밖에 안 움직였습니다 — ${JSON.stringify(why)}`,
         );
       } else {
         const relabelled = await host.evaluate((idx) => {

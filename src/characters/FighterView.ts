@@ -71,6 +71,65 @@ interface Motion {
 const NO_MOTION: Motion = { dx: 0, dy: 0, angle: 0, sx: 1, sy: 1, ghosts: 0 };
 
 /**
+ * 서 있는 그림이 칸을 채우는 비율 — 시트마다 한 번만 재고 기억한다.
+ *
+ * 못 재면(그림이 아직 안 올라왔거나 캔버스를 못 쓰면) 지금까지와 같이
+ * 칸 높이를 그대로 쓴다. 크기가 조금 어긋나는 것이 안 나오는 것보다 낫다.
+ */
+const FILL_CACHE = new Map<string, number>();
+/** 못 쟀을 때 쓰는 값 — 지금 시트들의 가운데쯤 */
+const DEFAULT_FILL = 0.93;
+
+function idleFillRatio(scene: Phaser.Scene, key: string): number | null {
+  const cached = FILL_CACHE.get(key);
+  if (cached !== undefined) return cached;
+
+  try {
+    const tex = scene.textures.get(key);
+    const f = tex.get(0);
+    const canvas = document.createElement('canvas');
+    canvas.width = f.width;
+    canvas.height = f.height;
+    const cx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!cx) return null;
+
+    cx.drawImage(
+      tex.getSourceImage() as CanvasImageSource,
+      f.cutX,
+      f.cutY,
+      f.width,
+      f.height,
+      0,
+      0,
+      f.width,
+      f.height,
+    );
+    const data = cx.getImageData(0, 0, f.width, f.height).data;
+
+    let top = -1;
+    let bottom = -1;
+    for (let y = 0; y < f.height; y++) {
+      for (let x = 0; x < f.width; x++) {
+        if (data[(y * f.width + x) * 4 + 3]! > 16) {
+          if (top < 0) top = y;
+          bottom = y;
+          break;
+        }
+      }
+    }
+    if (top < 0) return null;
+
+    // 터무니없는 값이 나오면 쓰지 않는다 (빈 칸·잘린 칸)
+    const ratio = (bottom - top + 1) / f.height;
+    const safe = ratio >= 0.4 && ratio <= 1 ? ratio : DEFAULT_FILL;
+    FILL_CACHE.set(key, safe);
+    return safe;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 기술의 성격에서 궤적을 정한다.
  *
  * 캐릭터마다 표를 따로 두지 않는다. 판정이 어디에 서는지(hitAnchor)와
@@ -127,9 +186,17 @@ function motionFor(atk: AttackConfig): Motion {
       return { dx: 20, dy: 2, angle: 18, sx: 1.14, sy: 0.98, ghosts: 3 };
   }
 
+  /*
+   * 기본 타를 더 크게 뻗는다.
+   *
+   * 약공격이 9px 전진에 잔상 0개였다. 152px 짜리 캐릭터에서 그 정도면
+   * **눌렀는지 안 눌렀는지 화면으로 구별이 안 된다** — 실제로 "공격이 잘
+   * 확인이 안 되고 답답하다"는 말이 여기서 나왔다. 판정은 그대로 두고
+   * 보이는 크기만 키운다. 조작감은 숫자가 아니라 읽히는가로 정해진다.
+   */
   return heavy
-    ? { dx: 16, dy: -2, angle: 14, sx: 1.1, sy: 1.02, ghosts: 2 }
-    : { dx: 9, dy: -2, angle: 7, sx: 1.04, sy: 1.02, ghosts: 0 };
+    ? { dx: 22, dy: -3, angle: 16, sx: 1.12, sy: 1.02, ghosts: 3 }
+    : { dx: 16, dy: -3, angle: 10, sx: 1.07, sy: 1.03, ghosts: 1 };
 }
 
 class SpriteView implements FighterView {
@@ -156,7 +223,21 @@ class SpriteView implements FighterView {
     this.sprite = scene.add.sprite(0, FIGHTER.BODY_H / 2, def.key, 0);
     this.sprite.setOrigin(0.5, 1);
 
-    const scale = def.displayHeight / meta.frameHeight;
+    /*
+     * 캐릭터 키를 **칸이 아니라 사람 키로** 맞춘다.
+     *
+     * ── 무엇이 문제였나 ──────────────────────────────────────────
+     * 전에는 칸 높이를 displayHeight 로 맞췄다. 그런데 칸 크기는 그 시트에서
+     * 가장 큰 프레임이 정한다 — 도끼 에너지가 화면을 채우는 칸이 하나 있으면
+     * 그 시트 전체의 칸이 커지고, 같은 152px 로 줄여도 **사람은 작아진다.**
+     * 실제로 서 있는 그림이 칸을 채우는 비율이 0.879 ~ 0.992 로 갈렸고,
+     * 워런 버피와 젠슨 황제가 다른 캐릭터보다 13% 크게 서 있었다.
+     *
+     * 서 있는 그림이 실제로 몇 px 인지 재서 그것을 기준으로 삼으면,
+     * 시트를 어떻게 뽑았든 사람 키가 같아진다.
+     */
+    const fill = idleFillRatio(scene, def.key) ?? DEFAULT_FILL;
+    const scale = def.displayHeight / (meta.frameHeight * fill);
     this.sprite.setScale(scale);
     if (def.footOffset) this.sprite.y += def.footOffset;
 

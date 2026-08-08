@@ -230,6 +230,14 @@ export class NetSystem {
    * 참가자는 매 프레임 자기 입력을 보내므로, **조용해진 자리 = 사라진 사람**이다.
    */
   private heardAt = new Map<number, number>();
+  /**
+   * 들어가려다 거절당한 이유.
+   *
+   * 자리를 받을 때까지 기다리는 쪽은 "아직 안 온 것"과 "영영 안 올 것"을
+   * 구별할 수 없다. 거절을 들으면 여기 적어 두고, 기다리던 쪽이 그걸 보고
+   * 곧바로 그만둔다 — 안 그러면 30초를 기다린 끝에 엉뚱한 이유를 듣는다.
+   */
+  private refused?: string;
 
   /* --- 바깥에서 꽂는 처리기 --------------------------------------- */
   /** 로비 인원·선택이 바뀌었다 */
@@ -269,6 +277,7 @@ export class NetSystem {
   /* ================================================================ */
 
   private resetRoom(role: NetRole): void {
+    this.refused = undefined;
     this.role = role;
     this.slot = role === 'host' ? 0 : -1;
     this.slots = [];
@@ -315,6 +324,15 @@ export class NetSystem {
 
       // 자리를 받아야 진짜로 들어간 것이다
       const tick = setInterval(() => {
+        if (this.refused) {
+          clearInterval(tick);
+          clearTimeout(timer);
+          const why = this.refused;
+          t.close();
+          this.local = undefined;
+          reject(new Error(why));
+          return;
+        }
         if (this.slot < 0) return;
         clearInterval(tick);
         clearTimeout(timer);
@@ -371,6 +389,12 @@ export class NetSystem {
 
         // 자리를 받아야 진짜로 들어간 것이다
         const tick = setInterval(() => {
+          if (this.refused) {
+            clearInterval(tick);
+            clearTimeout(timer);
+            reject(new Error(this.refused));
+            return;
+          }
           if (this.slot < 0) return;
           clearInterval(tick);
           clearTimeout(timer);
@@ -387,7 +411,18 @@ export class NetSystem {
   /** 호스트: 새 사람에게 자리를 준다 */
   private admit(id: string): void {
     if (this.slots.includes(id)) return;
-    if (this.playerCount >= MAX_PLAYERS) return;
+    /*
+     * 자리가 없으면 **말해 준다.**
+     *
+     * 전에는 그냥 무시했다. 그러면 들어가려던 사람 화면에는 아무 일도
+     * 일어나지 않고, 한참 뒤에 "방을 연 창이 없습니다"라는 엉뚱한 말이 뜬다 —
+     * 방은 있고 자리가 없었을 뿐인데. 못 들어가는 것보다 이유를 모르는 것이
+     * 나쁘다.
+     */
+    if (this.playerCount >= MAX_PLAYERS) {
+      this.transportSend({ t: 'full' }, id);
+      return;
+    }
 
     /*
      * 빈 자리를 먼저 채운다.
@@ -606,7 +641,8 @@ export class NetSystem {
         this.connected = true;
         break;
       case 'full':
-        this.onClose?.('방이 가득 찼습니다 (최대 4명).');
+        this.refused = `방이 가득 찼습니다 (최대 ${MAX_PLAYERS}명).`;
+        this.onClose?.(this.refused);
         break;
       case 'pick':
         if (this.role !== 'host') break;

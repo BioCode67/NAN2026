@@ -11,6 +11,16 @@
  *
  * 브로커에 못 닿는 것은 게임의 문제가 아니므로 **건너뜀**으로 처리하고,
  * 붙은 뒤에 어긋나는 것만 실패로 센다.
+ *
+ * ── 이 검사는 기계를 탄다 ─────────────────────────────────────────
+ * 큰 그림판을 여러 개 동시에 굴리는 유일한 검사다. GPU 없이 소프트웨어로
+ * 그리는 환경에서는 앞에 있는 창 하나만 제대로 돌고 나머지는 초당 한두
+ * 프레임까지 떨어진다. 그러면 **회선이 멀쩡한데도** "안 따라온다"·"안
+ * 움직인다"가 나온다 — 게임이 아니라 브라우저 사정이다.
+ *
+ * 그래서 여기서는 화면이 얼마나 돌았는지에 기대지 않는 것부터 본다
+ * (예: 입력이 제 자리에 도착했는가를 **받아 둔 입력**으로 확인한다).
+ * 그래도 남는 실패가 있으면 진짜 기계에서 한 번 돌려 보는 편이 빠르다.
  */
 
 /*
@@ -358,6 +368,25 @@ try {
   );
 
   /*
+   * 인트로가 끝나기를 기다린다.
+   *
+   * READY? / FIGHT! 가 도는 동안에는 입력을 아예 안 읽는다. 씬이 살아 있는
+   * 것만 보고 바로 키를 누르면 **눌린 적이 없는 것과 같고**, 그러면 회선이
+   * 멀쩡한데도 "입력이 안 간다"가 나온다. 화면이 아니라 상태로 기다린다.
+   */
+  for (const p of pages) {
+    await p.bringToFront();
+    for (let i = 0; i < 60; i++) {
+      const on = await p
+        .evaluate(() => window.game.scene.getScene('Battle')?.battleActive === true)
+        .catch(() => false);
+      if (on) break;
+      await p.waitForTimeout(300);
+    }
+  }
+  await host.bringToFront();
+
+  /*
    * 확인하는 동안 봇을 멈춰 세운다.
    *
    * 회선을 보는 검사인데 봇이 달려들어 막아서면 "안 움직인다"가 나온다.
@@ -380,78 +409,52 @@ try {
     );
 
   for (let slot = 1; slot < pages.length; slot++) {
-    /**
-     * 한 번 눌러 보고, 안 움직이면 자리를 깨끗이 만들어 한 번 더.
+    /*
+     * 확인하는 것은 **입력이 제 자리에 닿는가**다.
      *
-     * 확인하려는 것은 "그 창의 키가 그 캐릭터에 닿는가" 하나다. 그런데 판은
-     * 살아 움직이고 있어서 하필 그 순간 경직·잡힘·발판 끝 같은 사정이 겹치면
-     * 눌러도 안 움직인다 — 회선이 아니라 상황이다. 조건을 느슨하게 하는 대신
-     * **시작점만** 다시 잡는다. 두 번 다 안 움직이면 그건 진짜다.
+     * 처음에는 "눌렀더니 캐릭터가 몇 px 움직였나"로 쟀는데, 그건 회선이 아니라
+     * 판이 얼마나 돌았는지를 재는 것이었다. 키를 누르려면 참가자 창이 앞에
+     * 있어야 하고, 판을 굴리는 것은 호스트 창이다 — 이 환경에서는 뒤에 있는
+     * 창이 초당 한두 프레임밖에 못 돌아서, 입력이 전부 도착했는데도 캐릭터가
+     * 8px 만 움직였다. **회선은 멀쩡한데 검사만 실패한다.**
+     *
+     * 호스트가 받아 둔 입력을 직접 본다. 누른 창의 자리에만 왼쪽이 켜져 있고
+     * 다른 자리는 그대로여야 한다 — 입력이 새는지 아닌지가 여기서 그대로 드러난다.
      */
-    const tryPush = async () => {
-      await host.evaluate((i) => {
-        const s = window.game.scene.getScene('Battle');
-        const f = s.fighters[i];
-        f.stunUntil = 0;
-        f.attackPhase = 'none';
-        f.grabPhase = 'none';
-        f.grabbedBy = null;
-        f.grabHoldUntil = 0;
-        s.fighters.forEach((o) => {
-          if (o.grabbing === f) o.grabbing = null;
-        });
-        f.setGuard(false);
-        /*
-         * 자리는 옮기지 않는다.
-         *
-         * 한때 "판 한가운데"라고 정한 좌표로 옮겼는데, 그 자리가 무대 밖이라
-         * 오히려 캐릭터를 장외로 떨어뜨렸다 — 확인하려던 것과 아무 상관 없는
-         * 이유로 죽여 놓고 "안 움직인다"고 적은 셈이다. 상태만 풀어 준다.
-         */
-        f.body.setVelocity(0, 0);
-      }, slot);
-      await host.waitForTimeout(400);
+    const frames = () =>
+      host.evaluate(() =>
+        Object.entries(window.game.scene.getScene('Battle').remoteFrames).map(([k, f]) => [
+          Number(k),
+          !!f?.left,
+          !!f?.right,
+        ]),
+      );
 
-      const before = await allX();
-      /*
-       * 누르는 창과 계산하는 창이 다르다.
-       *
-       * 키를 누르려면 참가자 창이 앞에 있어야 하는데, 판을 실제로 굴리는 것은
-       * 호스트 창이다. 참가자를 앞에 둔 채 기다리면 뒤에 있는 호스트가 프레임을
-       * 거의 안 돌려서, 입력은 다 도착했는데도 캐릭터가 몇 px 만 움직인다.
-       */
-      await focusPage(pages[slot]);
-      await pages[slot].keyboard.down('a');
-      await pages[slot].waitForTimeout(200);
-      await host.bringToFront();
-      await host.waitForTimeout(900);
-      const after = await allX();
-      await focusPage(pages[slot]);
-      await pages[slot].keyboard.up('a');
-      await host.bringToFront();
+    await focusPage(pages[slot]);
+    await pages[slot].keyboard.down('a');
+    await pages[slot].waitForTimeout(600);
+    const held = await frames();
+    await pages[slot].keyboard.up('a');
+    await pages[slot].waitForTimeout(400);
+    const released = await frames();
+    await host.bringToFront();
 
-      return { before, after, moved: after.map((x, i) => Math.abs(x - before[i])) };
-    };
+    const mine = held.find(([k]) => k === slot);
+    const others = held.filter(([k]) => k !== slot);
+    const mineAfter = released.find(([k]) => k === slot);
 
-    let r = await tryPush();
-    if (r.moved[slot] < 20) r = await tryPush();
-
-    if (r.moved[slot] < 20) {
+    if (!mine || !mine[1]) {
       const st = await host.evaluate(() => window.game.scene.getScene('Battle').netStats);
       errors.push(
-        `[온라인] ${slot + 1}번 참가자가 눌러도 안 움직입니다 ` +
-          `(${r.before[slot]}→${r.after[slot]} · 받음 ${st.recv})`,
+        `[온라인] ${slot + 1}번이 왼쪽을 누르고 있는데 호스트에 안 들어옵니다 ` +
+          `(받음 ${st.recv} · ${JSON.stringify(held)})`,
       );
+    } else if (others.some(([, left]) => left)) {
+      errors.push(`[온라인] ${slot + 1}번 입력이 다른 자리에도 들어갔습니다 — ${JSON.stringify(held)}`);
+    } else if (mineAfter && mineAfter[1]) {
+      errors.push(`[온라인] ${slot + 1}번이 키를 뗐는데 계속 눌린 채로 남아 있습니다`);
     } else {
-      /* 남의 캐릭터가 따라 움직이면 그건 입력이 새는 것이다 */
-      const leaked = r.moved.filter((m, i) => i !== slot && m > 60).length;
-      if (leaked) {
-        errors.push(`[온라인] ${slot + 1}번 입력에 다른 캐릭터 ${leaked}명이 같이 움직였습니다`);
-      } else {
-        console.log(
-          `  ✓ ${slot + 1}번 참가자 입력이 자기 캐릭터에만 도착 — ${r.moved[slot].toFixed(0)}px`,
-        );
-      }
+      console.log(`  ✓ ${slot + 1}번 참가자 입력이 자기 자리에만 도착 (떼면 풀린다)`);
     }
   }
 
@@ -592,10 +595,19 @@ try {
      */
     await host.bringToFront();
 
-    // 판을 끝낸다 — 게임이 쓰는 장외 판정 그대로
+    /*
+     * 판을 끝낸다 — 게임이 쓰는 상장폐지 경로 그대로.
+     *
+     * 전에는 장외로 떨어뜨렸는데, 그건 떨어지는 동안 프레임이 돌아야 한다.
+     * 이 환경에서는 창이 여럿일 때 프레임이 거의 안 돌아서 판이 안 끝났다 —
+     * 게임이 아니라 브라우저 사정이다. 판정 자체를 바로 부르면 프레임이
+     * 몇 장이든 상관없이 같은 길로 끝난다.
+     */
     await host.evaluate(() => {
       const s = window.game.scene.getScene('Battle');
-      s.fighters.filter((f) => f !== s.player && f.alive).forEach((f) => f.setPosition(f.x, 3000));
+      s.fighters
+        .filter((f) => f !== s.player && f.alive)
+        .forEach((f) => s.stock.forceDelist(f.fighterId, null));
     });
 
     const ended = await Promise.all(
@@ -820,6 +832,13 @@ try {
         const bot = s.fighters[idx];
         if (!bot || s.ais.length === 0) return -1;
         /*
+         * 판이 끝났으면 봇도 안 움직인다 — 그게 규칙이다.
+         *
+         * 봇 판단은 전투가 도는 동안에만 돈다. 판이 끝난 뒤에 재면 이어받기가
+         * 잘 됐는지와 무관하게 늘 0px 이 나온다.
+         */
+        if (!s.battleActive) return -2;
+        /*
          * 움직일 때까지 본다 — 정해진 시간만 재지 않는다.
          *
          * 이어받는 순간 그 캐릭터는 문장을 외치던 자세일 수도, 방금 맞아
@@ -831,13 +850,17 @@ try {
         let best = 0;
         for (let i = 0; i < 50; i++) {
           await new Promise((r) => setTimeout(r, 100));
+          // 재는 도중에 판이 끝나기도 한다 — 그때부터는 아무도 안 움직인다
+          if (!s.battleActive) return best > 8 ? Math.round(best) : -2;
           best = Math.max(best, Math.abs(bot.x - x0));
           if (best > 8) break;
         }
         return Math.round(best);
       }, before.idx);
 
-      if (moved < 0) {
+      if (moved === -2) {
+        console.log('  · 판이 끝나 있어 이어받은 봇의 움직임은 확인하지 않습니다');
+      } else if (moved < 0) {
         errors.push('[온라인] 자리는 비었는데 이어받은 봇이 없습니다');
       } else if (moved <= 8) {
         const why = await host.evaluate((idx) => {

@@ -1067,6 +1067,68 @@ if (!(await playerState())?.alive) await restartRound();
 }
 await shot('ai-persona');
 
+/*
+ * 이 판에 문장을 하나 남겨 둔다.
+ *
+ * 결과 화면의 "이 판을 바꾼 말"은 **그 판에** 입력된 문장을 보여준다.
+ * 앞의 기믹 검사는 판을 새로 시작하며 지나갔으므로, 여기서 한 번 더 걸어야
+ * 결과 화면에 남을 것이 생긴다.
+ */
+for (let i = 0; i < 25; i++) {
+  const up = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    s.orbs.nextSpawnAt = 0;
+    return s.orbs.isActive();
+  });
+  if (up) break;
+  await page.waitForTimeout(300);
+}
+/*
+ * 오브 갱신은 전투가 도는 동안에만 돈다.
+ * 이 지점의 판은 이미 한참 진행돼 플레이어가 죽어 있을 수도 있어서,
+ * 타이머를 당기는 것만으로는 안 뜨는 경우가 있다. 그때는 판을 새로 연다 —
+ * 확인하려는 것은 "오브가 몇 초 뒤에 뜨는가"가 아니라 결과 화면이므로.
+ */
+if (!(await page.evaluate(() => window.game.scene.getScene('Battle').orbs.isActive()))) {
+  await restartRound();
+  await waitGrounded();
+  for (let i = 0; i < 30; i++) {
+    const up = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.orbs.nextSpawnAt = 0;
+      return s.orbs.isActive();
+    });
+    if (up) break;
+    await page.waitForTimeout(300);
+  }
+}
+const broke = await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  if (!s.orbs.isActive()) return false;
+  s.orbs.onBreak(s.player);
+  return true;
+});
+/*
+ * 입력창이 뜰 때까지 기다렸다가 채운다.
+ *
+ * onBreak 은 입력창을 곧바로 만들지 않는다 — 판을 멈추고 다음 프레임에 연다.
+ * 기다리지 않고 count() 로 보면 0이 나와 그냥 지나치는데, 그러면 입력창이
+ * 열린 채로 남아 물리가 영영 멈춘다. 이 판은 끝나지 않고 스모크가 통째로 선다.
+ */
+if (broke) {
+  const opened = await page
+    .waitForSelector('[data-testid="prompt-overlay"]', { timeout: 6000 })
+    .then(() => true)
+    .catch(() => false);
+  if (opened) {
+    await page.locator('[data-testid="prompt-input"]').fill('아이템 잔뜩 뿌려줘');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(900);
+    // 그래도 남아 있으면 닫고 간다 — 열린 채로 두면 판이 멈춘다
+    await dismissPrompt();
+  }
+}
+
 console.log('전투 진행');
 for (let i = 0; i < 20; i++) {
   await page.keyboard.press('j');
@@ -1092,6 +1154,26 @@ await waitUntil(
 await page.waitForTimeout(1200);
 await shot('final');
 
+/*
+ * 결과 화면이 화면 안에 있는가.
+ *
+ * 전적표와 제목은 월드 좌표로 그려지는데 카메라는 마지막 순간까지 생존자를
+ * 따라가 있다. 넓은 무대의 오른쪽 끝에서 판이 끝나면 카메라가 거기 머물러
+ * **제목과 표가 화면 왼쪽 밖으로 잘려 나간다.** 스크린샷만 보면 "글자가
+ * 좀 왼쪽에 있네"로 지나가기 쉬우므로 카메라 위치를 숫자로 본다.
+ */
+const camAtEnd = await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  return { scrollX: s.cameras.main.scrollX, over: !s.battleActive };
+});
+if (camAtEnd.over && Math.abs(camAtEnd.scrollX) > 1) {
+  errors.push(
+    `[결과] 카메라가 원점으로 돌아오지 않았습니다 (scrollX ${Math.round(camAtEnd.scrollX)}) — 전적표가 화면 밖으로 잘립니다`,
+  );
+} else if (camAtEnd.over) {
+  console.log('  ✓ 결과 화면 — 카메라 원점 고정');
+}
+
 const board = await page.evaluate(() => {
   const s = window.game.scene.getScene('Battle');
   const me = s.stats?.get(s.player.fighterId);
@@ -1109,6 +1191,39 @@ if (!board) {
   console.log(
     `  ✓ 전적 집계 — 준 피해 ${Math.round(board.dealt)} · 맞은 피해 ${Math.round(board.taken)} · 적중 ${board.hits}`,
   );
+}
+
+/*
+ * 이 판을 바꾼 말.
+ *
+ * 전적표는 어느 대전 게임에나 있고, 이 게임에만 있는 것은 "사람이 친 문장이
+ * 판을 뒤집었다"는 사실이다. 그것이 결과 화면에 **문장 그대로** 남는지 본다 —
+ * 숫자로 "프롬프트 3회"만 남으면 붙인 의미가 없다.
+ */
+const promptLog = await page.evaluate(() => {
+  const s = window.game.scene.getScene('Battle');
+  const log = [...(s.stats?.prompts ?? [])];
+  // 화면에 실제로 그려졌는가 (마지막 세 줄만 보여준다)
+  const drawn = s.children.list
+    .filter((o) => o.type === 'Text' && typeof o.text === 'string' && o.text.includes('”  →  '))
+    .map((o) => o.text);
+  return { log, drawn };
+});
+if (promptLog.log.length === 0) {
+  console.log('  · 이 판에는 프롬프트가 안 걸려 결과 화면 문장 검사는 건너뜁니다');
+} else {
+  const last = promptLog.log[promptLog.log.length - 1];
+  const line = promptLog.drawn.find((t) => t.includes(last.gimmick));
+  if (!line) {
+    errors.push(
+      `[결과] 마지막 문장이 결과 화면에 없습니다 — "${last.text}" → ${last.gimmick}` +
+        ` (그려진 줄 ${promptLog.drawn.length}개)`,
+    );
+  } else if (!line.includes(last.who)) {
+    errors.push(`[결과] 누가 썼는지가 빠졌습니다 — ${line}`);
+  } else {
+    console.log(`  ✓ 이 판을 바꾼 말 ${promptLog.log.length}줄 — ${line}`);
+  }
 }
 
 /*
@@ -1662,15 +1777,34 @@ console.log('잡기');
     const p = s.player;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+    /*
+     * 검사하는 동안만 중력을 끈다.
+     *
+     * 확인하려는 규칙은 "공중 히트가 점프를 돌려주는가"이지 "이 무대에서
+     * 얼마나 오래 떠 있는가"가 아니다. 그런데 무대마다 중력이 다르고
+     * (2200 ~ 2464) 무거운 무대에서는 공격 판정이 나오기 전에 착지해 버려서,
+     * **고장이 아닌데 실패하는** 검사가 된다. 떠 있는 시간을 검사가 직접
+     * 보장하면 어느 무대에서 돌아도 같은 답이 나온다.
+     */
+    const airborne = [];
+    const hold = (f) => {
+      airborne.push(f);
+      f.body.setAllowGravity(false);
+    };
+    const release = () => airborne.forEach((f) => f.body.setAllowGravity(true));
+
+    try {
     for (let t = 0; t < 10; t++) {
       const foe = s.fighters.find((f) => f !== p && f.alive);
       if (!foe) return { why: '살아 있는 상대가 없습니다' };
 
       /* 둘 다 공중에 띄우고, 점프를 다 쓴 상태로 만든다 */
       p.setPosition(640, 210);
-      p.body.setVelocity(0, -40);
+      p.body.setVelocity(0, 0);
       foe.setPosition(640 + 44, 210);
-      foe.body.setVelocity(0, -40);
+      foe.body.setVelocity(0, 0);
+      hold(p);
+      hold(foe);
       p.facing = 1;
       p.jumpsLeft = 0;
       p.hitTargets.clear();
@@ -1699,6 +1833,9 @@ console.log('잡기');
       }
     }
     return { refunded: false };
+    } finally {
+      release();
+    }
   });
 
   if (airCombo.why) errors.push(`[공중 연속기] ${airCombo.why}`);

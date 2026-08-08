@@ -50,7 +50,13 @@ import { StockSystem } from '../systems/StockSystem';
 import { BannerLanes } from '../ui/BannerLanes';
 import { closePromptOverlay, openPromptOverlay } from '../ui/PromptOverlay';
 import { StockTier } from '../types';
-import type { AIDifficulty, AttackDir, BattleSceneData, CharacterId } from '../types';
+import type {
+  AIDifficulty,
+  AttackDir,
+  BattleSceneData,
+  CharacterId,
+  GimmickSpec,
+} from '../types';
 
 /** HUD 한 칸(파이터 1명분) */
 interface FighterHud {
@@ -207,6 +213,9 @@ export class BattleScene extends Phaser.Scene {
   private paused = false;
   private pauseOverlay?: Phaser.GameObjects.Container;
 
+  /** 결과 화면이 떠 있는가 — 카메라를 원점에 묶는 데 쓴다 */
+  private resultShown = false;
+
   /** 전투 진행 중인가 (인트로/결과 화면에서는 false) */
   private battleActive = false;
   /** EventBus 구독 해제 함수들 */
@@ -230,6 +239,8 @@ export class BattleScene extends Phaser.Scene {
     this.disposers = [];
     this.koOrder = [];
     this.battleActive = false;
+    // 씬 객체는 판마다 새로 만들어지지 않는다 — 앞 판의 값이 남으면 카메라가 묶인 채 시작한다
+    this.resultShown = false;
     this.canContinue = false;
     this.streak = data.streak ?? 0;
     resetQuoteThrottle();
@@ -870,6 +881,8 @@ export class BattleScene extends Phaser.Scene {
           if (!this.scene.isActive()) return;
           this.gimmicks.activate(spec, text, this.time.now, note);
         });
+        // 참가자 화면의 결과표에도 같은 문장이 남아야 한다
+        this.logPrompt(text, who, spec);
       });
       if (who) this.announce(`${who}의 명령`, '#f472b6', 900);
     };
@@ -1380,6 +1393,19 @@ export class BattleScene extends Phaser.Scene {
    * 넓어진 맵을 보여주는 목적에는 스크롤만으로 충분하다.
    */
   private updateCamera(delta: number): void {
+    /*
+     * 결과 화면에서는 카메라를 원점에 묶는다.
+     *
+     * 결과 화면의 글자들은 월드 좌표로 그려지는데, 카메라는 마지막 순간까지
+     * 생존자를 따라가 있다. 넓은 무대의 오른쪽 끝에서 판이 끝나면 카메라가
+     * 거기 머물러 **전적표와 제목이 화면 왼쪽 밖으로 잘려 나간다.**
+     * 판이 끝난 뒤의 카메라 위치는 아무 정보도 아니므로 원점으로 되돌린다.
+     */
+    if (this.resultShown) {
+      this.cameras.main.setScroll(0, 0);
+      return;
+    }
+
     const alive = this.fighters.filter((f) => f.alive);
     if (alive.length === 0) return;
 
@@ -1789,13 +1815,19 @@ export class BattleScene extends Phaser.Scene {
       `AI 해석: ${reading.reason} · 확신 ${Math.round(reading.confidence * 100)}%`;
 
     this.gimmicks.activate(reading.primary, text, this.time.now, note);
-    this.stats.countGimmick();
+    this.logPrompt(text, who, reading.primary);
     if (reading.secondary) {
       // 조금 늦춰 건다 — 같은 순간에 두 배너가 겹쳐 뜨면 둘 다 안 읽힌다
       this.time.delayedCall(650, () => {
         if (!this.battleActive) return;
         this.gimmicks.activate(reading.secondary!, text, this.time.now, '함께 읽은 것');
-        this.stats.countGimmick();
+        this.stats.logPrompt({
+          text,
+          who,
+          gimmick: reading.secondary!.name,
+          icon: reading.secondary!.icon,
+          color: reading.secondary!.color,
+        });
       });
     }
 
@@ -1805,6 +1837,17 @@ export class BattleScene extends Phaser.Scene {
       if (reading.secondary) ids.push(reading.secondary.id);
       net.sendGimmick(ids, text, who, note);
     }
+  }
+
+  /** 결과 화면에 남길 한 줄 (호스트·1인·참가자 모두 같은 자리로 모은다) */
+  private logPrompt(text: string, who: string, spec: GimmickSpec): void {
+    this.stats.logPrompt({
+      text,
+      who,
+      gimmick: spec.name,
+      icon: spec.icon,
+      color: spec.color,
+    });
   }
 
   /**
@@ -1869,6 +1912,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private showResult(winner: BaseCharacter | null): void {
+    this.resultShown = true;
+    this.cameras.main.setScroll(0, 0);
+
     /*
      * 2인 대전에서는 "이겼다/졌다"가 성립하지 않는다.
      *
@@ -1923,7 +1969,7 @@ export class BattleScene extends Phaser.Scene {
         : '#ef4444';
 
     const title = this.add
-      .text(GAME.WIDTH / 2, 170, titleText, {
+      .text(GAME.WIDTH / 2, 152, titleText, {
         fontFamily: GAME.FONT,
         fontSize: '76px',
         color: titleColor,
@@ -1945,7 +1991,7 @@ export class BattleScene extends Phaser.Scene {
     this.add
       .text(
         GAME.WIDTH / 2,
-        250,
+        232,
         winner
           ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%\n${rankText}`
           : '전원 상장폐지',
@@ -1972,7 +2018,7 @@ export class BattleScene extends Phaser.Scene {
       this.add
         .text(
           GAME.WIDTH / 2,
-          304,
+          288,
           `${wonSoFar}연승${badge ? `  ·  ${badge}` : ''}`,
           {
             fontFamily: GAME.FONT,
@@ -1995,7 +2041,7 @@ export class BattleScene extends Phaser.Scene {
         : 'R : 다시하기      ESC : 캐릭터 선택';
 
     const keyLabel = this.add
-      .text(GAME.WIDTH / 2, 648, keys, {
+      .text(GAME.WIDTH / 2, 690, keys, {
         fontFamily: GAME.FONT,
         fontSize: '18px',
         color: playerWon ? '#e8eeff' : '#8fa6d8',
@@ -2038,8 +2084,8 @@ export class BattleScene extends Phaser.Scene {
   private buildScoreboard(): void {
     const top = this.stats.topDealer();
 
-    const rowH = 46;
-    const y0 = 358;
+    const rowH = 42;
+    const y0 = 332;
     const left = GAME.WIDTH / 2 - 430;
 
     const header = ['', '준 피해', '맞은 피해', 'KO', '최고 주가', '가장 많이 쓴 기술'];
@@ -2123,13 +2169,13 @@ export class BattleScene extends Phaser.Scene {
         .setDepth(DEPTH.OVERLAY + 2);
     });
 
-    /* 이 판 전체를 한 줄로 — 어디서 싸웠고 문장을 몇 번 썼는가 */
+    /* 이 판 전체를 한 줄로 — 어디서 싸웠고 내 최고 한 방은 무엇이었나 */
     const me = this.stats.get(this.player.fighterId);
     this.add
       .text(
         GAME.WIDTH / 2,
-        y0 + 12 + ordered.length * rowH + 24,
-        `${this.stage.name} · 프롬프트 ${this.stats.gimmicks}회` +
+        y0 + 12 + ordered.length * rowH + 22,
+        `${this.stage.name}` +
           (me.bestHitName ? ` · 내 최고 한 방 ${me.bestHitName} ${Math.round(me.bestHit)}` : ''),
         {
           fontFamily: GAME.FONT,
@@ -2139,6 +2185,95 @@ export class BattleScene extends Phaser.Scene {
       )
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
+
+    this.buildPromptLog(y0 + 12 + ordered.length * rowH + 52);
+  }
+
+  /**
+   * 이 판을 바꾼 문장들.
+   *
+   * ── 왜 여기에 두는가 ───────────────────────────────────────────
+   * 전적표는 어느 대전 게임에나 있다. 이 게임에만 있는 것은 **사람이
+   * 그 자리에서 지어낸 한 줄로 판이 통째로 뒤집혔다**는 사실이고,
+   * 그것은 숫자로 남지 않는다. "프롬프트 3회"라고 적으면 아무 기억도
+   * 만들어지지 않지만, `"중력 좀 꺼줘" → 무중력` 이라고 적으면 방금 다 같이
+   * 떠올랐던 30초가 통째로 돌아온다.
+   *
+   * 그래서 전적표 아래가 아니라 전적표와 **같은 무게**로 그린다 — 문장은
+   * 이 게임의 부록이 아니라 본편이다.
+   */
+  private buildPromptLog(y: number): void {
+    const log = this.stats.prompts;
+
+    if (log.length === 0) {
+      this.add
+        .text(GAME.WIDTH / 2, y + 6, '이번 판에는 아무도 명령을 내리지 않았다', {
+          fontFamily: GAME.FONT,
+          fontSize: '14px',
+          color: '#54608a',
+        })
+        .setOrigin(0.5)
+        .setDepth(DEPTH.OVERLAY + 1);
+      return;
+    }
+
+    this.add
+      .text(GAME.WIDTH / 2, y, '이 판을 바꾼 말', {
+        fontFamily: GAME.FONT,
+        fontSize: '14px',
+        color: '#c084fc',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH.OVERLAY + 1);
+
+    /*
+     * 마지막 세 줄만.
+     *
+     * 긴 판에서는 여덟 줄까지도 쌓이는데, 여기서부터 화면 아래 끝까지는
+     * 세 줄이 한계다. 잘라야 한다면 **나중 것**을 남긴다 — 판을 끝낸
+     * 문장이 대개 마지막 것이고, 그것이 사람들이 기억하는 장면이다.
+     */
+    const shown = log.slice(-3);
+    const hidden = log.length - shown.length;
+
+    shown.forEach((p, i) => {
+      const ly = y + 24 + i * 21;
+      const hex = `#${p.color.toString(16).padStart(6, '0')}`;
+
+      /* 문장이 길면 잘라 준다 — 두 줄로 넘어가면 아래 안내와 겹친다 */
+      const said = p.text.length > 22 ? `${p.text.slice(0, 21)}…` : p.text;
+
+      const line = this.add
+        .text(GAME.WIDTH / 2, ly, `${p.who}  “${said}”  →  ${p.icon} ${p.gimmick}`, {
+          fontFamily: GAME.FONT,
+          fontSize: '16px',
+          color: hex,
+        })
+        .setOrigin(0.5)
+        .setDepth(DEPTH.OVERLAY + 1)
+        .setAlpha(0);
+
+      // 한 줄씩 떠오르게 — 눈이 여기로 온다
+      this.tweens.add({
+        targets: line,
+        alpha: 1,
+        y: { from: ly + 8, to: ly },
+        delay: 380 + i * 130,
+        duration: 260,
+      });
+    });
+
+    if (hidden > 0) {
+      this.add
+        .text(GAME.WIDTH / 2, y + 24 + shown.length * 21, `그리고 ${hidden}줄 더`, {
+          fontFamily: GAME.FONT,
+          fontSize: '13px',
+          color: '#54608a',
+        })
+        .setOrigin(0.5)
+        .setDepth(DEPTH.OVERLAY + 1);
+    }
   }
 
   /**

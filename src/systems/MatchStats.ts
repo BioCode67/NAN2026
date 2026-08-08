@@ -48,11 +48,35 @@ const blank = (): FighterStat => ({
   byMove: new Map(),
 });
 
+/** 이 판에서 누가 무슨 문장을 썼고, 그것이 무엇이 되었는가 */
+export interface PromptEntry {
+  /** 사람이 실제로 친 문장 */
+  text: string;
+  /** 누가 썼는가 */
+  who: string;
+  /** 그 문장이 걸어 낸 기믹 이름 */
+  gimmick: string;
+  /** 기믹 아이콘 */
+  icon: string;
+  /** 기믹 색 */
+  color: number;
+}
+
 export class MatchStats {
   private readonly rows = new Map<string, FighterStat>();
   private readonly disposers: Array<() => void> = [];
-  /** 이 판에서 발동한 프롬프트 기믹 수 */
-  private gimmickCount = 0;
+  /**
+   * 이 판에 입력된 문장들.
+   *
+   * ── 왜 세는 것으로 끝내지 않는가 ────────────────────────────────
+   * "프롬프트 3회"는 아무 기억도 만들지 않는다. 이 게임에서 판을 뒤집는
+   * 것은 횟수가 아니라 **누가 뭐라고 썼는가**다 — "중력을 없애줘" 한 줄로
+   * 넷이 다 같이 떠오른 장면이 이 게임의 전부이고, 그 문장은 사람이
+   * 그 자리에서 지어낸 것이라 두 번 다시 같은 것이 나오지 않는다.
+   * 판이 끝날 때 그 문장들을 그대로 되돌려 주면, 방금 있었던 일이
+   * 남는다.
+   */
+  private readonly promptLog: PromptEntry[] = [];
 
   constructor() {
     this.disposers.push(
@@ -82,13 +106,18 @@ export class MatchStats {
     );
   }
 
-  /** 프롬프트 기믹이 하나 발동했다 */
-  countGimmick(): void {
-    this.gimmickCount += 1;
+  /** 문장 하나가 기믹이 되었다 */
+  logPrompt(entry: PromptEntry): void {
+    this.promptLog.push(entry);
+  }
+
+  /** 입력된 순서 그대로 */
+  get prompts(): readonly PromptEntry[] {
+    return this.promptLog;
   }
 
   get gimmicks(): number {
-    return this.gimmickCount;
+    return this.promptLog.length;
   }
 
   get(id: string): FighterStat {

@@ -36,6 +36,8 @@ export type Pose =
   | 'attackJBack'
   | 'attackKFwd'
   | 'attackKBack'
+  /** 개성 필살 — 완전 충전 강공격에서 재생되는 그 캐릭터만의 3장 연출 */
+  | 'flair'
   /* 스킬 · 프롬프트 */
   | 'skillCharge'
   | 'skill'
@@ -82,6 +84,7 @@ export const POSE_ORDER: Pose[] = [
   // ↓ 앞뒤 커맨드·공중 확장에서 늘어난 포즈. 반드시 뒤에만 붙일 것
   'attackJFwd', 'attackJBack', 'attackKFwd', 'attackKBack',
   'dashSlide', 'airUp', 'airBack',
+  'flair',
 ];
 
 /** 커맨드 무브 → 재생할 포즈 */
@@ -148,6 +151,8 @@ export const POSE_FALLBACK: Partial<Record<Pose, Pose>> = {
   attackKDown: 'attackK',
   attackKFwd: 'attackK',
   attackKBack: 'attackK',
+  // 개성 필살 그림이 없으면 강공격 마무리가 가장 가깝다
+  flair: 'attackK2',
   airK: 'attackK',
   dive: 'attackK',
   dashAttack: 'attackK',
@@ -460,6 +465,25 @@ const V3_CELLS: string[] = [
    * 가만히 서 있어도 숨을 쉰다.
    */
   /* 9묶음 잡기 */ 'grab', 'grabHold', 'grabbed', 'throw', 'airBack', 'idle',
+  /*
+   * 10·11묶음 — 공격의 "다음 순간".
+   *
+   * 태그를 앞 묶음과 똑같이 적는 것이 핵심이다. buildV3Layout 은 같은 태그가
+   * 또 나오면 배열로 합치고, 배열 포즈는 자동으로 애니메이션이 된다.
+   * 즉 이 두 묶음을 뽑아 넣는 것만으로 **한 장짜리 공격이 두 장짜리
+   * 휘두름(내지름 → 팔로우스루)으로 바뀐다.** 게임 코드는 손대지 않는다.
+   */
+  /* 10묶음 후속A */ 'attackJ', 'attackK', 'attackJ3', 'attackK2', 'dashAttack', 'dive',
+  /* 11묶음 후속B */ 'attackKUp', 'attackKDown', 'attackKFwd', 'attackKBack', 'airK', 'skill',
+  /*
+   * 12묶음 — 개성 필살 + 살아나는 대기 동작.
+   *
+   * FLAIR 세 장은 그 캐릭터만의 자유 연출이다. 규격의 어떤 기술에도 묶이지
+   * 않고 "이 인물이 가장 그 인물다운 공격"을 그리게 한다. 게임에서는 완전
+   * 충전 강공격이 이 3장을 재생한다 — 참았다 터뜨린 한 방이 그 캐릭터의
+   * 서명이 되도록. WALK 두 장째·TAUNT·WIN 후속은 반복 동작을 살린다.
+   */
+  /* 12묶음 개성 */ 'flair', 'flair', 'flair', 'walk', 'taunt', 'win',
 ];
 
 /** 한 묶음에 들어가는 칸 수 */

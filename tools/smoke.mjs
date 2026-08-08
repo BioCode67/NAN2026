@@ -1512,12 +1512,25 @@ console.log('공격 모션');
 
     const home = { x: sp.x, y: sp.y, sx: sp.scaleX, sy: sp.scaleY };
 
-    /* 선딜 — 뒤로 당기는가 */
+    /*
+     * 선딜 — 뒤로 당기는가.
+     *
+     * 한 시점을 찍지 않고 선딜 창 전체에서 **가장 뒤로 간 값**을 잡는다.
+     * 검사용 브라우저는 초당 열 장쯤이라, 고정 시점 하나는 그 사이 프레임이
+     * 한 장도 안 지나간 순간일 수 있다 — 당기지 않은 게 아니라 아직 아무것도
+     * 그려지지 않은 것이다. 시점 하나에 기대는 검사는 느린 기계에서 거짓말을 한다.
+     */
     p.attackPhase = 'none';
     p.stunUntil = 0;
     p.attack('heavy', 'neutral');
-    await wait(45);
-    const wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
+    let wind = { dx: 0, sy: 1 };
+    for (let i = 0; i < 10; i++) {
+      await wait(22);
+      if (sp.x - home.x < wind.dx) {
+        wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
+      }
+      if (p.attackPhase !== 'startup') break;
+    }
 
     /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
     let out = { dx: 0, sx: 1, sy: 1 };

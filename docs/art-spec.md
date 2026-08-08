@@ -11,7 +11,7 @@
 
 ---
 
-## 0. 프레임 규격 (V3 — 7행 x 6열, 42프레임)
+## 0. 프레임 규격 (최대 12묶음 × 6칸 = 72프레임)
 
 커맨드·연속기에 더해 **아이템을 쥔 손, 프롬프트 시전, 도발, 기절**까지 담는다.
 새로 뽑는 시트는 전부 이 규격이다.
@@ -39,6 +39,17 @@ npm run sheet:merge -- <key>   # 받은 묶음 이미지들을 시트 한 장으
 | 5 | 스킬·프롬프트 | SKILL_CHARGE, SKILL_L, SKILL_L2, SKILL_FX, PROMPT_CAST, PROMPT_FX |
 | 6 | 아이템·도발 | ITEM_GET, ITEM_HOLD, ITEM_THROW, ITEM_SWING, TAUNT, DOWN |
 | 7 | 피격·결과·초상 | HIT, HIT_AIR, KNOCKBACK, WIN, LOSE, PORTRAIT |
+| 8 | 앞뒤 커맨드 | ATTACK_J_FWD, ATTACK_J_BACK, ATTACK_K_FWD, ATTACK_K_BACK, DASH_SLIDE, AIR_UP |
+| 9 | 잡기·대기 | GRAB, GRAB_HOLD, GRABBED, THROW, AIR_BACK, IDLE_B |
+| 10 | 공격 후속 A | ATTACK_J_B, ATTACK_K_B, ATTACK_J3_B, ATTACK_K2_B, DASH_ATTACK_B, AIR_DIVE_B |
+| 11 | 공격 후속 B | ATTACK_K_UP_B, ATTACK_K_DOWN_B, ATTACK_K_FWD_B, ATTACK_K_BACK_B, AIR_K_B, SKILL_L3 |
+| 12 | 개성 필살 | FLAIR_A, FLAIR_B, FLAIR_C, WALK_B, TAUNT_B, WIN_B |
+
+10~12묶음은 **얹는 그림**이다. 10·11의 `_B` 프레임은 앞 묶음 기술의 "다음
+순간"으로, 배치표가 같은 태그를 배열로 합치므로 넣는 즉시 그 공격이 두 장짜리
+휘두름 애니메이션이 된다. 12묶음 FLAIR 세 장은 캐릭터마다 완전히 자유로운
+필살 3연출이며 다 모은 차지 강공격에서 재생된다. IDLE_B·WALK_B·TAUNT_B·WIN_B
+가 있으면 해당 동작이 두 장을 번갈아 재생한다.
 
 ### 프레임 → 게임 안 쓰임
 

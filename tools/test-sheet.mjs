@@ -293,6 +293,28 @@ console.log('\n묶음 일부만 뽑은 시트');
   }
   if (core.portraitFrame !== 17) fail(`1·3·7 묶음의 초상이 17번이어야 하는데 ${core.portraitFrame}`);
 
+  /*
+   * 후속 묶음(10·11)이 앞 묶음 위에 **애니메이션으로 얹히는가.**
+   *
+   * 이 확장의 전제가 "같은 태그가 또 나오면 배열로 합쳐진다"이다. 그게
+   * 깨지면 후속 그림이 원본을 덮어써서, 공격이 두 장이 되는 게 아니라
+   * 팔로우스루 한 장만 나온다 — 내지르는 순간이 통째로 사라진다.
+   */
+  const withB = buildV3Layout([3, 10]);
+  // 3묶음 attackJ=0번 + 10묶음 후속 attackJ=6번 → [0, 6] 두 장 애니
+  if (JSON.stringify(withB.poses.attackJ) !== '[0,6]') {
+    fail(`3+10묶음의 attackJ 가 [0,6] 이어야 하는데 ${JSON.stringify(withB.poses.attackJ)}`);
+  }
+  if (JSON.stringify(withB.poses.attackJ3) !== '[2,8]') {
+    fail(`3+10묶음의 attackJ3 가 [2,8] 이어야 하는데 ${JSON.stringify(withB.poses.attackJ3)}`);
+  }
+
+  /* 12묶음 — 개성 필살 3장이 flair 한 포즈의 3프레임 애니로 합쳐지는가 */
+  const withFlair = buildV3Layout([12]);
+  if (JSON.stringify(withFlair.poses.flair) !== '[0,1,2]') {
+    fail(`12묶음의 flair 가 [0,1,2] 이어야 하는데 ${JSON.stringify(withFlair.poses.flair)}`);
+  }
+
   /* 안 뽑은 묶음의 포즈는 등록되면 안 된다 — 대체 사슬이 메워야 하는 자리다 */
   for (const pose of ['jump', 'guard', 'skill', 'taunt', 'itemHold']) {
     if (core.poses[pose] !== undefined) {

@@ -1,6 +1,6 @@
 # 마크 저크버그 — 스프라이트 프롬프트
 
-총 **54장**을 9개 묶음으로 나눠 뽑는다.
+총 **72장**을 12개 묶음으로 나눠 뽑는다.
 
 ## 순서
 
@@ -14,7 +14,7 @@
 art-source/markzuckerberg_b1.png    (1번 묶음)
 art-source/markzuckerberg_b2.png    (2번 묶음)
 ...
-art-source/markzuckerberg_b9.png
+art-source/markzuckerberg_b12.png
 ```
 
 4. 전처리 + 합치기는 한 줄로 끝난다.
@@ -36,6 +36,9 @@ npm run sheet:merge -- markzuckerberg
 | 7 | `7-피격 · 결과 · 초상.txt` | HIT, HIT_AIR, KNOCKBACK, WIN, LOSE, PORTRAIT |
 | 8 | `8-앞뒤 커맨드.txt` | ATTACK_J_FWD, ATTACK_J_BACK, ATTACK_K_FWD, ATTACK_K_BACK, DASH_SLIDE, AIR_UP |
 | 9 | `9-잡기 · 대기.txt` | GRAB, GRAB_HOLD, GRABBED, THROW, AIR_BACK, IDLE_B |
+| 10 | `10-공격 후속 A.txt` | ATTACK_J_B, ATTACK_K_B, ATTACK_J3_B, ATTACK_K2_B, DASH_ATTACK_B, AIR_DIVE_B |
+| 11 | `11-공격 후속 B.txt` | ATTACK_K_UP_B, ATTACK_K_DOWN_B, ATTACK_K_FWD_B, ATTACK_K_BACK_B, AIR_K_B, SKILL_L3 |
+| 12 | `12-개성 필살.txt` | FLAIR_A, FLAIR_B, FLAIR_C, WALK_B, TAUNT_B, WIN_B |
 
 ## 잘 안 나올 때
 

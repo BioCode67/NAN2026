@@ -150,13 +150,26 @@ export class BootScene extends Phaser.Scene {
         const key = animKey(def.key, pose as Pose);
         if (this.anims.exists(key)) continue;
 
-        // 달리기만 반복하고 나머지(스킬 등)는 1회 재생 후 마지막 프레임 유지
-        const looping = pose === 'run' || pose === 'walk';
+        // 반복 동작만 돌리고 나머지(공격·스킬)는 1회 재생 후 마지막 프레임 유지
+        const looping =
+          pose === 'run' ||
+          pose === 'walk' ||
+          pose === 'idle' ||
+          pose === 'taunt' ||
+          pose === 'win';
+
+        /*
+         * 반복 동작은 느리게 돈다.
+         *
+         * 대기 두 장(들숨·날숨)을 공격과 같은 9fps 로 돌리면 숨쉬기가 아니라
+         * 몸 떨림으로 보인다. 사람이 숨 쉬는 속도는 초당 반 번쯤이다.
+         */
+        const slow: Partial<Record<string, number>> = { idle: 1.6, taunt: 4, walk: 7, win: 3 };
 
         this.anims.create({
           key,
           frames: this.anims.generateFrameNumbers(def.key, { frames }),
-          frameRate: def.frameRate ?? 9,
+          frameRate: slow[pose] ?? def.frameRate ?? 9,
           repeat: looping ? -1 : 0,
         });
       }

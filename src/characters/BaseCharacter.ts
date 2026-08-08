@@ -221,6 +221,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
    * 같은 방식이고, 입력 지연이 0이면서 "모으는 맛"이 생긴다.
    */
   private chargeMs = 0;
+  /** 이 시각까지 개성 필살 연출(flair 포즈)을 재생한다 — 완전 충전 강공격 */
+  private flairUntil = 0;
   /** 지금 강공격 버튼이 눌려 있는가 (씬이 매 프레임 알려준다) */
   private holdingHeavy = false;
   /** 차지 불티를 마지막으로 뿌린 시각 — 매 프레임 뿌리면 화면이 탄다 */
@@ -1886,7 +1888,19 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
             this.attackPhase = 'active';
             this.attackTimer = charged.active;
             this.spawnSwing(charged);
-            if (this.chargeMs >= FIGHTER.CHARGE_MIN_MS) this.spawnChargeBurst();
+            if (this.chargeMs >= FIGHTER.CHARGE_MIN_MS) {
+              this.spawnChargeBurst();
+              /*
+               * 다 모은 한 방은 그 캐릭터의 개성 필살 연출(flair)로 나간다.
+               *
+               * 12묶음 시트가 있는 캐릭터는 여기서 자기만의 3장 시퀀스가
+               * 재생된다. 없으면 대체 사슬이 강공격 마무리 그림으로
+               * 떨어뜨리므로 아무것도 잃지 않는다 — 그림이 늘어날수록
+               * 같은 조작이 점점 화려해지는 방향으로만 변한다.
+               */
+              this.flairUntil =
+                this.scene.time.now + charged.active + charged.recovery;
+            }
             this.chargeMs = 0;
             break;
           }
@@ -2157,6 +2171,8 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 기술마다 전용 포즈가 있다 (시트에 없으면 뷰가 대체 사슬을 따라간다)
     if (this.attackPhase !== 'none' && this.currentAttack) {
+      // 다 모은 한 방은 그 캐릭터만의 개성 필살 연출로 나간다
+      if (now < this.flairUntil) return 'flair';
       return MOVE_POSE[this.currentAttack.slot];
     }
 

@@ -397,5 +397,110 @@ console.log('\n빠진 묶음이 있는 채로 합치기');
   rmSync('art-source/.merge', { recursive: true, force: true });
 }
 
+
+/* ------------------------------------------------------------------ */
+/* 5. 생성기가 규격을 어긴 그림 — 7칸 · 두 줄                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 생성기는 "가로 한 줄 6칸"을 자주 어긴다. 7칸을 주거나 두 줄(4+3)로 준다.
+ * 그때마다 사람이 다시 뽑게 두면 그림 작업이 도구 사정에 끌려다닌다 —
+ * 받은 것을 받아 주는 것이 도구의 일이다.
+ */
+
+console.log('\n규격을 어긴 묶음 (7칸 · 두 줄)');
+{
+  const before = failed;
+
+  /** 칸 배치를 마음대로 정해 가짜 묶음을 만든다: cells = [[줄, 원본번호]…] */
+  const makeIrregular = (cells, rows) => {
+    const cellW = 300;
+    const cellH = 340;
+    const cols = Math.max(...cells.map((c) => c[1])) + 1;
+    const png = new PNG({ width: cellW * cols, height: cellH * rows });
+    for (let i = 0; i < png.data.length; i += 4) {
+      png.data[i] = 255;
+      png.data[i + 1] = 0;
+      png.data[i + 2] = 255;
+      png.data[i + 3] = 255;
+    }
+    cells.forEach(([row, col, srcIdx]) => {
+      const [r, g, b] = colorOf(srcIdx);
+      for (let y = row * cellH + 60; y < row * cellH + 320; y++) {
+        for (let x = col * cellW + 90; x < col * cellW + 210; x++) {
+          const i = (y * png.width + x) * 4;
+          png.data[i] = r;
+          png.data[i + 1] = g;
+          png.data[i + 2] = b;
+          png.data[i + 3] = 255;
+        }
+      }
+    });
+    return png;
+  };
+
+  /* 7칸 한 줄 — 여섯 번째(원본 5번)를 버리고 마지막(6번)을 남겨야 한다 */
+  const p1 = `art-source/${KEY}_b1.png`;
+  writeFileSync(
+    p1,
+    PNG.sync.write(makeIrregular([0, 1, 2, 3, 4, 5, 6].map((i) => [0, i, i]), 1)),
+  );
+  let r = spawnSync(process.execPath, ['tools/merge-sheets.mjs', KEY], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    fail(`7칸 묶음을 거부합니다 (코드 ${r.status})`);
+    console.error(r.stdout, r.stderr);
+  } else {
+    const m = JSON.parse(readFileSync(outJson, 'utf8'));
+    const sh = PNG.sync.read(readFileSync(outPng));
+    const at = (n) => {
+      const cx = (n % 6) * m.frameWidth + Math.floor(m.frameWidth / 2);
+      const cy = Math.floor(n / 6) * m.frameHeight + Math.floor(m.frameHeight / 2);
+      return Math.round((sh.data[(cy * sh.width + cx) * 4] - 40) / 5);
+    };
+    if (m.count !== 6) fail(`7칸 → 6칸이어야 하는데 ${m.count}칸`);
+    else if (at(4) !== 4 || at(5) !== 6) {
+      fail(`7칸 정리에서 5번째=${at(4)} · 6번째=${at(5)} — 마지막 칸(6)이 남아야 합니다`);
+    } else pass('7칸 묶음 → 여섯 번째를 버리고 마지막 칸을 남긴다');
+  }
+
+  /* 두 줄(4+3) 7칸 — 격자 없이 자동 검출로 위→아래·왼→오른 순서를 지켜야 한다 */
+  writeFileSync(
+    p1,
+    PNG.sync.write(
+      makeIrregular(
+        [
+          [0, 0, 0], [0, 1, 1], [0, 2, 2], [0, 3, 3],
+          [1, 0, 4], [1, 1, 5], [1, 2, 6],
+        ],
+        2,
+      ),
+    ),
+  );
+  r = spawnSync(process.execPath, ['tools/merge-sheets.mjs', KEY], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    fail(`두 줄 묶음을 거부합니다 (코드 ${r.status})`);
+    console.error(r.stdout, r.stderr);
+  } else {
+    const m = JSON.parse(readFileSync(outJson, 'utf8'));
+    const sh = PNG.sync.read(readFileSync(outPng));
+    const at = (n) => {
+      const cx = (n % 6) * m.frameWidth + Math.floor(m.frameWidth / 2);
+      const cy = Math.floor(n / 6) * m.frameHeight + Math.floor(m.frameHeight / 2);
+      return Math.round((sh.data[(cy * sh.width + cx) * 4] - 40) / 5);
+    };
+    const got = [0, 1, 2, 3, 4, 5].map(at);
+    if (m.count !== 6) fail(`두 줄 7칸 → 6칸이어야 하는데 ${m.count}칸`);
+    else if (JSON.stringify(got) !== JSON.stringify([0, 1, 2, 3, 4, 6])) {
+      fail(`두 줄 정리 순서가 틀립니다 — ${JSON.stringify(got)} (기대 [0,1,2,3,4,6])`);
+    } else pass('두 줄(4+3) 묶음 → 읽는 순서 유지 + 여섯 번째만 버린다');
+  }
+
+  rmSync(p1, { force: true });
+  rmSync(outPng, { force: true });
+  rmSync(outJson, { force: true });
+  rmSync('art-source/.merge', { recursive: true, force: true });
+  if (failed === before) void 0;
+}
+
 console.log(failed ? `\n실패 ${failed}건` : '\n통과');
 process.exit(failed ? 1 : 0);

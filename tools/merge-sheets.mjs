@@ -61,6 +61,23 @@ const COLS = colsArg >= 0 ? Number(args[colsArg + 1]) : DEFAULT_COLS;
 const gridIdx = args.indexOf('--grid');
 const GRID = args.includes('--no-grid') ? null : gridIdx >= 0 ? args[gridIdx + 1] : '6x1';
 
+/**
+ * 묶음별 칸 고르기 (--pick b1=1,2,3,4,5,7 — 여러 번 가능).
+ *
+ * 생성기가 7칸을 주는 일이 실제로 잦다. 기본값(끝 칸을 남기고 여섯 번째를
+ * 버림)이 틀렸을 때 어느 칸을 쓸지 손으로 정하는 길이다.
+ */
+const PICKS = new Map();
+for (let i = 0; i < args.length; i++) {
+  if (args[i] !== '--pick') continue;
+  const m = /^b(\d+)=([\d,]+)$/.exec(args[i + 1] ?? '');
+  if (!m) {
+    console.error('--pick 은 b<묶음>=<칸번호들> 형식입니다. 예: --pick b1=1,2,3,4,5,7');
+    process.exit(1);
+  }
+  PICKS.set(Number(m[1]), m[2]);
+}
+
 if (!key) {
   console.error(
     '사용법: node tools/merge-sheets.mjs <key> [--cols 6] [--grid 6x1] [--no-grid]\n' +
@@ -114,18 +131,15 @@ if (missing.length) {
 rmSync(TMP, { recursive: true, force: true });
 mkdirSync(TMP, { recursive: true });
 
-const parts = [];
-for (const f of inputs) {
-  const out = `${TMP}/${key}_b${f.index}.png`;
-  console.log(`\n[b${f.index}] 전처리…`);
-
+/** process-sheet 를 한 번 돌린다. 성공하면 칸 수를 돌려준다 */
+function preprocess(f, out, extra) {
   const r = spawnSync(
     process.execPath,
     [
       'tools/process-sheet.mjs',
       f.path,
       out,
-      ...(GRID ? ['--grid', GRID] : []),
+      ...extra,
       /*
        * 가장자리 번짐 제거는 여기서만 켠다.
        *
@@ -137,8 +151,79 @@ for (const f of inputs) {
     ],
     { stdio: 'inherit' },
   );
-  if (r.status !== 0) {
+  if (r.status !== 0) return -1;
+  return JSON.parse(readFileSync(out.replace(/\.png$/, '.json'), 'utf8')).count;
+}
+
+/*
+ * 묶음 하나를 6칸으로 만든다.
+ *
+ * ── 왜 자동 검출을 먼저 돌리는가 ──────────────────────────────────
+ * "묶음은 정의상 6칸 한 줄"이라 격자 6x1을 박아 왔는데, 생성기는 그 정의를
+ * 자주 어긴다 — **7칸을 주거나 두 줄로 준다.** 그 그림에 6x1 격자를 대면
+ * 칸 경계가 캐릭터 한가운데를 지나가 시트가 통째로 망가지고, 사람은 다시
+ * 뽑는 수밖에 없었다.
+ *
+ * 그래서 순서를 뒤집는다: 먼저 자동 검출로 실제 몇 칸인지 세고,
+ *   6칸  → 그대로 쓴다 (두 줄이어도 위→아래·왼→오른 순서로 잘 읽힌다)
+ *   7칸  → 여섯 번째를 버리고 6칸으로 (--pick bN=... 으로 바꿀 수 있다)
+ *   5칸 이하 → 부족한 그림은 만들 수 없다. 멈추고 알린다
+ *   그 밖(검출 실패: 이펙트가 번져 칸이 붙거나 부서진 경우) → 옛 방식대로
+ *   격자 6x1 로 강제 분할
+ *
+ * 7→6에서 여섯 번째를 버리는 이유: 넘치는 칸은 대부분 가운데 동작을
+ * 한 장 더 그린 것이고, **마지막 칸은 대개 그 묶음의 마무리 동작**(대시·
+ * 초상·마무리 타)이라 버리면 티가 크게 난다.
+ */
+const parts = [];
+for (const f of inputs) {
+  const out = `${TMP}/${key}_b${f.index}.png`;
+  console.log(`\n[b${f.index}] 전처리…`);
+
+  const pick = PICKS.get(f.index);
+  let count;
+  if (pick) {
+    count = preprocess(f, out, ['--pick', pick]);
+  } else {
+    count = preprocess(f, out, []);
+    if (count === 7) {
+      console.log(
+        `  [b${f.index}] 7칸이 왔습니다 — 여섯 번째 칸을 버리고 6칸으로 만듭니다.\n` +
+          `  (다른 칸을 버리려면: npm run sheet:merge -- ${key} --pick b${f.index}=1,2,3,4,5,7 처럼 지정)`,
+      );
+      count = preprocess(f, out, ['--pick', '1,2,3,4,5,7']);
+    } else if (count >= 0 && count !== 6) {
+      /*
+       * 칸 수가 이상하다 — 검출이 무너진 경우가 대부분이다. 이펙트가 옆 칸에
+       * 닿으면 두 칸이 한 덩어리로(적게), 지폐가 흩날리면 부스러기로(많게)
+       * 잡힌다. 그림이 **한 줄**이면 옛 방식대로 격자 6등분이 답이다.
+       * 두 줄 그림은 격자를 댈 수 없으므로(경계가 캐릭터를 지나간다) 멈춘다.
+       */
+      const src = PNG.sync.read(readFileSync(f.path));
+      const aspect = src.width / src.height;
+      if (aspect >= 3.2) {
+        console.log(`  [b${f.index}] ${count}칸 검출 — 한 줄 그림이라 격자 6x1 로 다시 자릅니다.`);
+        count = preprocess(f, out, ['--grid', GRID ?? '6x1']);
+      } else {
+        console.error(
+          `  [b${f.index}] ${count}칸 검출 — 여러 줄 그림이라 격자로도 못 자릅니다.\n` +
+            `  쓸 칸 6개를 직접 골라 주세요: npm run sheet:merge -- ${key} --pick b${f.index}=1,2,3,4,5,6\n` +
+            `  (칸 번호는 위→아래·왼→오른 순서. 검수 페이지: npm run art:check)`,
+        );
+        process.exit(1);
+      }
+    }
+  }
+
+  if (count < 0) {
     console.error(`b${f.index} 전처리에 실패했습니다.`);
+    process.exit(1);
+  }
+  if (count !== 6) {
+    console.error(
+      `  [b${f.index}] 최종 ${count}칸 — 6칸이 아니면 이후 묶음의 포즈가 전부 밀립니다.\n` +
+        `  --pick b${f.index}=<쓸 칸 6개> 로 직접 고르거나 그 묶음만 다시 뽑아 주세요.`,
+    );
     process.exit(1);
   }
 

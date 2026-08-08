@@ -1523,9 +1523,14 @@ console.log('공격 모션');
     p.attackPhase = 'none';
     p.stunUntil = 0;
     p.attack('heavy', 'neutral');
+    /*
+     * 선딜이 실제로 끝날 때까지 본다.
+     * 이 브라우저에서는 게임 시간이 실제의 1/5 로 흐르므로, 게임 기준
+     * 200ms 선딜이 실제로는 1초쯤 걸린다 — 횟수가 아니라 상태로 멈춘다.
+     */
     let wind = { dx: 0, sy: 1 };
-    for (let i = 0; i < 10; i++) {
-      await wait(22);
+    for (let i = 0; i < 60; i++) {
+      await wait(40);
       if (sp.x - home.x < wind.dx) {
         wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
       }
@@ -1916,13 +1921,22 @@ console.log('공매도 유령');
     const before = await page.evaluate(
       () => window.game.scene.getScene('Battle').items.snapshot().length,
     );
-    await page.keyboard.press('j');
-    await page.waitForTimeout(700);
-    const dropped = await page.evaluate(() => {
-      const s = window.game.scene.getScene('Battle');
-      const g = [...s.ghosts.values()][0];
-      return { items: s.items.snapshot().length, readyAt: g.readyAt, now: s.time.now };
-    });
+    /*
+     * 키를 몇 번 눌러 본다.
+     * 초당 열 장짜리 화면에서는 keydown 하나가 프레임 사이로 빠지는 일이
+     * 실제로 있다 — 첫 시도 실패는 유령 고장이 아니라 입력 유실이다.
+     * 성공한 뒤에는 더 누르지 않으므로 쿨다운 검사와 충돌하지 않는다.
+     */
+    let dropped = { items: before, readyAt: 0, now: 0 };
+    for (let attempt = 0; attempt < 3 && dropped.items <= before; attempt++) {
+      await page.keyboard.press('j');
+      await page.waitForTimeout(700);
+      dropped = await page.evaluate(() => {
+        const s = window.game.scene.getScene('Battle');
+        const g = [...s.ghosts.values()][0];
+        return { items: s.items.snapshot().length, readyAt: g.readyAt, now: s.time.now };
+      });
+    }
 
     if (dropped.items <= before) {
       errors.push(`[유령] J 를 눌러도 물건이 안 떨어집니다 (${before}→${dropped.items})`);

@@ -100,6 +100,8 @@ export class SelectScene extends Phaser.Scene {
   private signatureText!: Phaser.GameObjects.Text;
   private skillText!: Phaser.GameObjects.Text;
   private movesText!: Phaser.GameObjects.Text;
+  /** 설명 패널 왼쪽의 캐릭터 색 띠 */
+  private infoAccent?: Phaser.GameObjects.Rectangle;
   private quoteText!: Phaser.GameObjects.Text;
   private prompt!: Phaser.GameObjects.Text;
   private modeLabel!: Phaser.GameObjects.Text;
@@ -529,6 +531,23 @@ export class SelectScene extends Phaser.Scene {
         .rectangle(0, 0, g.w, g.h, 0x141c33)
         .setStrokeStyle(3, 0x2f3f6b);
 
+      /*
+       * 카드 아래 캐릭터 색 줄.
+       *
+       * 스무 장이 전부 같은 남색이라 격자가 벽돌담처럼 보였다 — 로스터의
+       * 다양함이 이 게임의 자랑인데 첫눈에는 단색 스무 칸이었다. 압축
+       * 모드에서 패시브 배지가 빠지면 색이 통째로 사라지는 문제도 이 줄이
+       * 막는다.
+       */
+      const stripe = this.add.rectangle(
+        0,
+        g.h / 2 - 3,
+        g.w - 6,
+        6,
+        cfg.colors.accent,
+        0.9,
+      );
+
       /* 아바타 — 시트가 있으면 전투에서 실제로 보게 될 그림을 그대로 쓴다 */
       const avatarH = Math.min(AVATAR_H, g.h * (g.compact ? 0.66 : 0.47));
       const avatar = buildCardArt(this, cfg, avatarH).setPosition(
@@ -536,7 +555,7 @@ export class SelectScene extends Phaser.Scene {
         g.compact ? -g.h * 0.1 : -g.h * 0.18,
       );
 
-      const parts: Phaser.GameObjects.GameObject[] = [glow, frame, avatar];
+      const parts: Phaser.GameObjects.GameObject[] = [glow, frame, stripe, avatar];
 
       const name = this.add
         .text(0, g.h * (g.compact ? 0.33 : 0.16), cfg.name, {
@@ -599,6 +618,16 @@ export class SelectScene extends Phaser.Scene {
       .rectangle(GAME.WIDTH / 2, panelY + 92, 980, 226, 0x141c33, 0.85)
       .setStrokeStyle(2, 0x2f3f6b)
       .setDepth(DEPTH.HUD - 1);
+
+    /*
+     * 패널 왼쪽의 캐릭터 색 세로 띠.
+     * 980px 사각형 하나에 글줄 일곱이 전부 같은 자리에서 시작하는 글자
+     * 벽이라, 캐릭터를 넘겨도 패널이 바뀐 느낌이 없었다. 띠 색 하나가
+     * "지금 이 사람 것"을 말해 준다.
+     */
+    this.infoAccent = this.add
+      .rectangle(GAME.WIDTH / 2 - 490 + 3, panelY + 92, 6, 226, 0xffffff)
+      .setDepth(DEPTH.HUD);
 
     this.nameText = this.add
       .text(GAME.WIDTH / 2 - 460, panelY, '', {
@@ -945,6 +974,23 @@ export class SelectScene extends Phaser.Scene {
     this.cards.forEach((card, i) => {
       const active = i === index;
       card.glow.setVisible(active);
+      /*
+       * 고른 카드의 빛은 숨을 쉰다.
+       * 정지된 밝은 사각형은 "선택됨 상태"로만 읽히는데, 맥동이 있으면
+       * "지금 여기"로 읽힌다 — 화면에서 시선이 돌아올 자리가 생긴다.
+       */
+      this.tweens.killTweensOf(card.glow);
+      if (active) {
+        card.glow.setAlpha(0.35);
+        this.tweens.add({
+          targets: card.glow,
+          alpha: { from: 0.22, to: 0.5 },
+          duration: 700,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
       card.frame.setStrokeStyle(3, active ? 0xffffff : 0x2f3f6b);
 
       const scale = active ? 1.07 : 0.94;
@@ -970,6 +1016,11 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private updateInfo(cfg: CharacterConfig): void {
+    // 패널 색이 캐릭터를 따라간다
+    this.infoAccent?.setFillStyle(cfg.colors.accent);
+    this.nameText.setColor(
+      `#${cfg.colors.accent.toString(16).padStart(6, '0')}`,
+    );
     this.nameText.setText(cfg.name);
     this.taglineText.setText(`"${cfg.tagline}"`);
     this.passiveText.setText(`[패시브] ${cfg.passive.name} — ${cfg.passive.desc}`);

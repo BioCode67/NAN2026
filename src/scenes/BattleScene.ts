@@ -78,11 +78,26 @@ interface FighterHud {
   percent: Phaser.GameObjects.Text;
   tierLabel: Phaser.GameObjects.Text;
   bar: Phaser.GameObjects.Rectangle;
+  /**
+   * 잔상 바 — 깎인 자리가 잠깐 붉게 남았다가 따라 줄어든다.
+   *
+   * 바가 값을 즉시 덮어쓰면 큰 피해를 받아도 "순간이동"이라 깎이는 것이
+   * 안 보인다. 대전 게임 체력바의 쾌감은 깎여 나가는 그 꼬리에 있다.
+   */
+  ghostBar: Phaser.GameObjects.Rectangle;
   skillBar: Phaser.GameObjects.Rectangle;
   skillLabel: Phaser.GameObjects.Text;
   itemIcon: Phaser.GameObjects.Text;
   /** 캐릭터 고유 자원 표시 (지분·부스터·풍선…) */
   sigLabel: Phaser.GameObjects.Text;
+  /** 직전 프레임의 주가 — 낙차를 감지해 숫자를 튀게 한다 */
+  prevValue: number;
+  /** 직전 프레임의 스킬 준비 상태 — 준비 완료 순간을 잡아 점멸한다 */
+  wasReady: boolean;
+  /** 상장폐지 도장을 이미 찍었는가 */
+  stamped: boolean;
+  /** 패널을 이루는 표시물 전부 — 죽으면 한꺼번에 어둡게 한다 */
+  parts: Phaser.GameObjects.GameObject[];
 }
 
 /**
@@ -2585,6 +2600,37 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(DEPTH.OVERLAY + 1);
     title.setStroke('#0b1020', 10);
+    // 쾅 하고 박힌다 — 3분을 치고받은 끝이 스르륵 떠서는 안 된다
+    title.setScale(2.1).setAlpha(0);
+    this.tweens.add({
+      targets: title,
+      scale: 1,
+      alpha: 1,
+      duration: 240,
+      ease: 'Back.easeIn',
+      onComplete: () => {
+        this.cameras.main.shake(110, 0.006);
+        /*
+         * 이긴 판에만 축포. 승리 화면인데 축하 연출이 하나도 없었다 —
+         * 스파크 텍스처가 이미 있으므로 방출기 하나면 된다.
+         */
+        if (playerWon && this.textures.exists('spark')) {
+          const burst = this.add
+            .particles(GAME.WIDTH / 2, 152, 'spark', {
+              speed: { min: 140, max: 380 },
+              angle: { min: 0, max: 360 },
+              scale: { start: 0.9, end: 0 },
+              lifespan: 750,
+              tint: [0xffd54a, 0x4ade80, 0xffffff],
+              emitting: false,
+            })
+            .setDepth(DEPTH.OVERLAY + 2)
+            .setScrollFactor(0);
+          burst.explode(46);
+          this.time.delayedCall(900, () => burst.destroy());
+        }
+      },
+    });
 
     // 플레이어가 몇 등이었는지 알려준다 (KO 순서의 역순 = 등수)
     const total = this.fighters.length;
@@ -2736,6 +2782,13 @@ export class BattleScene extends Phaser.Scene {
       const y = y0 + 12 + i * rowH;
       const isPlayer = f.side === 'player';
       const isTop = top?.id === f.fighterId && r.dealt > 0;
+      /*
+       * 줄이 하나씩 떨어져 내린다.
+       * 표 전체가 한 프레임에 박히면 "결과 화면이 떴다"로 끝이고,
+       * 한 줄씩 들어오면 순위를 위에서부터 읽게 된다 — 같은 정보가
+       * 발표가 된다. 이 줄에서 만드는 것들을 모아 함께 트윈한다.
+       */
+      const rowFrom = this.children.list.length;
 
       // 내 줄만 배경을 깐다 — 넷 중 어느 줄이 나인지 한눈에 찾게
       if (isPlayer) {
@@ -2785,6 +2838,22 @@ export class BattleScene extends Phaser.Scene {
         )
         .setOrigin(0, 0.5)
         .setDepth(DEPTH.OVERLAY + 2);
+
+      // 이 줄의 표시물 전부 — 위에서 차례로 떨어져 내린다
+      const rowParts = this.children.list.slice(rowFrom);
+      rowParts.forEach((o) => {
+        const go = o as unknown as { setAlpha?: (a: number) => void; y?: number };
+        go.setAlpha?.(0);
+        if (typeof go.y === 'number') go.y -= 14;
+      });
+      this.tweens.add({
+        targets: rowParts,
+        alpha: 1,
+        y: '+=14',
+        delay: 380 + i * 90,
+        duration: 240,
+        ease: 'Quad.easeOut',
+      });
     });
 
     /* 이 판 전체를 한 줄로 — 어디서 싸웠고 내 최고 한 방은 무엇이었나 */
@@ -3364,6 +3433,15 @@ export class BattleScene extends Phaser.Scene {
       const y = HUD_Y;
       const accent = fighter.cfg.colors.accent;
 
+      /*
+       * 이 패널의 표시물을 전부 모아 둔다.
+       * 상장폐지되면 패널 전체가 어두워져야 하는데, 전에는 숫자와 바만
+       * 어두워지고 테두리·초상·이름이 멀쩡히 밝게 남아 누가 죽었는지
+       * HUD 에서 안 읽혔다. 여기서부터 만들어지는 것이 전부 이 패널이므로,
+       * 표시 목록의 앞뒤 차이가 곧 패널 구성물이다.
+       */
+      const panelFrom = this.children.list.length;
+
       // 플레이어 패널만 테두리를 밝게 해 눈에 띄게 한다
       ui(
         this.add
@@ -3476,16 +3554,38 @@ export class BattleScene extends Phaser.Scene {
         }),
       );
 
+      /*
+       * 잔상 바 — 주가 바와 같은 자리에 반투명 붉은 바를 깐다.
+       * (실제 바보다 나중에 그려지면 가려지므로 깊이만 한 단 내린다)
+       */
+      const ghostBar = ui(
+        this.add
+          .rectangle(x + 58, y + 48, HUD_BAR_W / 3, 12, 0xef4444, 0.5)
+          .setOrigin(0),
+      );
+      /*
+       * 그리는 순서: 어두운 홈 → 잔상(붉음) → 실제 바.
+       * 잔상은 실제 바보다 넓을 때만 붉은 꼬리로 비어져 나온다.
+       * (같은 깊이는 만든 순서로 그려지므로 소수점으로 사이에 끼운다)
+       */
+      ghostBar.setDepth(bar.depth + 0.1);
+      bar.setDepth(bar.depth + 0.2);
+
       this.huds.push({
         fighter,
         seatLabel,
         percent,
         tierLabel,
         bar,
+        ghostBar,
         skillBar,
         skillLabel,
         itemIcon,
         sigLabel,
+        prevValue: this.stock.get(fighter.fighterId),
+        wasReady: true,
+        stamped: false,
+        parts: this.children.list.slice(panelFrom),
       });
     });
   }
@@ -3509,10 +3609,64 @@ export class BattleScene extends Phaser.Scene {
       hud.bar.width = Math.max(1, HUD_BAR_W * (value / STOCK.MAX));
       hud.bar.setFillStyle(effect.color);
 
+      /*
+       * 잔상 바 — 오를 때는 즉시 따라가고, 깎일 때만 잠깐 남았다가 줄어든다.
+       * 깎여 나간 폭이 붉은 꼬리로 잠깐 보여야 "방금 이만큼 잃었다"가 읽힌다.
+       */
+      if (value >= hud.prevValue) {
+        this.tweens.killTweensOf(hud.ghostBar);
+        hud.ghostBar.width = hud.bar.width;
+      } else if (!this.tweens.isTweening(hud.ghostBar)) {
+        this.tweens.add({
+          targets: hud.ghostBar,
+          width: hud.bar.width,
+          delay: 140,
+          duration: 300,
+          ease: 'Quad.easeOut',
+        });
+      }
+
+      /* 숫자가 튄다 — 깎인 프레임에만. 매 프레임 튀면 연타 때 안 읽힌다 */
+      if (value < hud.prevValue) {
+        this.tweens.killTweensOf(hud.percent);
+        hud.percent.setScale(hud.prevValue - value >= 10 ? 1.45 : 1.25);
+        this.tweens.add({
+          targets: hud.percent,
+          scale: 1,
+          duration: 170,
+          ease: 'Back.easeOut',
+        });
+      }
+      hud.prevValue = value;
+
       // 쿨다운 바는 차오르는 방향으로 (1 = 준비 완료)
       const ready = 1 - hud.fighter.getSkillCooldownRatio();
       hud.skillBar.width = Math.max(0, HUD_BAR_W * ready);
       hud.skillLabel.setColor(ready >= 1 ? '#4ade80' : '#5d739f');
+
+      /*
+       * 준비 완료의 **순간**을 잡아 점멸한다.
+       * 5px 바가 조용히 차오르는 것만으로는 전투 중에 아무도 못 본다 —
+       * "지금 스킬 된다"는 순간이 가장 쓸모 있는 정보인데도.
+       */
+      const isReady = ready >= 1;
+      if (isReady && !hud.wasReady && hud.fighter.alive) {
+        this.tweens.add({
+          targets: hud.skillBar,
+          alpha: { from: 0.15, to: 1 },
+          duration: 90,
+          yoyo: true,
+          repeat: 2,
+        });
+        hud.skillLabel.setScale(1.6);
+        this.tweens.add({
+          targets: hud.skillLabel,
+          scale: 1,
+          duration: 220,
+          ease: 'Back.easeOut',
+        });
+      }
+      hud.wasReady = isReady;
 
       // 장착 아이템 (참가자 화면은 호스트가 보낸 아이콘을 쓴다)
       hud.itemIcon.setText(
@@ -3522,9 +3676,39 @@ export class BattleScene extends Phaser.Scene {
       // 캐릭터 고유 자원
       hud.sigLabel.setText(this.describeSignature(hud.fighter));
 
-      // 상장폐지된 파이터는 패널 전체를 어둡게
-      hud.percent.setAlpha(hud.fighter.alive ? 1 : 0.4);
-      hud.bar.setAlpha(hud.fighter.alive ? 1 : 0.4);
+      /*
+       * 상장폐지 — 패널 전체가 죽고 도장이 박힌다.
+       * 숫자만 어두워지던 때는 4인전에서 누가 죽었는지 HUD 로 안 읽혔다.
+       * "상장폐지"는 이 게임 최고의 어휘인데 정작 도장 찍을 곳이 없었다.
+       */
+      if (!hud.fighter.alive && !hud.stamped) {
+        hud.stamped = true;
+        hud.parts.forEach((o) =>
+          (o as unknown as { setAlpha?: (a: number) => void }).setAlpha?.(0.32),
+        );
+        const cx = hud.percent.x - HUD_PANEL_W / 2 + 12;
+        const stamp = this.add
+          .text(cx, hud.percent.y + HUD_PANEL_H / 2 - 4, '상장폐지', {
+            fontFamily: GAME.FONT,
+            fontSize: '21px',
+            color: '#ef4444',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+          .setAngle(-11)
+          .setDepth(DEPTH.HUD + 1)
+          .setScrollFactor(0);
+        stamp.setStroke('#0b1020', 6);
+        stamp.setScale(2.2);
+        this.hudLayer.add(stamp);
+        this.tweens.add({
+          targets: stamp,
+          scale: 1,
+          duration: 200,
+          ease: 'Back.easeIn',
+          onComplete: () => this.cameras.main.shake(90, 0.004),
+        });
+      }
     }
   }
 

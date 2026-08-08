@@ -238,6 +238,28 @@ export function showWaiting(
     // 드래그해서 복사할 수 있어야 한다 — 그러라고 DOM 으로 만들었다
     userSelect: 'all',
   } satisfies Partial<CSSStyleDeclaration>);
+  /*
+   * 코드 상자가 숨을 쉰다.
+   *
+   * 대기 화면은 온라인 데모에서 가장 오래 노출되는 화면인데 완전한 정지
+   * 화면이었다 — 죽은 것처럼 보이는 화면 앞에서 사람은 금방 접는다.
+   */
+  if (!document.getElementById('net-glow-style')) {
+    const style = document.createElement('style');
+    style.id = 'net-glow-style';
+    style.textContent = `
+      @keyframes net-glow {
+        from { box-shadow: 0 0 6px rgba(74, 222, 128, 0.25); }
+        to { box-shadow: 0 0 26px rgba(74, 222, 128, 0.65); }
+      }
+      @keyframes net-pop {
+        0% { transform: scale(1); }
+        40% { transform: scale(1.18); }
+        100% { transform: scale(1); }
+      }`;
+    document.head.appendChild(style);
+  }
+  box.style.animation = 'net-glow 1.4s ease-in-out infinite alternate';
   root.appendChild(box);
 
   const copy = button('코드 복사', '#4ade80');
@@ -284,12 +306,24 @@ export function showWaiting(
   };
   root.appendChild(cancel);
 
+  let lastCount = 1;
   const setCount = (n: number) => {
     const bots = Math.max(0, 4 - n);
     count.textContent =
       n <= 1
         ? '아직 아무도 안 들어왔습니다'
         : `${n}명 참가 중${bots ? ` · 빈자리 ${bots}칸은 봇` : ' · 자리가 다 찼습니다'}`;
+    /*
+     * 누가 들어온 그 순간을 튕겨서 알린다 — 데모의 하이라이트가
+     * 글자 하나 바뀌는 것으로 지나가면 아무도 눈치채지 못한다.
+     */
+    if (n > lastCount) {
+      count.style.color = '#4ade80';
+      count.style.animation = 'none';
+      void count.offsetWidth; // 리플로우 — 같은 애니메이션을 다시 튼다
+      count.style.animation = 'net-pop 400ms ease-out';
+    }
+    lastCount = n;
     // 혼자서는 시작할 수 없다 — 그건 온라인이 아니라 그냥 1인 플레이다
     const ready = n >= 2;
     start.disabled = !ready;

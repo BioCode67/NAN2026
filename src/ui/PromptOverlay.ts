@@ -135,14 +135,31 @@ export function openPromptOverlay(
       color: '#5d739f',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    root.append(title, guide, input, examples, hint);
+    /*
+     * 시간 막대 — 판이 통째로 멈추는 극적인 순간인데, 제한시간이 13px
+     * 회색 글자 하나였다. 줄어드는 막대는 읽지 않아도 전해진다.
+     */
+    const bar = document.createElement('div');
+    Object.assign(bar.style, {
+      width: 'min(620px, 78vw)',
+      height: '6px',
+      borderRadius: '3px',
+      background: accent,
+      transition: `width ${TIMEOUT_MS}ms linear, background-color 300ms`,
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    root.append(title, guide, input, bar, examples, hint);
     document.body.appendChild(root);
+    // 다음 프레임에 0으로 — 붙자마자 줄이면 전환이 그려지지 않는다
+    requestAnimationFrame(() => (bar.style.width = '0px'));
 
     /* 남은 시간 표시 — 멈춰 있는 이유를 알려준다 */
     const startedAt = Date.now();
     const tick = window.setInterval(() => {
       const left = Math.max(0, TIMEOUT_MS - (Date.now() - startedAt));
       hint.textContent = `Enter 확정 · ESC 건너뛰기 · ${Math.ceil(left / 1000)}초 후 자동 진행`;
+      // 마지막 3초 — 급하다는 것이 색으로 보인다
+      if (left < 3000) bar.style.background = '#ef4444';
       if (left <= 0) finish(input.value, false);
     }, 200);
 

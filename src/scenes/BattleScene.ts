@@ -31,6 +31,15 @@ const NET_SEND_MS = 33;
 const QUIET_SEAT_MS = 4000;
 /** 조용한 자리를 얼마나 자주 살피는가 */
 const QUIET_CHECK_MS = 1000;
+/**
+ * 이만큼 지나면 서든데스 — 전원의 주가가 초당 1%씩 흘러내린다.
+ *
+ * 2분 30초는 보통 판이 이미 끝나 있는 시간이다. 여기 걸리는 판은
+ * "둘 다 안 다가가는" 판뿐이고, 그 판이 바로 마감이 필요한 판이다.
+ */
+const SUDDEN_DEATH_MS = 150000;
+/** 서든데스 초당 하락폭 (%) */
+const SUDDEN_DEATH_DRAIN = 1;
 import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
@@ -255,6 +264,11 @@ export class BattleScene extends Phaser.Scene {
   private netKos: number[][] = [];
   /** 마지막 타격의 리듬 판정 번호 — damageHook 이 쓰고 combat:hit 수집기가 읽는다 */
   private netJudge = -1;
+  /** 서든데스 발동 여부 + 다음 하락 틱 시각 */
+  private suddenDeath = false;
+  private sdNextTickAt = 0;
+  /** 서든데스 화면 가장자리 붉은 테 */
+  private sdVignette?: Phaser.GameObjects.Rectangle;
   /** 참가자 쪽 — 회선으로 미리 알게 된 격추자 (자리번호). setExact 의 ko 가 쓴다 */
   private remoteKillers = new Map<number, number>();
   /** 회선이 끊겼을 때 한 번만 알린다 */
@@ -361,6 +375,9 @@ export class BattleScene extends Phaser.Scene {
     // 씬 인스턴스는 재사용된다 — 앞 판의 파괴된 표시물을 들고 있으면 안 된다
     this.killFeed = [];
     this.netHealthText = undefined;
+    this.suddenDeath = false;
+    this.sdNextTickAt = 0;
+    this.sdVignette = undefined;
     this.leaderId = '';
     this.leaderAnnouncedAt = 0;
 
@@ -1196,6 +1213,7 @@ export class BattleScene extends Phaser.Scene {
         time >= g.readyAt ? 1 : 0,
       ]);
     }
+    if (this.suddenDeath) snap.sd = 1;
     if (!this.battleActive) {
       const alive = this.fighters.findIndex((f) => f.alive);
       snap.over = alive;
@@ -1382,6 +1400,15 @@ export class BattleScene extends Phaser.Scene {
     this.items.applyRemote(snap.item ?? []);
     this.projectiles.applyRemote(snap.pj ?? []);
 
+    // 서든데스 — 하락 자체는 setExact 로 오고, 여기서는 연출만 켠다
+    if (snap.sd && !this.suddenDeath) {
+      this.suddenDeath = true;
+      this.announce('⏰ 서든데스 — 전원 주가가 흘러내린다!', '#ef4444', 2400);
+      sound.play('finisher');
+      this.startSdVignette();
+      sound.setIntensity(1);
+    }
+
     // 전적 주입은 결과 화면을 세우기 전에 — 표가 0으로 굳은 뒤에는 늦다
     snap.stat?.forEach((row, i) => {
       const f = this.fighters[i];
@@ -1521,6 +1548,62 @@ export class BattleScene extends Phaser.Scene {
     for (const slot of net.quietSlots(QUIET_SEAT_MS)) {
       net.dropSlot(slot, '소식이 끊겼습니다.');
     }
+  }
+
+  /**
+   * 서든데스 — 판이 이만큼 지나면 전원의 주가가 흘러내리기 시작한다.
+   *
+   * ── 왜 필요한가 ────────────────────────────────────────────────
+   * 신중한 둘이 남으면 판이 한없이 길어진다. 서로 다가가지 않는 것이
+   * 항상 안전하기 때문이다 — 특히 온라인에서 그렇다. 시간이 지나면
+   * 버티는 쪽이 반드시 지게 되어 있어야, 남은 판이 마감을 향해 조여든다.
+   *
+   * 흘러내리는 주가는 "지속 피해"가 아니라 **마감**이다. 맞아서 깎이는
+   * 것과 달리 누구의 전적에도 안 잡히고, 전원이 똑같이 잃으므로 유불리를
+   * 바꾸지 않는다 — 단지 시간을 무기로 쓰는 선택지를 지운다.
+   */
+  private tickSuddenDeath(time: number): void {
+    if (!this.battleActive || this.prompting) return;
+
+    if (!this.suddenDeath) {
+      if (this.battleActiveSince === 0) return;
+      if (time - this.battleActiveSince < SUDDEN_DEATH_MS) return;
+
+      this.suddenDeath = true;
+      this.sdNextTickAt = time;
+      this.announce('⏰ 서든데스 — 전원 주가가 흘러내린다!', '#ef4444', 2400);
+      sound.play('finisher');
+      this.startSdVignette();
+      // 곡도 최고 단계로 — 귀로도 "이제 끝이 온다"가 들려야 한다
+      sound.setIntensity(1);
+      return;
+    }
+
+    if (time < this.sdNextTickAt) return;
+    this.sdNextTickAt = time + 1000;
+    for (const f of this.fighters) {
+      if (f.alive) this.stock.add(f.fighterId, -SUDDEN_DEATH_DRAIN);
+    }
+  }
+
+  /** 서든데스 표시 — 화면 가장자리가 붉게 고동친다 (호스트·참가자 공통) */
+  private startSdVignette(): void {
+    if (this.sdVignette) return;
+    this.sdVignette = this.add
+      .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT)
+      .setOrigin(0)
+      .setDepth(DEPTH.HUD - 2)
+      .setScrollFactor(0)
+      .setFillStyle(0x000000, 0)
+      .setStrokeStyle(26, 0xef4444, 0.28);
+    this.tweens.add({
+      targets: this.sdVignette,
+      alpha: { from: 1, to: 0.35 },
+      duration: 640,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
   }
 
   /**
@@ -4060,6 +4143,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.reapQuietSeats(time);
+    this.tickSuddenDeath(time);
 
     // 판이 끝난 뒤에도 몇 번 더 보낸다 — 결과가 상대에게 닿아야 한다
     this.sendSnapshot(time);

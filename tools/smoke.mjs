@@ -895,11 +895,22 @@ console.log('대시 공격 두 갈래');
     const p = window.game.scene.getScene('Battle').player;
     return { j: p.cfg.moves.dashAttack.name, k: p.cfg.moves.dashSlide.name };
   });
-  const slots = await page.evaluate(() => {
+  const slots = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    /*
+     * 발이 땅에 닿아 있을 때 재야 한다.
+     * 공중이면 같은 입력이 공중기로 해석된다 — 그건 대시 갈래가 고장난 것이
+     * 아니라 지금 떠 있는 것이다. 실제로 그 순간에 재서 "팝업 광고"가 나왔다.
+     */
+    for (let i = 0; i < 50; i++) {
+      if (p.body.blocked.down || p.body.touching.down) break;
+      p.body.setVelocity(0, 300);
+      await wait(60);
+    }
     // 대시 중 상태를 만들어 두고 무엇으로 해석되는지 물어본다
-    p.dashUntil = s.time.now + 400;
+    p.dashUntil = s.time.now + 60000;
     const out = {
       j: p.resolveMove('light', 'neutral').name,
       k: p.resolveMove('heavy', 'neutral').name,
@@ -1980,6 +1991,56 @@ console.log('공매도 유령');
   await restartRound();
   await waitGrounded();
 }
+
+/*
+ * 서든데스 — 판이 길어지면 전원의 주가가 흘러내려 마감이 온다.
+ *
+ * 2분 30초를 기다릴 수는 없으므로 시작 시각을 되감아 발동시킨다.
+ * 확인할 것은 (1) 발동 배너·붉은 테 (2) 전원이 똑같이 잃는가 —
+ * 유불리를 바꾸지 않는 것이 이 장치의 조건이다.
+ */
+console.log('서든데스');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const sd = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const before = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+    // 시작 시각을 2분 30초 전으로 되감는다
+    s.battleActiveSince = s.time.now - 151000;
+    for (let i = 0; i < 40 && !s.suddenDeath; i++) await wait(100);
+    if (!s.suddenDeath) return { why: '되감아도 서든데스가 발동하지 않습니다' };
+
+    // 두 틱 이상 지나가길 기다린다 (이 환경은 게임 시간이 1/5 로 흐른다)
+    for (let i = 0; i < 120; i++) {
+      await wait(100);
+      const now = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+      if (now.every((v, k) => v <= before[k] - 2)) {
+        return { drops: before.map((b, k) => b - now[k]), vignette: !!s.sdVignette };
+      }
+    }
+    return { why: '주가가 흘러내리지 않습니다' };
+  });
+  await releasePlayer();
+
+  if (sd.why) {
+    errors.push(`[서든데스] ${sd.why}`);
+  } else if (!sd.vignette) {
+    errors.push('[서든데스] 발동했는데 화면 테두리 연출이 없습니다');
+  } else if (new Set(sd.drops).size > 2) {
+    errors.push(`[서든데스] 하락폭이 사람마다 다릅니다 — ${JSON.stringify(sd.drops)}`);
+  } else {
+    console.log(`  ✓ 발동 + 전원 균등 하락 (${sd.drops.join(', ')})`);
+  }
+  await shot('sudden-death');
+  await restartRound();
+  await waitGrounded();
+}
+
 
 /*
  * 이 판을 바꾼 말.

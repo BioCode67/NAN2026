@@ -292,6 +292,19 @@ export class BattleScene extends Phaser.Scene {
   /** 사람이 나가 봇이 이어받은 자리들 */
   private takenOver = new Set<string>();
 
+  /**
+   * 마지막으로 나를 때린 사람 (피해자 → {격추자, 시각}).
+   *
+   * 장외로 떨어져 죽는 KO 는 주가 정산을 거치지 않아 출처가 없다.
+   * 그대로 두면 전부 "자멸…"로 기록된다 — 상대를 밖으로 날려 보내는
+   * 가장 통쾌한 격추가 아무의 공도 아니게 되는 것이다. 최근 몇 초 안에
+   * 때린 사람이 있으면 그 낙사는 그 사람의 공이다.
+   */
+  private lastHitter = new Map<string, { by: string; at: number }>();
+
+  /** 이번 구간에 위로 뚫려 나간 자리들 — 참가자 화면에도 별을 띄운다 */
+  private starKos = new Set<number>();
+
   /** 상장폐지된 사람들의 유령 (자리 번호 → 상태) */
   private ghosts = new Map<number, { x: number; readyAt: number; mark?: Phaser.GameObjects.Container }>();
 
@@ -358,6 +371,8 @@ export class BattleScene extends Phaser.Scene {
     this.netHits = [];
     this.netKos = [];
     this.remoteKillers = new Map();
+    this.lastHitter = new Map();
+    this.starKos = new Set();
     this.leaderId = '';
     this.leaderAnnouncedAt = 0;
 
@@ -1055,11 +1070,14 @@ export class BattleScene extends Phaser.Scene {
     if (this.netRole === 'host') {
       this.disposers.push(
         eventBus.on('fighter:ko', (p) => {
+          const at = this.fighters.findIndex((f) => f.fighterId === p.fighterId);
           this.netKos.push([
-            this.fighters.findIndex((f) => f.fighterId === p.fighterId),
+            at,
             p.killerId
               ? this.fighters.findIndex((f) => f.fighterId === p.killerId)
               : -1,
+            // 세 번째 칸 = 위로 뚫려 나간 격추인가 (참가자 화면의 별 연출용)
+            this.starKos.delete(at) ? 1 : 0,
           ]);
         }),
         eventBus.on('combat:hit', (e) => {
@@ -1267,8 +1285,10 @@ export class BattleScene extends Phaser.Scene {
     }
 
     // 격추자 정보를 먼저 챙긴다 — 아래 alive 반영이 ko 이벤트를 일으킨다
-    for (const [victimAt, killerAt] of snap.ko ?? []) {
+    for (const [victimAt, killerAt, star] of snap.ko ?? []) {
       this.remoteKillers.set(victimAt!, killerAt ?? -1);
+      // 옛 호스트는 세 번째 칸을 안 보낸다 — 없으면 그냥 별이 아닌 격추다
+      if (star === 1) this.starKos.add(victimAt!);
     }
 
     snap.f.forEach((row, i) => {
@@ -1309,6 +1329,10 @@ export class BattleScene extends Phaser.Scene {
       if (!alive && f.alive) {
         const killerAt = this.remoteKillers.get(i);
         this.remoteKillers.delete(i);
+        if (this.starKos.delete(i)) {
+          this.playStarKo(f);
+          this.announce('별이 되었다!', '#ef4444', 500);
+        }
         f.kill();
         this.koOrder.push(f.fighterId);
         this.playKo(
@@ -2177,6 +2201,11 @@ export class BattleScene extends Phaser.Scene {
       eventBus.on('combat:hit', (p) => {
         const attacker = this.findFighter(p.attackerId);
         const target = this.findFighter(p.targetId);
+
+        // 낙사 공적 판정용 — 방금 때린 사람을 기억해 둔다
+        if (p.attackerId !== p.targetId) {
+          this.lastHitter.set(p.targetId, { by: p.attackerId, at: this.time.now });
+        }
 
         // 위기 상태에서 반격에 성공하면 역전 대사
         // 4명이 동시에 떠들지 않도록 확률을 낮춰 잡았다
@@ -3843,11 +3872,85 @@ export class BattleScene extends Phaser.Scene {
       const outLeft = f.x < STAGE.LEFT - STAGE.BLAST_MARGIN;
       const outRight = f.x > STAGE.RIGHT + STAGE.BLAST_MARGIN;
 
-      if (outBottom || outLeft || outRight) {
-        this.announce('장외!', '#ef4444', 500);
-        this.stock.forceDelist(f.fighterId, null);
+      /*
+       * 낙사의 공적 — 최근에 때린 사람이 있으면 그 사람의 격추다.
+       *
+       * null 로 두면 밖으로 날려 보낸 통쾌한 마무리가 전부 "자멸…"이 되고,
+       * 격추 수 집계에서도 빠진다.
+       */
+      const rec = this.lastHitter.get(f.fighterId);
+      const since = rec ? this.time.now - rec.at : Number.POSITIVE_INFINITY;
+      const killerId = since < STAGE.RINGOUT_CREDIT_MS ? (rec?.by ?? null) : null;
+
+      /*
+       * 상단 장외 — **맞아서 날아가는 중일 때만** 별이 된다.
+       *
+       * 높이와 속도만으로 자르면 달 중력(0.42배)에서 2단 점프가 초속
+       * 668px 로 이 선을 넘어, 제 발로 뛰어 죽는 일이 생긴다. 방금 맞았을
+       * 것을 함께 요구하면 그 구멍이 닫히고, 규칙도 한 줄로 읽힌다 —
+       * 크게 얻어맞고 위로 뚫려 나가면 별이 된다.
+       */
+      const body = f.body as Phaser.Physics.Arcade.Body;
+      const outTop =
+        f.y < STAGE.BLAST_TOP &&
+        body.velocity.y < -STAGE.STAR_KO_MIN_VY &&
+        since < STAGE.STAR_KO_LAUNCH_MS;
+
+      if (outBottom || outLeft || outRight || outTop) {
+        if (outTop) this.playStarKo(f);
+        this.announce(outTop ? '별이 되었다!' : '장외!', '#ef4444', 500);
+        // 참가자 화면에도 별을 띄우려고 자리 번호를 기록해 둔다
+        if (outTop) this.starKos.add(this.fighters.indexOf(f));
+        this.stock.forceDelist(f.fighterId, killerId);
       }
     }
+  }
+
+  /**
+   * 스타 KO — 위로 뚫고 나간 사람은 하늘의 별이 된다.
+   *
+   * 위쪽 장외는 화면 밖에서 벌어지니 연출이 없으면 사람이 그냥 사라진
+   * 것처럼 보인다. 나간 자리에 별이 반짝이고 떨어져야 "저 위로 날아가
+   * 별이 됐구나"가 읽힌다.
+   */
+  private playStarKo(victim: BaseCharacter): void {
+    const cam = this.cameras.main;
+    const topY = cam.worldView.y + 46;
+    const x = Phaser.Math.Clamp(
+      victim.x,
+      cam.worldView.x + 60,
+      cam.worldView.right - 60,
+    );
+
+    const star = this.add
+      .text(x, topY, '✦', {
+        fontFamily: GAME.FONT,
+        fontSize: '44px',
+        color: '#ffe066',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH.FLOATING);
+    star.setStroke('#0b1020', 6);
+
+    // 세 번 반짝이고 크게 터지며 사라진다
+    this.tweens.add({
+      targets: star,
+      alpha: { from: 1, to: 0.25 },
+      duration: 130,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => {
+        this.tweens.add({
+          targets: star,
+          scale: { from: 1, to: 2.4 },
+          alpha: { from: 1, to: 0 },
+          angle: 180,
+          duration: 420,
+          ease: 'Cubic.easeOut',
+          onComplete: () => star.destroy(),
+        });
+      },
+    });
   }
 
   /* ================================================================ */

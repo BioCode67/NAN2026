@@ -70,7 +70,12 @@ interface CharacterCard {
   glow: Phaser.GameObjects.Rectangle;
   /** 이 카드가 원래 있어야 할 자리 — 고르면 살짝 떠오르므로 기준이 필요하다 */
   homeY: number;
+  /** 온라인에서 이 캐릭터를 고른 사람 표시 (1P·2P…) */
+  claim?: Phaser.GameObjects.Text;
 }
+
+/** 자리 색 — 전투 화면과 같은 순서·같은 색을 쓴다 */
+const SEAT_COLORS = ['#38bdf8', '#f472b6', '#a78bfa', '#facc15'];
 
 /**
  * 캐릭터 선택 씬.
@@ -236,14 +241,29 @@ export class SelectScene extends Phaser.Scene {
       const total = Math.max(picks.length, 2);
       const done = picks.filter(Boolean).length;
       const waiting = !!this.myPick && done < total;
+
+      this.markClaims(picks);
+
+      /*
+       * 누가 무엇을 골랐는지 이름으로 보여준다.
+       *
+       * 전에는 "2/3명 선택 완료"라는 숫자뿐이었다. 넷이 모여 각자 고르는
+       * 이 순간이 판에서 제일 들뜨는 때인데, 숫자만 보면 **혼자 기다리는
+       * 화면**이 된다. 누가 누구를 집었는지 보이면 그때부터 서로를 의식한다 —
+       * "쟤 저거 골랐네"가 곧 다음 판의 이야기가 된다.
+       */
+      const line = picks
+        .slice(0, total)
+        .map((id, i) => `${i + 1}P ${id ? CHARACTERS[id].name : '고르는 중…'}`)
+        .join('   ·   ');
+
       this.prompt.setText(
-        waiting
-          ? `상대를 기다리는 중…  (${done}/${total}명 선택 완료)`
-          : `온라인 ${total}인 대전 — 파이터를 선택하세요`,
+        waiting ? `${line}   (${done}/${total})` : `온라인 ${total}인 대전 — ${line}`,
       );
       this.prompt.setColor(waiting ? '#facc15' : '#4ade80');
       return;
     }
+    this.markClaims([]);
     if (!this.twoPlayer) {
       this.prompt.setText('파이터를 선택하세요');
       this.prompt.setColor('#cbd5e1');
@@ -252,6 +272,45 @@ export class SelectScene extends Phaser.Scene {
     const first = this.p1Id === null;
     this.prompt.setText(first ? '1P — 파이터를 선택하세요' : '2P — 파이터를 선택하세요');
     this.prompt.setColor(first ? '#38bdf8' : '#f472b6');
+  }
+
+  /**
+   * 카드 위에 "누가 집었는지"를 붙인다.
+   *
+   * 목록에서 이름 줄만 바뀌면 눈이 안 간다. 고른 캐릭터 카드에 그 사람의
+   * 자리 색으로 딱지가 붙으면, 판이 시작되기 전에 이미 누가 어디 있는지
+   * 화면에서 읽힌다.
+   */
+  private markClaims(picks: readonly (CharacterId | null)[]): void {
+    const owner = new Map<CharacterId, number>();
+    picks.forEach((id, slot) => {
+      if (id && !owner.has(id)) owner.set(id, slot);
+    });
+
+    for (const card of this.cards) {
+      const slot = owner.get(card.id);
+      if (slot === undefined) {
+        card.claim?.destroy();
+        card.claim = undefined;
+        continue;
+      }
+      const label = `${slot + 1}P`;
+      const color = SEAT_COLORS[slot] ?? SEAT_COLORS[0]!;
+      if (card.claim) {
+        card.claim.setText(label).setColor(color);
+        continue;
+      }
+      card.claim = this.add
+        .text(0, -card.frame.height / 2 + 10, label, {
+          fontFamily: GAME.FONT,
+          fontSize: '13px',
+          color,
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
+      card.claim.setStroke('#0b1020', 4);
+      card.root.add(card.claim);
+    }
   }
 
   /**

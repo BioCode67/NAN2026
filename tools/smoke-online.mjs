@@ -289,6 +289,35 @@ try {
     await pages[i].waitForTimeout(250);
   }
 
+  /* --- 고르는 동안 서로가 보이는가 ---------------------------------- */
+  /*
+   * 넷이 모여 각자 고르는 이 순간이 판에서 제일 들뜨는 때다. 그런데 화면에
+   * "2/3명 선택 완료"라는 숫자만 있으면 혼자 기다리는 화면이 된다.
+   * 누가 무엇을 집었는지 이름으로 보이는지, 카드에 자리 딱지가 붙는지 본다.
+   */
+  {
+    await focusPage(pages[0]);
+    const lobby = await pages[0].evaluate(() => {
+      const s = window.game.scene.getScene('Select');
+      return {
+        prompt: s.prompt?.text ?? '',
+        claims: s.cards.filter((c) => c.claim).map((c) => `${c.id}=${c.claim.text}`),
+      };
+    });
+
+    if (!/1P /.test(lobby.prompt)) {
+      errors.push(`[온라인] 선택 화면에 누가 무엇을 골랐는지 안 보입니다 — "${lobby.prompt}"`);
+    } else if (lobby.claims.length === 0) {
+      errors.push('[온라인] 고른 캐릭터 카드에 자리 딱지가 안 붙습니다');
+    } else {
+      console.log(`  ✓ 고른 사람이 보인다 — ${lobby.claims.join(' · ')}`);
+    }
+    /*
+     * 여기서는 사진을 남기지 않는다 — 전원이 고르는 순간 판이 곧바로
+     * 시작되므로, 찍으면 이미 넘어간 화면이 찍힌다. 확인은 위에서 끝났다.
+     */
+  }
+
   /* --- 전원이 전투로 들어갔는가 ------------------------------------- */
   const roles = ['host', ...guests.map(() => 'guest')];
   const inBattle = await Promise.all(

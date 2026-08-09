@@ -1642,7 +1642,8 @@ export class BattleScene extends Phaser.Scene {
      * 있다. 그 몇 초를 침묵으로 세면 첫 판이 시작되자마자 사람이 봇으로
      * 바뀐다 — 실제로 그렇게 됐다.
      */
-    if (this.battleActiveSince === 0) this.battleActiveSince = time;
+    // 판이 시작된 시각은 전투 개시에서 찍는다 (여기서 찍으면 로컬에서 안 찍힌다)
+    if (this.battleActiveSince === 0) return;
     if (time - this.battleActiveSince < QUIET_SEAT_MS) return;
 
     if (time - this.lastReapAt < QUIET_CHECK_MS) return;
@@ -2739,6 +2740,18 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(1200, () => {
       this.announce('FIGHT!', '#ff5a5a');
       this.battleActive = true;
+      /*
+       * 판이 시작된 시각을 여기서 찍는다.
+       *
+       * 전에는 이 값을 **조용한 자리 회수기**가 지나가며 찍었는데, 그 회수기는
+       * 첫 줄에서 호스트가 아니면 곧바로 돌아선다(netRole !== 'host'). 그래서
+       * 이 기계 안에서만 도는 판에서는 시각이 영영 0 으로 남고, 그 값을 함께
+       * 쓰는 **서든데스가 한 번도 안 걸렸다** — 2분 30초가 지나도 아무 일이
+       * 없었다. 판을 닫으라고 넣은 장치가 정작 로컬에서만 죽어 있었다.
+       *
+       * 판이 시작된 시각은 회선과 아무 상관이 없다. 시작하는 자리에서 찍는다.
+       */
+      this.battleActiveSince = this.time.now;
       this.items.start();
       this.orbs.start(this.streak === 0);
       this.player.say(this.player.pickQuote('intro'), this.player.cfg.colors.accent);

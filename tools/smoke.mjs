@@ -2105,6 +2105,20 @@ console.log('서든데스');
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const before = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+
+    /*
+     * 되감기 전에 **게임이 스스로 찍어 뒀는지**부터 본다.
+     *
+     * 이 검사는 오래 통과했지만 아무것도 안 지키고 있었다. 되감는 그 줄이
+     * battleActiveSince 를 직접 써 넣는데, 정작 그 값을 게임에서 찍는 곳이
+     * 호스트 전용 코드 안이라 **로컬에서는 영영 0** 이었다. 즉 서든데스가
+     * 로컬에서 한 번도 안 걸렸는데, 검사가 그 값을 대신 채워 주는 바람에
+     * 매번 초록불이 떴다. 검사가 고쳐 주면 검사는 아무 말도 안 한다.
+     */
+    if (!s.battleActiveSince) {
+      return { why: '판이 시작됐는데 시작 시각이 안 찍혔습니다 (서든데스가 영영 안 걸린다)' };
+    }
+
     // 시작 시각을 2분 30초 전으로 되감는다
     s.battleActiveSince = s.time.now - 151000;
     for (let i = 0; i < 40 && !s.suddenDeath; i++) await wait(100);

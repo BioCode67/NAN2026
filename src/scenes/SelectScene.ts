@@ -1138,7 +1138,7 @@ export class SelectScene extends Phaser.Scene {
     const only = 'only' in tr ? tr.only : null;
     this.traitText.setText(
       `[이동] ${tr.icon} ${tr.name} — ${tr.desc}` +
-        (only ? `\n[이 캐릭터만] ${only}` : ''),
+        (only ? `\n[이 캐릭터만]  ${only}` : ''),
     );
     const sig = cfg.signature;
     this.signatureText.setText(

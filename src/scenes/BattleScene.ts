@@ -251,7 +251,8 @@ export class BattleScene extends Phaser.Scene {
   /** 지금 떠 있는 중앙 안내 — 새 안내가 오면 겹치지 않게 치운다 */
   private announceLabel?: Phaser.GameObjects.Text;
   /** 화면에 고정되는 HUD 레이어 (카메라 스크롤을 따라가지 않는다) */
-  private hudLayer!: Phaser.GameObjects.Container;
+  /** 화면에 고정된 계기판 묶음 — 검사가 줌 중에 밀렸는지 좌표로 읽는다 */
+  hudLayer!: Phaser.GameObjects.Container;
   /* --- 온라인 1:1 결투 ------------------------------------------- */
   /** 이 판에서 내 역할 (없으면 이 기계 안에서만 도는 판) */
   private netRole?: 'host' | 'guest';
@@ -2224,7 +2225,8 @@ export class BattleScene extends Phaser.Scene {
   /** 오른쪽 위에 쌓이는 격추 기록 */
   private killFeed: Phaser.GameObjects.Text[] = [];
   /** 상단 조작 안내 두 줄 — 몇 초 뒤 접힌다 (F1 로 다시 편다) */
-  private controlHints: Phaser.GameObjects.Text[] = [];
+  /** 화면 위 조작 안내 — 검사가 무슨 글자가 떠 있는지 직접 읽는다 */
+  controlHints: Phaser.GameObjects.Text[] = [];
   private hintsFolded = false;
 
   /** 조작 안내를 접는다 — 지우지 않고 아주 옅게 남긴다 */
@@ -2288,6 +2290,12 @@ export class BattleScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setAlpha(0);
     line.setStroke('#0b1020', 4);
+    /*
+     * 격추 기록도 HUD 레이어에 넣는다.
+     * 카메라 펀치의 줌을 상쇄하는 것이 이 레이어라, 밖에 두면 이것만
+     * 화면 오른쪽으로 밀려 나간다 — 실제로 그렇게 잘려 있었다.
+     */
+    this.hudLayer?.add(line);
 
     this.killFeed.push(line);
     this.tweens.add({ targets: line, alpha: 1, x: '-=10', duration: 180 });
@@ -2339,7 +2347,6 @@ export class BattleScene extends Phaser.Scene {
      * 흔들림만으로는 잦은 타격과 구별이 안 된다. 한 호흡 줌이 들어갔다
      * 나오면 "방금 큰 일이 났다"가 몸으로 전달된다.
      */
-    const cam = this.cameras.main;
     this.tweens.addCounter({
       from: 0,
       to: 1,
@@ -2348,12 +2355,13 @@ export class BattleScene extends Phaser.Scene {
       hold: 90,
       ease: 'Quad.easeOut',
       onUpdate: (t) => {
-        if (!this.resultShown) cam.setZoom(1 + 0.09 * (t.getValue() as number));
+        if (!this.resultShown) this.punchZoom(t.getValue() as number);
       },
       onComplete: () => {
-        if (!this.resultShown) cam.setZoom(1);
+        if (!this.resultShown) this.punchZoom(0);
       },
     });
+    const cam = this.cameras.main;
     cam.shake(200, 0.012);
 
     this.pushKillFeed(victim, killer);
@@ -3691,7 +3699,17 @@ export class BattleScene extends Phaser.Scene {
       return label;
     };
 
-    if (this.player2) {
+    /*
+     * **한 키보드로 둘이** 할 때만 안내를 나눈다.
+     *
+     * player2 는 "나 말고 다른 사람 자리"라서 온라인에서도 채워진다. 그걸
+     * 그대로 조건으로 쓰는 바람에, 온라인에서 각자 자기 기계로 붙어 있는데
+     * 화면에는 "2P ← → 이동 · 숫자패드 0 점프"가 떴다 — 있지도 않은 사람의
+     * 있지도 않은 키를 안내한 것이고, 처음 붙은 사람은 자기 키를 의심하게 된다.
+     */
+    const localVs = !!this.player2 && !this.netRole;
+
+    if (localVs) {
       /*
        * 2인 대전은 안내를 사람별로 나눈다.
        *
@@ -3740,7 +3758,7 @@ export class BattleScene extends Phaser.Scene {
       return only ? `${tr.icon} ${tr.name} — ${only}` : null;
     };
 
-    if (this.player2) {
+    if (localVs && this.player2) {
       const a = onlyLine(this.player);
       const b = onlyLine(this.player2);
       if (a) hint(52, `1P만 되는 것    ${a}`, '#38bdf8');
@@ -4219,6 +4237,30 @@ export class BattleScene extends Phaser.Scene {
     if (sig.max <= 0) return '';
     // 채워진 칸과 빈 칸을 함께 보여줘야 "몇 개 더 남았는지"가 읽힌다
     return `${sig.icon} ${'◆'.repeat(n)}${'◇'.repeat(Math.max(0, sig.max - n))}`;
+  }
+
+  /**
+   * 카메라 펀치 — 줌을 넣되 **화면에 붙은 것들은 제자리에 둔다**.
+   *
+   * ── 왜 이 계산이 필요한가 ──────────────────────────────────────────
+   * 카메라 줌은 화면에 고정한 것(scrollFactor 0)까지 화면 가운데를 기준으로
+   * 확대한다. 그래서 줌이 들어가는 0.35초 동안 화면 가장자리에 붙은 것들이
+   * 통째로 밖으로 밀려났다 — 네 사람 주가 패널의 양 끝이 잘리고, 오른쪽 위
+   * 격추 기록이 화면 밖으로 나갔다. 상장폐지는 판에서 가장 중요한 순간인데,
+   * 하필 그때 "누가 몇 %인가"가 안 보인 것이다.
+   *
+   * 줌 z 에서 가운데 c 를 기준으로 그려지므로, 레이어를 1/z 로 줄이고
+   * c·(1 − 1/z) 만큼 밀어 두면 정확히 상쇄된다. 세계는 확 다가오고
+   * 계기판은 가만히 있는다.
+   */
+  punchZoom(v: number): void {
+    const z = 1 + 0.09 * v;
+    this.cameras.main.setZoom(z);
+
+    if (!this.hudLayer?.scene) return;
+    const k = 1 / z;
+    this.hudLayer.setScale(k);
+    this.hudLayer.setPosition((GAME.WIDTH / 2) * (1 - k), (GAME.HEIGHT / 2) * (1 - k));
   }
 
   /** 진행 중인 기믹과 남은 시간을 상단에 띄운다 */

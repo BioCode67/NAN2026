@@ -1932,9 +1932,17 @@ console.log('참가자 화면 재현');
 
   const guest = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
-    const f = s.fighters[1];
+    /*
+     * **살아 있는** 상대를 고른다.
+     *
+     * fighters[1] 을 그냥 집었더니, 그 자리가 이미 장외로 나간 회차에
+     * "스윙 연출이 안 나온다"는 실패가 떴다 — 죽은 사람은 연출을 안 그리는
+     * 것이 맞고, 검사가 시체를 붙잡고 흔든 것이다.
+     */
+    const f = s.fighters.find((x) => x !== s.player && x.alive) ?? s.fighters[1];
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     if (!f) return { why: '두 번째 파이터가 없습니다' };
+    if (!f.alive) return { why: '살아 있는 상대가 없어 참가자 화면을 잴 수 없습니다' };
 
     /* 계기판 — 호스트가 보낸 값이 그대로 보이는가 */
     const before = f.getSkillCooldownRatio();
@@ -1959,10 +1967,18 @@ console.log('참가자 화면 재현');
      * 게임 안 타이머가 실제 시간의 1/5 로 흐른다 — 고정 대기는 여기서
      * 반드시 거짓말을 한다. 나타날 때까지 본다.
      */
+    /*
+     * **다 그려질 때까지** 본다 — 첫 겹이 보이자마자 멈추면 안 된다.
+     *
+     * 스윙 연출은 겹이 여럿이고 그 겹들이 같은 프레임에 생기지 않는다.
+     * 처음에는 "하나라도 보이면 그만"으로 짜 놨는데, 그러면 첫 겹만 세고
+     * 나가서 "1겹뿐"이라는 실패가 뜬다 — 연출은 멀쩡한데 검사가 일찍
+     * 눈을 감은 것이다. 두 겹이 될 때까지 기다리고, 안 되면 그때 실패한다.
+     */
     let fxCount = 0;
-    for (let i = 0; i < 80 && fxCount === 0; i++) {
+    for (let i = 0; i < 80 && fxCount < 2; i++) {
       await wait(50);
-      fxCount = shapes().filter((o) => !seen.has(o)).length;
+      fxCount = Math.max(fxCount, shapes().filter((o) => !seen.has(o)).length);
     }
     const moveName = f.getRecentMoveName(60000);
 
@@ -2984,6 +3000,117 @@ console.log('조작감');
  * 아무 일도 안 일어나는 기믹이 섞여 있어도 화면은 멀쩡해 보인다 —
  * 문장을 넣어 걸어 보고 **판이 실제로 달라졌는지**를 숫자로 확인한다.
  */
+/*
+ * 발동 연출이 서로 겹쳐 찍히지 않는가.
+ *
+ * ── 왜 재는가 ──────────────────────────────────────────────────────
+ * 이 판은 화면 한가운데 **고정된 자리**에 그려진다. 그런데 한 문장에 두
+ * 가지가 들어 있으면 둘 다 걸리고(자랑하는 기능이다) 둘째는 0.65초 뒤에
+ * 온다 — 앞엣것이 아직 살아 있는 자리에 그대로 포개졌다. 화면에는 두 판의
+ * 글자가 한 글자씩 엇갈려 겹친 얼룩이 떴는데, 코드에는 아무 이상이 없고
+ * 스크린샷을 들여다봐야만 보였다.
+ */
+/*
+ * 상장폐지 순간에 계기판이 화면 밖으로 밀려나지 않는가.
+ *
+ * ── 왜 재는가 ──────────────────────────────────────────────────────
+ * 격추 연출은 카메라를 한 호흡 당긴다(줌 1.09). 그런데 카메라 줌은 화면에
+ * 고정한 것까지 가운데 기준으로 확대해서, 가장자리에 붙은 주가 패널의 양
+ * 끝이 잘리고 오른쪽 위 격추 기록이 화면 밖으로 나갔다 — 판에서 가장 중요한
+ * 순간에 하필 "누가 몇 %인가"가 안 보였다.
+ *
+ * 눈으로는 0.35초짜리라 놓치기 쉽다. 줌을 걸어 놓고 좌표를 읽는다.
+ */
+console.log('격추 연출');
+{
+  await restartRound();
+  await waitGrounded();
+
+  const punch = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    /*
+     * **화면 좌표**로 잰다.
+     *
+     * getBounds() 는 월드 좌표라 카메라 줌이 안 들어가 있다. 그걸 그대로
+     * 비교하면 줌을 상쇄하려고 레이어를 옮긴 만큼이 "밀렸다"로 잡힌다 —
+     * 처음에 그렇게 재서, 제대로 고쳐 놓고도 실패가 났다.
+     * 화면에 고정된 것은 가운데를 기준으로 줌 배율만큼 벌어져 그려진다.
+     */
+    const cam = s.cameras.main;
+    const box = () => {
+      const b = s.hudLayer.getBounds();
+      const z = cam.zoom;
+      const toScreen = (x) => cam.centerX + (x - cam.centerX) * z;
+      return { left: Math.round(toScreen(b.left)), right: Math.round(toScreen(b.right)) };
+    };
+    const before = box();
+    s.punchZoom(1); // 펀치가 가장 깊이 들어간 순간
+    const during = box();
+    s.punchZoom(0);
+    const after = box();
+    return { before, during, after, zoom: s.cameras.main.zoom };
+  });
+
+  const slid = Math.max(
+    Math.abs(punch.during.left - punch.before.left),
+    Math.abs(punch.during.right - punch.before.right),
+  );
+
+  if (slid > 4) {
+    errors.push(
+      `[격추] 줌이 들어가는 동안 계기판이 ${slid}px 밀렸습니다 — ${JSON.stringify(punch)}`,
+    );
+  } else if (punch.after.left !== punch.before.left) {
+    errors.push(`[격추] 줌이 끝났는데 계기판이 안 돌아옵니다 — ${JSON.stringify(punch)}`);
+  } else {
+    console.log('  ✓ 카메라가 당겨져도 계기판은 제자리에 있는다');
+  }
+  await restartRound();
+  await waitGrounded();
+}
+
+console.log('연출 겹침');
+{
+  await restartRound();
+  await waitGrounded();
+
+  const overlap = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // 한 문장에 둘이 들어 있는 말 — 실제로 이 게임이 권하는 사용법이다
+    s.applyPrompt('달에서 한 방에 끝내자', '검사');
+
+    let worst = 0;
+    const when = [];
+    for (let i = 0; i < 40; i++) {
+      await wait(120);
+      // 발동 판은 화면 가운데 큰 사각형이다 (760 폭)
+      const panels = s.children.list.filter(
+        (o) => o.type === 'Rectangle' && Math.round(o.width) === 760 && o.alpha > 0.05,
+      );
+      if (panels.length > worst) {
+        worst = panels.length;
+        when.push({ at: i * 120, n: panels.length, alpha: panels.map((o) => +o.alpha.toFixed(2)) });
+      }
+    }
+    return { worst, when };
+  });
+
+  if (overlap.worst > 1) {
+    errors.push(
+      `[연출] 발동 판이 ${overlap.worst}장 겹쳐 있습니다 — ${JSON.stringify(overlap.when)}`,
+    );
+  } else if (overlap.worst === 0) {
+    errors.push('[연출] 발동 판이 한 번도 안 떴습니다');
+  } else {
+    console.log('  ✓ 한 문장이 둘을 걸어도 발동 판은 한 번에 하나씩 뜬다');
+  }
+  await shot('announce-queue');
+  await restartRound();
+  await waitGrounded();
+}
+
 console.log('새 기믹');
 {
   /*

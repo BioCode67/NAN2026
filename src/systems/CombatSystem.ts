@@ -289,6 +289,16 @@ export class CombatSystem {
 
   /** 연타 카운터를 공격자 머리 위에 붙여 둔다 */
   private followComboLabels(): void {
+    /*
+     * 둘이 붙어 싸우면 카운터가 서로 겹친다.
+     *
+     * 라벨은 각자 자기 주인 머리 위에 붙는데, 주인 둘이 30px 거리에서
+     * 치고받으면 "3 HIT" 위에 "2 HIT" 가 그대로 포개진다 — 둘 다 못 읽는다.
+     * 가로로 가까운 것끼리는 한 층씩 올려 쌓는다. 몇 대를 이었는지가
+     * 이 라벨의 전부라, 읽히지 않으면 있을 이유가 없다.
+     */
+    const placed: Array<{ x: number; y: number; half: number }> = [];
+
     for (const [id, entry] of this.comboLabels) {
       const owner = this.fighters.find((f) => f.fighterId === id);
       if (!owner) continue;
@@ -308,7 +318,19 @@ export class CombatSystem {
       );
       // 머리 위가 화면 위로 넘어가면 아래로 내린다
       const top = cam.scrollY + 34;
-      const y = Math.max(owner.y - 196, top);
+      let y = Math.max(owner.y - 196, top);
+
+      // 가로로 겹치는 것이 있으면 그만큼 위로 올린다 (화면 위로는 안 넘긴다)
+      for (let guard = 0; guard < 4; guard++) {
+        const clash = placed.find(
+          (p) => Math.abs(p.x - x) < p.half + half && Math.abs(p.y - y) < 46,
+        );
+        if (!clash) break;
+        y = Math.max(clash.y - 52, top);
+        if (y === top) break;
+      }
+      placed.push({ x, y, half });
+
       entry.label.setPosition(x, y);
       entry.rank.setPosition(x, y + 30);
     }

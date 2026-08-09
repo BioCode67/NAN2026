@@ -389,6 +389,29 @@ try {
     console.log(`  ✓ 모든 창이 같은 곳을 본다 (최대 차이 ${worst}px)`);
   }
 
+  /*
+   * 온라인인데 "한 키보드로 둘이" 안내가 뜨지 않는가.
+   *
+   * player2 는 "나 말고 다른 사람 자리"라 온라인에서도 채워진다. 그걸 조건으로
+   * 쓰면 각자 자기 기계로 붙어 있는데 화면에는 "2P ← → 이동 · 숫자패드 0 점프"
+   * 가 뜬다 — 있지도 않은 사람의 있지도 않은 키를 안내하는 것이고, 처음 붙은
+   * 사람은 자기 키가 고장 난 줄 안다. 화면에 나오는 글자는 눈으로만 보이므로
+   * 검사가 글자를 직접 읽는다.
+   */
+  {
+    const lines = await host.evaluate(() =>
+      (window.game.scene.getScene('Battle').controlHints ?? []).map((h) => h.text),
+    );
+    const bad = lines.filter((t) => /숫자패드|^2P\s/.test(t));
+    if (bad.length) {
+      errors.push(`[온라인] 한 키보드용 2P 안내가 떠 있습니다 — ${bad[0].slice(0, 40)}`);
+    } else if (!lines.length) {
+      errors.push('[온라인] 조작 안내가 하나도 없습니다');
+    } else {
+      console.log(`  ✓ 온라인 안내는 자기 키만 알려준다 (${lines.length}줄)`);
+    }
+  }
+
   /* --- 참가자마다 자기 캐릭터만 움직이는가 --------------------------- */
   /*
    * 호스트 창을 앞으로 꺼내고 기다린다.

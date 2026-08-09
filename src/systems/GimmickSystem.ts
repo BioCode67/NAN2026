@@ -50,6 +50,11 @@ const LAVA_TICK_MS = 700;
  */
 export class GimmickSystem {
   private readonly active: ActiveGimmick[] = [];
+  /** 줄 서 있는 발동 연출 — 겹쳐 찍히지 않게 하나씩 보여준다 */
+  private readonly announceQueue: Array<() => void> = [];
+  private announcing = false;
+  /** 지금 화면에 떠 있는 발동 판 — 다음 것을 그리기 전에 반드시 치운다 */
+  private announceObjs: Phaser.GameObjects.GameObject[] = [];
 
   /** 룰이 바꾼 전역 배율 — CombatSystem이 피해 계산에 쓴다 */
   private damageMul = 1;
@@ -538,6 +543,52 @@ export class GimmickSystem {
     extended: boolean,
     note?: string,
   ): void {
+    /*
+     * 한 번에 하나만 띄운다 — **줄 세워서**.
+     *
+     * ── 왜 필요한가 ────────────────────────────────────────────────
+     * 이 판은 화면 한가운데 고정된 자리(y 250)에 그려진다. 그런데 한 문장에
+     * 두 가지가 들어 있으면 둘 다 걸리고(그게 이 게임이 자랑하는 기능이다),
+     * 둘째는 0.65초 뒤에 온다. 판이 2.2초를 사는 동안 둘째가 같은 자리에
+     * 겹쳐 찍혀서, 화면에는 두 판의 글자가 포개진 얼룩이 떴다 —
+     * "배당금"과 "미니어처"가 한 글자씩 엇갈려 겹친 채로.
+     *
+     * 겹치는 것을 막으려고 자리를 옮기면 두 개가 화면 절반을 먹는다.
+     * 순서대로 하나씩 보여 주는 쪽이 읽기도 낫다 — 어차피 같은 문장이
+     * 만든 결과라 이어서 읽는 것이 자연스럽다.
+     */
+    this.announceQueue.push(() => this.drawAnnounce(spec, prompt, extended, note));
+    // 한꺼번에 쏟아지면 뒤쪽은 아무도 안 본다 — 둘까지만 기다린다
+    if (this.announceQueue.length > 2) this.announceQueue.splice(0, 1);
+    this.pumpAnnounce();
+  }
+
+  /** 줄 서 있는 것을 하나씩 꺼내 보여준다 */
+  private pumpAnnounce(): void {
+    if (this.announcing) return;
+    const next = this.announceQueue.shift();
+    if (!next) return;
+    this.announcing = true;
+    next();
+  }
+
+  private drawAnnounce(
+    spec: GimmickSpec,
+    prompt: string,
+    extended: boolean,
+    note?: string,
+  ): void {
+    /*
+     * 앞엣것을 **확실히** 치우고 시작한다.
+     *
+     * 줄 세우는 것만으로는 부족했다. 트윈이 끝나는 시점과 다음 것을 그리는
+     * 시점 사이에는 늘 프레임 한두 개의 틈이 있고, 프레임이 드문 기계에서는
+     * 그 틈이 눈에 보인다 — 실제로 사라지는 중인 판(알파 0.17) 위에 새 판이
+     * 겹쳐 찍힌 회차가 나왔다. 시간에 기대지 말고 직접 지운다.
+     */
+    this.announceObjs.forEach((o) => o.destroy());
+    this.announceObjs = [];
+
     const hex = `#${spec.color.toString(16).padStart(6, '0')}`;
     const cam = this.scene.cameras.main;
 
@@ -579,7 +630,26 @@ export class GimmickSystem {
       .setScrollFactor(0);
     text.setStroke('#0b1020', 6);
 
+    /*
+     * 뒤에 기다리는 것이 있으면 짧게 보여 준다.
+     *
+     * 같은 문장이 만든 둘째 결과는 첫째와 이어서 읽혀야 의미가 있다.
+     * 앞엣것이 2.2초를 다 쓰고 나서야 뒤엣것이 뜨면, 그때는 이미 판이
+     * 한참 굴러가 있어 "무엇 때문에 이게 걸렸는지"가 끊긴다.
+     */
+    this.announceObjs = [panel, text];
+
+    const hold = this.announceQueue.length ? 620 : 1500;
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      this.announcing = false;
+      this.pumpAnnounce();
+    };
+
     for (const obj of [panel, text]) {
+      const last = obj === text;
       this.scene.tweens.add({
         targets: obj,
         scale: { from: 1.3, to: 1 },
@@ -589,19 +659,42 @@ export class GimmickSystem {
           this.scene.tweens.add({
             targets: obj,
             alpha: 0,
-            delay: 1500,
+            delay: hold,
             duration: 380,
-            onComplete: () => obj.destroy(),
+            onComplete: () => {
+              this.announceObjs = this.announceObjs.filter((o) => o !== obj);
+              obj.destroy();
+              // 마지막 한 장이 사라진 뒤에 다음 차례로 넘긴다
+              if (last) finish();
+            },
           });
         },
       });
     }
+
+    /*
+     * 트윈이 끝나기를 기다리기만 하면 안 된다.
+     *
+     * 판이 다시 시작되거나 씬이 내려가면 트윈은 끝나지 않는다 —
+     * 그러면 줄이 영원히 막혀 다음 기믹 배너가 통째로 안 뜬다.
+     * 시간으로도 한 번 더 풀어 준다.
+     */
+    this.scene.time.delayedCall(280 + hold + 420, finish);
   }
 
   private announceEnd(spec: GimmickSpec): void {
     const cam = this.scene.cameras.main;
     const label = this.scene.add
-      .text(cam.centerX, 180, `${spec.icon} ${spec.name} 종료`, {
+      /*
+       * 종료 알림은 화면 아래쪽에 띄운다.
+       *
+       * 원래 자리(y 180)는 발동 판(가운데 250, 높이 182 → 159~341) **안쪽**
+       * 이었다. 하나가 끝나는 순간 다른 하나가 걸리는 일은 흔한데, 그때마다
+       * 판 위에 "○○ 종료"가 겹쳐 찍혔다. 위쪽은 조작 안내·기믹 칩·발동 판이
+       * 이미 층층이 쓰고 있어 빈자리가 없다 — 아래는 비어 있고, 잠깐 떴다
+       * 사라지는 알림에는 그쪽이 낫다.
+       */
+      .text(cam.centerX, GAME.HEIGHT - 132, `${spec.icon} ${spec.name} 종료`, {
         fontFamily: GAME.FONT,
         fontSize: '18px',
         color: '#7f93bd',
@@ -642,6 +735,10 @@ export class GimmickSystem {
 
   /** 씬 종료 — 걸어둔 효과를 전부 되돌린다 */
   reset(): void {
+    this.announceQueue.length = 0;
+    this.announcing = false;
+    this.announceObjs.forEach((o) => o.destroy());
+    this.announceObjs = [];
     this.active.forEach((a) => a.cleanup());
     this.active.length = 0;
     this.damageMul = 1;

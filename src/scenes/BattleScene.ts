@@ -2,7 +2,9 @@ import Phaser from 'phaser';
 import { addBackdrop, hasArt } from '../config/artAssets';
 import { STAGES, STAGE_BY_ID, pickStage } from '../config/stages';
 import {
+  PadReader,
   emptyFrame,
+  mergeFrames,
   mergeTaps,
   packFrame,
   readKeyFrame,
@@ -288,6 +290,17 @@ export class BattleScene extends Phaser.Scene {
 
   private paused = false;
   private pauseOverlay?: Phaser.GameObjects.Container;
+
+  /**
+   * 게임패드 — 이 기계의 n번째 사람에게 n번째 패드가 간다.
+   *
+   * 패드마다 "방금 눌림"을 가려낼 앞 프레임 기억이 필요해서 사람 수만큼
+   * 리더를 둔다. 키보드와 패드는 합집합이다 — 어느 쪽을 눌러도 통하므로
+   * 설정할 것도, 고를 것도 없다.
+   */
+  private padReaders: PadReader[] = [];
+  /** 스타트 버튼의 앞 프레임 상태 (패드 순서대로) — 일시정지 토글용 */
+  private padStartWas: boolean[] = [];
 
   /** 사람이 나가 봇이 이어받은 자리들 */
   private takenOver = new Set<string>();
@@ -1116,6 +1129,9 @@ export class BattleScene extends Phaser.Scene {
    */
   private sendMyInput(): void {
     const frame = readKeyFrame(this.keys);
+    // 참가자도 패드로 칠 수 있다 — 이 기계의 사람은 나 하나뿐이니 0번 패드다
+    const pad = this.padFrame(0);
+    if (pad) mergeFrames(frame, pad);
     mergeTaps(this.outTaps, frame);
 
     const now = this.time.now;
@@ -1543,10 +1559,17 @@ export class BattleScene extends Phaser.Scene {
    * 상태로 받아 그린다 — 각자 계산하면 "내가 여기 떨어뜨렸는데 저기 떨어졌다"가
    * 되고, 그건 조작이 고장난 것으로 느껴진다.
    */
-  private updateGhost(h: (typeof this.humans)[number]): void {
+  private updateGhost(
+    h: (typeof this.humans)[number],
+    localIdx: number = -1,
+  ): void {
     if (this.netRole === 'guest') return;
 
     const frame = h.remote ? h.remote() : readKeyFrame(h.keys);
+    if (localIdx >= 0) {
+      const pad = this.padFrame(localIdx);
+      if (pad) mergeFrames(frame, pad);
+    }
     const g = this.ghostOf(h);
     const dt = this.game.loop.delta / 1000;
 
@@ -1723,9 +1746,31 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  /** 지금 꽂혀 있는 패드들 — 순서대로 이 기계의 사람들에게 배정된다 */
+  private livePads(): Phaser.Input.Gamepad.Gamepad[] {
+    const pads = this.input.gamepad?.gamepads ?? [];
+    return pads.filter((p) => p && p.connected);
+  }
+
+  /**
+   * 이 기계의 `localIdx`번째 사람의 패드 입력.
+   *
+   * 패드가 없으면 null — 키보드 프레임에 합치기만 하므로 없어도 그만이다.
+   */
+  private padFrame(localIdx: number): InputFrame | null {
+    const pad = this.livePads()[localIdx];
+    if (!pad) return null;
+    while (this.padReaders.length <= localIdx) {
+      this.padReaders.push(new PadReader());
+    }
+    return this.padReaders[localIdx]!.read(pad);
+  }
+
   /** 사람이 조종하는 파이터 전부 — 각자 자기 입력원에서 한 프레임을 읽는다 */
   private handleAllInput(): void {
+    let localIdx = 0;
     for (const h of this.humans) {
+      const myLocalIdx = h.remote ? -1 : localIdx++;
       /*
        * 죽은 사람은 유령을 조종한다.
        *
@@ -1733,7 +1778,7 @@ export class BattleScene extends Phaser.Scene {
        * 캐릭터를, 죽은 뒤에는 유령을 움직인다. 회선 경로도 그대로 쓴다.
        */
       if (!h.fighter.alive) {
-        this.updateGhost(h);
+        this.updateGhost(h, myLocalIdx);
         continue;
       }
       /*
@@ -1743,8 +1788,14 @@ export class BattleScene extends Phaser.Scene {
        * handleInput 이 키 객체를 직접 읽으면 그 경로가 통째로 막히므로,
        * 한 프레임분 입력을 값으로 만들어 넘긴다 — 키보드에서 오든
        * 회선에서 오든 이 아래는 같은 코드를 탄다.
+       *
+       * 이 기계의 사람이면 게임패드도 함께 읽어 합친다.
        */
       const frame = h.remote ? h.remote() : readKeyFrame(h.keys);
+      if (myLocalIdx >= 0) {
+        const pad = this.padFrame(myLocalIdx);
+        if (pad) mergeFrames(frame, pad);
+      }
       this.handleInput(h.fighter, frame, h.tap);
     }
   }
@@ -3854,7 +3905,27 @@ export class BattleScene extends Phaser.Scene {
   /* 메인 루프                                                        */
   /* ================================================================ */
 
+  /**
+   * 패드의 스타트 버튼 — 키보드에 손을 뻗지 않고도 판을 다룰 수 있어야 한다.
+   *
+   * 전투 중에는 일시정지(P와 같다), 결과 화면에서는 다음 상대(SPACE와 같다).
+   * 일시정지를 **풀** 수도 있어야 하므로 paused 검사보다 먼저 돈다.
+   */
+  private pollPadMenu(): void {
+    const pads = this.livePads();
+    for (let i = 0; i < pads.length; i++) {
+      const now = pads[i]!.buttons[9]?.pressed ?? false;
+      const was = this.padStartWas[i] ?? false;
+      this.padStartWas[i] = now;
+      if (!now || was) continue;
+
+      if (this.resultShown) this.startNextRound();
+      else if (!this.prompting) this.togglePause();
+    }
+  }
+
   override update(time: number, delta: number): void {
+    this.pollPadMenu();
     if (this.paused) return;
 
     // 프롬프트 입력 중에는 판이 멈춘다 (물리는 이미 pause 상태)

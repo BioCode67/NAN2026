@@ -4,6 +4,7 @@ import { buildCardArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
 import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS, MOVE_SLOTS } from '../config/gameConfig';
+import { PadMenu } from '../systems/InputFrame';
 import { sound } from '../systems/SoundSystem';
 import { MAX_PLAYERS, net } from '../systems/NetSystem';
 import {
@@ -93,6 +94,8 @@ export class SelectScene extends Phaser.Scene {
   private readyAt = 0;
   /** 상세 보기 오버레이 (열려 있을 때만 존재한다) */
   private detail?: Phaser.GameObjects.Container;
+  /** 게임패드 메뉴 조작 — 누가 눌러도 움직인다 */
+  private pads = new PadMenu();
 
   private nameText!: Phaser.GameObjects.Text;
   private taglineText!: Phaser.GameObjects.Text;
@@ -775,6 +778,23 @@ export class SelectScene extends Phaser.Scene {
     kb.on('keydown-TAB', () => this.toggleDetail());
     kb.on('keydown-I', () => this.toggleDetail());
     kb.on('keydown-ESC', () => this.closeDetail());
+  }
+
+  /**
+   * 게임패드 — 십자키·스틱으로 다니고 A로 고른다.
+   *
+   * 키보드와 같은 함수를 부르므로 잠금(확정됨·상세 열림·로비 열림)도
+   * 똑같이 걸린다. Y는 상세 보기, B는 닫기다.
+   */
+  override update(): void {
+    const taps = this.pads.poll(this.input.gamepad);
+    if (taps.left) this.move(-1);
+    if (taps.right) this.move(1);
+    if (taps.up) this.move(-this.cols);
+    if (taps.down) this.move(this.cols);
+    if (taps.ok) this.confirm();
+    if (taps.info) this.toggleDetail();
+    if (taps.back) this.closeDetail();
   }
 
   /* ================================================================ */

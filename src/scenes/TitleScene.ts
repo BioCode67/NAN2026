@@ -4,6 +4,7 @@ import { DEPTH, GAME } from '../config/gameConfig';
 import { CHARACTER_ORDER } from '../config/characters';
 import { MOVE_SLOTS } from '../config/gameConfig';
 import { STAGES } from '../config/stages';
+import { PadMenu } from '../systems/InputFrame';
 import { sound } from '../systems/SoundSystem';
 
 /**
@@ -29,6 +30,7 @@ const LOGO_Y = 250;
  */
 export class TitleScene extends Phaser.Scene {
   private leaving = false;
+  private pads = new PadMenu();
 
   constructor() {
     super({ key: 'Title' });
@@ -292,6 +294,11 @@ export class TitleScene extends Phaser.Scene {
   private bindInput(): void {
     this.input.keyboard?.on('keydown', () => this.start());
     this.input.once(Phaser.Input.Events.POINTER_DOWN, () => this.start());
+  }
+
+  /** 패드의 아무 버튼으로도 시작한다 — "아무 키나"에 패드도 포함이다 */
+  override update(): void {
+    if (this.pads.poll(this.input.gamepad).any) this.start();
   }
 
   private start(): void {

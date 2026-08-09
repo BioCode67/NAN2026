@@ -106,6 +106,162 @@ export function readKeyFrame(
 }
 
 /* ------------------------------------------------------------------ */
+/* 게임패드                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 게임패드에서 한 프레임을 읽는다.
+ *
+ * ── 왜 클래스인가 ─────────────────────────────────────────────────
+ * 키보드의 JustDown 에 해당하는 것이 패드에는 없다. "방금 눌림"은
+ * 앞 프레임과 비교해야 알 수 있으므로, 읽는 쪽이 앞 프레임을 기억해야
+ * 한다. 사람마다 패드가 하나씩이니 기억도 사람마다 하나씩이다.
+ *
+ * 버튼 배치는 키보드의 Space·J·K·L·U 를 그대로 얹는다:
+ *  - A(아래) 점프 · X(왼쪽) 약공격 · B(오른쪽) 강공격 · Y(위) 스킬
+ *  - LB·RB 잡기 · LT·RT 가드(=아래 방향)
+ *  - 스틱·십자키 이동, 셀렉트 도발
+ * 점프가 제일 큰 엄지 자리(A)에 오는 배치다 — 이 게임은 숏홉과
+ * 공중 연속기가 손맛의 절반이라, 점프를 제일 좋은 자리에 둔다.
+ */
+export class PadReader {
+  /** 앞 프레임의 "누르고 있었는가" — 방금 눌림·뗌을 가려내는 기준 */
+  private prev = {
+    left: false,
+    right: false,
+    jump: false,
+    light: false,
+    heavy: false,
+    skill: false,
+    grab: false,
+    taunt: false,
+  };
+
+  /** 스틱을 이 이상 기울여야 이동으로 친다 (드리프트 방지) */
+  private static readonly DEADZONE = 0.35;
+  /** 위·아래는 더 깊게 — 대각 입력이 위/아래 기술을 훔쳐가지 않게 */
+  private static readonly DEADZONE_Y = 0.5;
+
+  read(pad: Phaser.Input.Gamepad.Gamepad): InputFrame {
+    const dz = PadReader.DEADZONE;
+    const stickX = pad.leftStick?.x ?? 0;
+    const stickY = pad.leftStick?.y ?? 0;
+
+    const left = pad.left || stickX < -dz;
+    const right = pad.right || stickX > dz;
+    const up = pad.up || stickY < -PadReader.DEADZONE_Y;
+    // 트리거(LT·RT)는 가드다 — 아래 방향과 같은 일을 한다
+    const shield = pad.L2 > 0.5 || pad.R2 > 0.5;
+    const down = pad.down || stickY > PadReader.DEADZONE_Y || shield;
+
+    const jump = pad.A;
+    const light = pad.X;
+    const heavy = pad.B;
+    const skill = pad.Y;
+    // 어깨 버튼은 눌린 깊이(0~1)로 온다 — 절반 넘게 눌리면 눌린 것이다
+    const grab = pad.L1 > 0.5 || pad.R1 > 0.5;
+    const taunt = pad.buttons[8]?.pressed ?? false;
+
+    const p = this.prev;
+    const frame: InputFrame = {
+      left,
+      right,
+      up,
+      down,
+      jumpHeld: jump,
+      heavyHeld: heavy,
+      tapLeft: left && !p.left,
+      tapRight: right && !p.right,
+      tapJump: jump && !p.jump,
+      releaseJump: !jump && p.jump,
+      tapLight: light && !p.light,
+      tapHeavy: heavy && !p.heavy,
+      tapSkill: skill && !p.skill,
+      tapGrab: grab && !p.grab,
+      tapTaunt: taunt && !p.taunt,
+    };
+
+    this.prev = { left, right, jump, light, heavy, skill, grab, taunt };
+    return frame;
+  }
+}
+
+/**
+ * 두 입력원을 하나로 합친다 — 키보드와 패드 중 **어느 쪽을 눌러도** 통한다.
+ *
+ * 어느 쪽을 쓸지 고르게 하지 않는다. 패드를 꽂은 채 키보드를 만지면
+ * 죽는 쪽이 이상한 것이고, 합집합이면 고를 것도 설정할 것도 없다.
+ */
+export function mergeFrames(into: InputFrame, from: InputFrame): InputFrame {
+  for (const k of Object.keys(into) as Array<keyof InputFrame>) {
+    into[k] = into[k] || from[k];
+  }
+  return into;
+}
+
+/** 메뉴에서 이번 프레임에 새로 눌린 것들 */
+export interface PadMenuTaps {
+  left: boolean;
+  right: boolean;
+  up: boolean;
+  down: boolean;
+  /** A — 결정 */
+  ok: boolean;
+  /** B — 닫기/뒤로 */
+  back: boolean;
+  /** Y — 상세 보기 */
+  info: boolean;
+  /** 아무 버튼이든 (타이틀 화면의 "아무 키나 누르세요") */
+  any: boolean;
+}
+
+/**
+ * 메뉴 화면용 패드 읽기 — 꽂힌 패드 **전부**를 하나로 합쳐 본다.
+ *
+ * 전투는 "n번째 패드가 n번째 사람"이지만, 메뉴는 누가 눌러도 움직여야
+ * 한다 — 2P의 패드만 손에 있는 사람이 화면 앞에서 아무것도 못 하면
+ * 그게 더 이상하다.
+ */
+export class PadMenu {
+  private prev = new Map<string, boolean>();
+
+  poll(plugin: Phaser.Input.Gamepad.GamepadPlugin | null | undefined): PadMenuTaps {
+    const taps: PadMenuTaps = {
+      left: false,
+      right: false,
+      up: false,
+      down: false,
+      ok: false,
+      back: false,
+      info: false,
+      any: false,
+    };
+    const pads = (plugin?.gamepads ?? []).filter((p) => p && p.connected);
+
+    for (const pad of pads) {
+      const sx = pad.leftStick?.x ?? 0;
+      const sy = pad.leftStick?.y ?? 0;
+      const now: Record<keyof PadMenuTaps, boolean> = {
+        left: pad.left || sx < -0.5,
+        right: pad.right || sx > 0.5,
+        up: pad.up || sy < -0.5,
+        down: pad.down || sy > 0.5,
+        ok: pad.A || (pad.buttons[9]?.pressed ?? false),
+        back: pad.B,
+        info: pad.Y,
+        any: pad.buttons.some((b) => b?.pressed),
+      };
+      for (const k of Object.keys(now) as Array<keyof PadMenuTaps>) {
+        const key = `${pad.index}:${k}`;
+        if (now[k] && !this.prev.get(key)) taps[k] = true;
+        this.prev.set(key, now[k]);
+      }
+    }
+    return taps;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 회선으로 보내기                                                      */
 /* ------------------------------------------------------------------ */
 

@@ -10,6 +10,9 @@ export const doom: CharacterConfig = {
   colors: { body: 0x232936, head: 0xe6c8a8, accent: 0x64748b },
   stats: { speed: 235, jump: -700, doubleJump: -620, weight: 1.2 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     hair: 'messy',
     hairColor: 0x4b5563,
@@ -35,7 +38,7 @@ export const doom: CharacterConfig = {
     id: 'shares',
     name: '경고 누적',
     desc: '타격에 성공할 때마다 경고가 1씩 쌓인다(최대 4). 스킬이 쌓인 만큼 세진다',
-    how: '틀려도 계속 경고한다. **네 번째 경고가 진짜다**',
+    how: '틀려도 계속 경고한다. 네 번째 경고가 진짜다',
     max: 4,
     icon: '🐦‍⬛',
     color: 0x64748b,
@@ -132,5 +135,9 @@ export const doom: CharacterConfig = {
     surge: ['이건… 예외적인 국면입니다.'],
     comeback: ['진짜 위기는 지금부터입니다.'],
     hurt: ['이것도 예측했습니다…'],
+    trait: [
+      '제가 20년 전부터 말했습니다',
+      '심판의 날입니다',
+    ],
   },
 };

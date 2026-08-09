@@ -11,6 +11,9 @@ export const whale: CharacterConfig = {
   // 로스터 최중량 · 최저 점프. 대신 한 방이 가장 무겁다
   stats: { speed: 200, jump: -650, doubleJump: -520, weight: 1.45 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,
@@ -36,7 +39,7 @@ export const whale: CharacterConfig = {
     id: 'balloon',
     name: '부력',
     desc: '타격마다 부력이 1 오른다(최대 3). 하나당 공중 점프가 한 번 늘어난다',
-    how: '무거운 몸을 때려서 띄운다. **맞으면 다시 가라앉는다**',
+    how: '무거운 몸을 때려서 띄운다. 맞으면 다시 가라앉는다',
     max: 3,
     icon: '🐋',
     color: 0x38bdf8,
@@ -146,5 +149,9 @@ export const whale: CharacterConfig = {
     surge: ['물량이 다 내 거야.'],
     comeback: ['바닥에서 다 주웠다.'],
     hurt: ['건방진…'],
+    trait: [
+      '고래가 내려간다',
+      '내가 팔면 내린다',
+    ],
   },
 };

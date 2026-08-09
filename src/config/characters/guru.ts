@@ -10,6 +10,9 @@ export const guru: CharacterConfig = {
   colors: { body: 0x6d28d9, head: 0xf5d5b5, accent: 0xfacc15 },
   stats: { speed: 280, jump: -760, doubleJump: -690, weight: 0.9 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     hair: 'swept',
     hairColor: 0x111827,
@@ -37,7 +40,7 @@ export const guru: CharacterConfig = {
     id: 'oneMoreThing',
     name: '재매수 추천',
     desc: '스킬이 맞으면 짧은 순간 쿨다운 없이 한 번 더 쓸 수 있다',
-    how: '한 번 맞히면 곧바로 또 지른다. **빗나가면 조용히 사라진다**',
+    how: '한 번 맞히면 곧바로 또 지른다. 빗나가면 조용히 사라진다',
     max: 1,
     icon: '🔮',
     color: 0xfacc15,
@@ -136,5 +139,9 @@ export const guru: CharacterConfig = {
     surge: ['제가 뭐랬습니까? 제가 뭐랬어요?'],
     comeback: ['눌림목이었을 뿐입니다.'],
     hurt: ['이건… 예상 범위 안입니다.'],
+    trait: [
+      '여기가 바닥입니다!',
+      '이거 하나만 보세요',
+    ],
   },
 };

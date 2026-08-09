@@ -10,6 +10,9 @@ export const pepe: CharacterConfig = {
   colors: { body: 0xd8d2e8, head: 0xf5f0f5, accent: 0xef4444 },
   stats: { speed: 300, jump: -780, doubleJump: -710, weight: 0.85 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     // 붉게 솟구친 광대 머리 + 귀까지 찢어진 입 + 부릅뜬 눈
     hair: 'messy',
@@ -36,7 +39,7 @@ export const pepe: CharacterConfig = {
     id: 'balloon',
     name: '붉은 풍선',
     desc: '타격마다 풍선이 1개 늘어난다(최대 3). 풍선 하나당 공중 점프가 한 번 늘어난다',
-    how: '때려서 기동력을 번다. 대신 **한 대라도 맞으면 전부 터진다**',
+    how: '때려서 기동력을 번다. 대신 한 대라도 맞으면 전부 터진다',
     max: 3,
     icon: '🎈',
     color: 0xef4444,
@@ -183,5 +186,9 @@ export const pepe: CharacterConfig = {
     surge: ['풍선 하나 줄까?'],
     comeback: ['여기선 다들 떠내려가.'],
     hurt: ['아직 안 끝났어…'],
+    trait: [
+      '전부 다 걸었다!',
+      '개구리는 안 판다',
+    ],
   },
 };

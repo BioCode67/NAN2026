@@ -487,17 +487,18 @@ const sceneAlive = (key) =>
   page.evaluate((k) => !!window.game?.scene?.isActive(k), key).catch(() => false);
 
 /*
- * 한 번 누르고 **길게** 기다린다.
+ * Enter 는 **한 번만** 누르고, 그 다음은 기다리기만 한다.
  *
- * 700ms 만 기다리고 다시 눌렀더니 그중 하나가 선택 화면으로 새어 들어가
- * 캐릭터를 즉시 확정해 버렸다. 그러면 그 뒤의 검사들이 통째로 엉뚱한
- * 화면에서 돌고, 제일 먼저 "메뉴 곡이 아닙니다: battle" 로 나타난다 —
- * 소리가 고장난 것처럼 보이지만 실제로는 이미 전투 중이었던 것이다.
- * (그 실패 메시지에 화면 이름을 같이 적어 두고서야 알았다)
+ * 전에는 선택 화면이 보일 때까지 700ms 마다 Enter 를 두드렸다. 헤드리스에서
+ * 페이드가 밀리면 그사이 한 번 더 눌리고, 그 한 번이 선택 화면으로 새어
+ * 들어가 캐릭터를 즉시 확정해 버린다 — 그러면 이 뒤의 검사들이 전부
+ * "선택 화면인 줄 알고" 도는데 게임은 이미 전투 중이다. 실제로 그렇게
+ * "메뉴 곡이 아닙니다: battle" 과 "상세 보기가 안 열립니다" 가 한꺼번에
+ * 났고, 둘 다 고장이 아니라 검사가 화면을 잘못 안 것이었다.
  *
- * 700ms 로는 모자란 이유가 있다. 타이틀 페이드는 0.28초인데 이 브라우저는
- * 게임 시간이 실제의 1/5 로 흘러, 벽시계로는 1.5초 가까이 걸린다.
- * 누르는 횟수를 최소로 줄이고, 한 번 누른 뒤에는 6초까지 참는다.
+ * 700ms 로는 모자란 이유까지 적어 둔다 — 타이틀 페이드는 0.28초인데 이
+ * 브라우저는 게임 시간이 실제의 1/5 로 흘러 벽시계로는 1.5초 가까이 걸린다.
+ * 그래서 "조금 더 기다리기"가 아니라 **결과를 보고 나서** 다시 누른다.
  */
 let atSelect = false;
 for (let attempt = 0; attempt < 4 && !atSelect; attempt++) {
@@ -505,18 +506,17 @@ for (let attempt = 0; attempt < 4 && !atSelect; attempt++) {
     atSelect = true;
     break;
   }
-  if (!(await sceneAlive('Title'))) {
-    await page.waitForTimeout(300);
-    continue;
+  if (await sceneAlive('Title')) {
+    if (attempt === 0) await shot('title');
+    await page.keyboard.press('Enter');
   }
-
-  if (attempt === 0) await shot('title');
-  await page.keyboard.press('Enter');
-
-  for (let i = 0; i < 24 && !atSelect; i++) {
-    await page.waitForTimeout(250);
-    if (await sceneAlive('Select')) atSelect = true;
-  }
+  atSelect = await page
+    .waitForFunction(() => !!window.game?.scene?.isActive('Select'), null, {
+      polling: 150,
+      timeout: 12000,
+    })
+    .then(() => true)
+    .catch(() => false);
 }
 if (!atSelect) errors.push('[부팅] 캐릭터 선택 화면까지 넘어가지 못했습니다');
 
@@ -577,39 +577,109 @@ const isDetailOpen = () =>
  * 검사도 둘 다 눌러 보고 어느 쪽으로 열렸는지 남긴다.
  */
 /*
- * 열렸는지를 **기다려서** 본다.
- *
- * 한 번 찍고 마는 검사는 여기서 거짓말을 했다. TAB 이 열었는데 400ms 안에
- * 확인이 안 되면 곧바로 I 를 누르는데, 그 I 가 열려 있는 것을 **도로 닫는다.**
- * 그러고는 "둘 다 안 열렸다"고 적는다 — 실제로는 첫 키가 제대로 열었는데도.
- * 느린 기계에서 셋 중 하나꼴로 그랬다.
+ * 한 번 누르고 400ms 뒤에 보던 것을 **열릴 때까지 지켜보는** 것으로 바꿨다.
+ * 이 환경은 초당 열 프레임쯤이라 키 하나가 프레임 사이로 사라지는 일이
+ * 드물지 않다. 그때마다 "상세 보기가 안 열린다"는 실패가 떴는데 기능은
+ * 멀쩡했다 — 검사가 늦게 본 것도 아니고, 키가 아예 안 들어간 것이다.
  */
-const waitDetail = async (want, tries = 12) => {
-  for (let i = 0; i < tries; i++) {
-    if ((await isDetailOpen()) === want) return true;
-    await page.waitForTimeout(200);
-  }
-  return false;
-};
-
+/*
+ * I 를 먼저 눌러 본다.
+ *
+ * 순서를 바꾼 데는 이유가 있다. TAB 은 브라우저에게 "다음 요소로 초점을
+ * 옮겨라"라는 뜻이라, 게임이 그것을 받든 못 받든 **초점이 캔버스를 떠난다**.
+ * 떠난 뒤에 누르는 I 는 게임에 아예 도착하지 않는다 — 그래서 "둘 다
+ * 안 열린다"는 실패가 났고, 기능은 멀쩡했다. 매번 캔버스를 다시 눌러
+ * 초점을 돌려놓고, 브라우저가 가로채지 않는 I 를 먼저 시도한다.
+ */
 let openedBy = '';
-for (const key of ['Tab', 'i']) {
-  await page.keyboard.press(key);
-  if (await waitDetail(true)) {
-    openedBy = key;
-    break;
+outer: for (const key of ['i', 'Tab']) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.mouse.click(20, 20);
+    await page.keyboard.press(key);
+    for (let i = 0; i < 8; i++) {
+      await page.waitForTimeout(120);
+      if (await isDetailOpen()) {
+        openedBy = key;
+        break outer;
+      }
+    }
   }
-  /*
-   * 다음 키를 누르기 전에 확실히 닫아 둔다. 이 키가 늦게 도착해 뒤늦게
-   * 열리면, 다음 키는 "열기"가 아니라 "닫기"가 되어 같은 함정에 다시 빠진다.
-   */
-  await page.keyboard.press('Escape');
-  await waitDetail(false, 4);
 }
 
 if (!openedBy) errors.push('[선택] TAB · I 어느 쪽으로도 상세 보기가 열리지 않았습니다');
 else console.log(`  ✓ ${openedBy.toUpperCase()} → 커맨드 상세`);
 await shot('detail');
+
+/*
+ * 설명 패널의 글줄이 겹치지 않는가 — 스무 명 전부.
+ *
+ * ── 왜 재는가 ──────────────────────────────────────────────────────
+ * 이 패널은 줄마다 y 를 고정해 두고 쌓아 왔다. 그런데 설명 길이는
+ * 캐릭터마다 다르다 — 어떤 사람은 패시브가 한 줄, 어떤 사람은 두 줄이다.
+ * 한 줄이 길어지는 순간 그 아래 줄이 **그대로 덮인다**. 실제로 이동 기질
+ * 줄을 넣자 고유 메커니즘 줄 위에 겹쳐 찍혔는데, 코드에는 아무 이상이
+ * 없고 화면에서만 글자가 뭉개졌다.
+ *
+ * 사람이 스무 명을 하나씩 넘겨 보며 확인할 수는 없으니 좌표로 잰다.
+ * 눈으로 봐야만 보이는 종류의 고장이라 더더욱 검사가 맡아야 한다.
+ */
+{
+  const bad = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Select');
+    const names = ['passiveText', 'traitText', 'signatureText', 'skillText', 'movesText'];
+    const out = [];
+    for (let i = 0; i < 20; i++) {
+      s.select(i);
+      const rows = names
+        .map((n) => ({ n, top: s[n].y, bot: s[n].y + s[n].height }))
+        .filter((r) => r.bot > r.top);
+      for (let k = 1; k < rows.length; k++) {
+        if (rows[k].top < rows[k - 1].bot) {
+          out.push(`${s.nameText.text}: ${rows[k - 1].n} 가 ${rows[k].n} 를 덮습니다`);
+        }
+      }
+      // 패널 밖으로 흘러나가면 아래 안내 글자와 겹친다
+      const last = rows[rows.length - 1];
+      if (last && last.bot > 690) {
+        out.push(`${s.nameText.text}: 설명이 패널 밖으로 넘칩니다 (${Math.round(last.bot)})`);
+      }
+
+      /*
+       * 이동 두 줄이 같은 말을 하고 있지 않은가.
+       *
+       * [이동] 은 "가만히 있어도 이런 몸이다", [이 캐릭터만] 은 "눌러서
+       * 하는 것"이다. 둘을 따로 쓴 이유가 그것인데, 한쪽을 고치다 보면
+       * 다른 쪽에 같은 문장이 남기 쉽다 — 실제로 벽 차기가 두 줄에 거의
+       * 같은 말을 적고 있었다. 화면에서는 그냥 "두 줄 다 읽을 필요 없는
+       * 설명"으로 보이고, 그러면 아래 줄이 있으나 마나가 된다.
+       */
+      const lines = s.traitText.text.split('\n');
+      if (lines.length === 2) {
+        const strip = (t) => t.replace(/^\[[^\]]*\]\s*/, '').replace(/\s+/g, '');
+        const [a, b] = [strip(lines[0]), strip(lines[1])];
+        let run = 0;
+        for (let x = 0; x < a.length; x++) {
+          for (let y = 0; y < b.length; y++) {
+            let k = 0;
+            while (x + k < a.length && y + k < b.length && a[x + k] === b[y + k]) k++;
+            if (k > run) run = k;
+          }
+        }
+        if (run >= 14) {
+          out.push(`${s.nameText.text}: 이동 두 줄이 같은 말을 합니다 (겹치는 ${run}자)`);
+        }
+      }
+    }
+    s.select(0);
+    return out;
+  });
+
+  if (bad.length) {
+    errors.push(`[선택] 설명 패널 글줄이 겹칩니다 — ${bad.slice(0, 3).join(' / ')}`);
+  } else {
+    console.log('  ✓ 스무 명 모두 설명 줄이 안 겹치고 패널 안에 들어온다');
+  }
+}
 
 // 닫기 — 열려 있으면 다음 단계의 방향키가 안 먹는다
 for (let i = 0; i < 3 && (await isDetailOpen()); i++) {
@@ -1617,13 +1687,22 @@ console.log('공격 모션');
     tws.forEach((t) => t.seek(120));
     const wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
 
-    /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
+    /*
+     * 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가.
+     *
+     * 선딜을 트윈으로 감아 건너뛰었으므로, 여기서는 **판정이 켜질 때까지**
+     * 기다렸다 재야 한다. 고정 횟수만 돌면 아직 선딜인 채로 끝나고
+     * "공격해도 앞으로 안 나간다"는 거짓이 나온다.
+     */
+    for (let i = 0; i < 60 && p.attackPhase === 'startup'; i++) await wait(40);
+
     let out = { dx: 0, sx: 1, sy: 1 };
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       await wait(25);
       if (sp.x - home.x > out.dx) {
         out = { dx: sp.x - home.x, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
       }
+      if (p.attackPhase === 'none') break;
     }
     return { wind, out, move: p.lastMove };
   });
@@ -2086,6 +2165,538 @@ console.log('공매도 유령');
   await restartRound();
   await waitGrounded();
 }
+
+/*
+ * 이동 기질 — 스무 명이 저마다 다르게 움직이는가.
+ *
+ * 이름과 숫자만 다르고 똑같이 뛰고 똑같이 떨어지면, 한 명을 골라 익숙해질
+ * 이유가 없다. 기질은 **공중에서** 갈리므로 전부 공중에서 잰다.
+ * 캐릭터를 바꿔 가며 확인하는 대신 지금 캐릭터의 기질만 갈아 끼운다 —
+ * 재려는 것은 "그 사람"이 아니라 "그 기질이 실제로 도는가"다.
+ */
+console.log('이동 기질');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const traits = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const was = p.cfg.move;
+
+    /*
+     * 낙하 기질은 두 가지 방식으로 확인한다.
+     *
+     * 1) 급강하 vs 표준 — **실제 시간을 흘려** 잰다. 이건 tickMoveTrait 가
+     *    update 루프에 실제로 물려 있는지까지 확인하는 검사다.
+     * 2) 활공 — 한 틱만 직접 돌려 잰다. 활공은 "점프를 누르고 있는가"를
+     *    보는데, 사람 입력 루프가 매 프레임 그 값을 키보드 상태(안 누름)로
+     *    덮어쓴다. 시간을 흘리면 검사가 게임의 입력 처리와 싸우게 되고,
+     *    지는 쪽은 늘 검사다.
+     */
+    /*
+     * 떨어지는 동안 **아무 데도 안 걸리게** 하고 잰다.
+     *
+     * 처음에는 "발판 없는 자리"를 골라 떨어뜨렸는데, 무대마다 발판 배치가
+     * 달라서(무대는 판마다 무작위로 정해진다) 어느 판에서는 그 자리에
+     * 발판이 있었다. 착지해 버리니 낙하 속도가 0 이 되고, 그러면 모든 기질이
+     * 같은 값으로 보인다 — 기질이 죽은 게 아니라 떨어질 곳이 없던 것이다.
+     * 아래쪽 충돌을 잠깐 꺼 두면 무대가 무엇이든 같은 조건이 된다.
+     */
+    /*
+     * 재는 동안만 **낙하 속도 뚜껑을 걷는다**.
+     *
+     * 몸에는 최고 낙하 속도(1700)가 걸려 있다. 이 환경은 프레임이 드물어
+     * 한 틱에 속도가 크게 붙으므로, 320ms 만 흘려도 표준·급강하가 **둘 다**
+     * 뚜껑에 닿는다. 그러면 1700 대 1867 이 되어 "급강하가 안 빠르다"로
+     * 보인다 — 느린 게 아니라 둘 다 천장에 눌린 것이다.
+     * 천장을 잠깐 올려 두면 기울기 자체를 비교할 수 있다.
+     */
+    const fallOver = async (trait) => {
+      p.cfg.move = trait;
+      p.body.checkCollision.down = false;
+      p.body.setMaxVelocity(1400, 100000);
+      p.setPosition(1420, 120);
+      p.body.setVelocity(0, 400);
+      p.stunUntil = 0;
+      await wait(320);
+      const out = {
+        vy: Math.round(p.body.velocity.y),
+        y: Math.round(p.y),
+        down: p.body.blocked.down || p.body.touching.down,
+        trait: p.trait,
+      };
+      p.body.setMaxVelocity(1400, 1700);
+      p.body.checkCollision.down = true;
+      return out;
+    };
+
+    const plainFall = await fallOver('plain');
+    const plungeFall = await fallOver('plunge');
+    const plain = plainFall.vy;
+    const plunge = plungeFall.vy;
+
+    /* 활공 — 한 틱만 직접 돌려 뚜껑이 씌워지는지 본다 */
+    p.cfg.move = 'glide';
+    p.setPosition(1420, 150);
+    p.body.setVelocity(0, 900);
+    p.jumpHeld = true;
+    p.tickMoveTrait(16);
+    const glide = Math.round(p.body.velocity.y);
+    p.jumpHeld = false;
+
+    /* 표류 — 공중에서 반대로 눌러도 속도가 곧바로 안 바뀐다 */
+    p.cfg.move = 'drift';
+    p.setPosition(1420, 220);
+    p.body.setVelocity(600, 0);
+    p.moveHorizontal(-1);
+    const driftV = Math.round(p.body.velocity.x);
+    p.cfg.move = 'plain';
+    p.setPosition(1420, 220);
+    p.body.setVelocity(600, 0);
+    p.moveHorizontal(-1);
+    const plainV = Math.round(p.body.velocity.x);
+
+    /* 벽 차기 — 무대 밖으로 내보내면 안쪽으로 튕겨 돌아온다 */
+    /*
+     * 벽 차기 — **찬 직후에** 잰다.
+     *
+     * 고정 시간 뒤에 재면 그 사이 중력이 위로 솟는 속도를 다 먹어 버려
+     * (-620 → -188) "안 튕겼다"로 보인다. 튕긴 것은 맞고 잰 때가 늦은 것이다.
+     * 기질이 스스로 켜는 깃발(wallKicked)이 서는 순간을 잡는다.
+     */
+    p.cfg.move = 'wallkick';
+    p.wallKicked = false;
+    p.setPosition(40, 420);
+    p.body.setVelocity(-300, 0);
+    let kick = { vx: 0, vy: 0 };
+    for (let i = 0; i < 40; i++) {
+      if (p.wallKicked) {
+        kick = { vx: Math.round(p.body.velocity.x), vy: Math.round(p.body.velocity.y) };
+        break;
+      }
+      await wait(30);
+    }
+
+    p.cfg.move = was;
+    p.setJumpHeld(false);
+    return { glide, plain, plunge, driftV, plainV, kick, plainFall, plungeFall };
+  });
+  await releasePlayer();
+
+  if (!(traits.glide <= 200)) {
+    errors.push(`[기질] 활공이 낙하에 뚜껑을 안 씌웁니다 — 900 을 넣었는데 ${traits.glide}`);
+  } else if (!(traits.plunge > traits.plain * 1.15)) {
+    errors.push(
+      `[기질] 급강하가 더 안 빠릅니다 — ` +
+        `표준 ${JSON.stringify(traits.plainFall)} / 급강하 ${JSON.stringify(traits.plungeFall)}`,
+    );
+  } else if (!(traits.driftV > traits.plainV + 100)) {
+    errors.push(
+      `[기질] 표류가 관성을 안 남깁니다 — 표류 ${traits.driftV} / 표준 ${traits.plainV}`,
+    );
+  } else if (!(traits.kick.vx > 100 && traits.kick.vy < -100)) {
+    errors.push(`[기질] 벽 차기가 안 튕깁니다 — ${JSON.stringify(traits.kick)}`);
+  } else {
+    console.log(
+      `  ✓ 넷이 다르게 움직인다 — 활공 900→${traits.glide} · ` +
+        `급강하 ${traits.plunge} vs 표준 ${traits.plain} (낙하) · ` +
+        `표류 ${traits.driftV} vs 표준 ${traits.plainV} (관성) · 벽 차기 ↗${traits.kick.vx}`,
+    );
+  }
+  await shot('move-traits');
+  await restartRound();
+  await waitGrounded();
+}
+
+/*
+ * 기질 전용기 — "이 캐릭터로만 되는 것"이 실제로 있는가.
+ *
+ * ── 왜 따로 재는가 ──────────────────────────────────────────────────
+ * 앞의 검사는 기질이 **이동**을 다르게 만드는지까지만 본다. 그런데 이동만
+ * 다르면 손에 남는 것은 "얘는 좀 느리게 떨어지네" 정도이고, 그건 캐릭터를
+ * 고를 이유가 되지 못한다. 고를 이유는 그 기질이 **공격과 엮일 때** 생긴다 —
+ * 활공은 도망이 아니라 압박이 되고, 벽 차기는 생존이 아니라 반격이 되고,
+ * 표류는 관성이 아니라 이동 수단이 된다.
+ *
+ * 그래서 여기서 확인하는 것은 세 문장이다.
+ *   1. 활공 중에 공격하면 급습으로 내리꽂힌다 (다른 기질은 그냥 공중 공격)
+ *   2. 벽을 찬 직후의 첫 한 방이 실제로 세진다 (그리고 한 번만 세진다)
+ *   3. 표류는 자원 없이 공중 대시를 한다 — 대신 한 체공에 한 번뿐이다
+ *
+ * 셋 다 "값이 달라졌다"까지 읽는다. 이름만 바뀌고 숫자가 그대로면 연출이지
+ * 기술이 아니다.
+ */
+console.log('기질 전용기');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const only = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const was = p.cfg.move;
+
+    /** 공격 상태를 손으로 비운다 — 후딜을 실제로 기다리면 검사가 느려진다 */
+    const clearAttack = () => {
+      p.attackPhase = 'none';
+      p.currentAttack = null;
+      p.chainQueue = [];
+      p.chainNext = null;
+      p.chainUntil = 0;
+      p.stunUntil = 0;
+      p.chargeMs = 0;
+      p.holdingHeavy = false;
+    };
+
+    /* 발밑에 아무것도 없게 만든다 — 무대마다 발판 배치가 달라서다 */
+    p.body.checkCollision.down = false;
+
+    /**
+     * **실제로 뜬 상태**로 만든다.
+     *
+     * 자리만 옮겨 놓고 바로 재면 안 된다. 땅에 닿았다는 표시(blocked.down)는
+     * 물리 한 틱이 지나야 갱신되므로, 방금까지 서 있던 몸은 공중에 옮겨 놔도
+     * 한동안 "닿아 있음"으로 읽힌다. 그 상태에서는 활공도 공중 대시도
+     * 발동 조건에서 걸러진다 — 기능이 죽은 게 아니라 아직 땅에 있는 것이다.
+     */
+    const goAirborne = async (y, vy) => {
+      for (let i = 0; i < 40; i++) {
+        p.setPosition(1420, y);
+        p.body.setVelocity(0, vy);
+        p.stunUntil = 0;
+        if (!(p.body.blocked.down || p.body.touching.down)) return true;
+        await wait(30);
+      }
+      return false;
+    };
+
+    /* --- 1. 활공 급습 -------------------------------------------- */
+    /*
+     * 뜬 것을 확인한 **뒤부터는** 한 프레임도 흘리지 않는다. 활공 판정은
+     * "점프를 누르고 있는가"를 보는데, 사람 입력 루프가 매 프레임 그 값을
+     * 키보드 상태로 덮어쓴다. 기다리는 순간 검사가 입력 처리와 싸우게 된다.
+     */
+    p.cfg.move = 'glide';
+    clearAttack();
+    const airborne = await goAirborne(150, 300);
+    p.jumpHeld = true;
+    const gliding = p.isGliding();
+    const dived = p.attack('light');
+    const dive = {
+      ok: dived,
+      airborne,
+      gliding,
+      vy: Math.round(p.body.velocity.y),
+      name: p.getCurrentAttack()?.name ?? null,
+      damage: p.getCurrentAttack()?.damage ?? 0,
+    };
+    p.jumpHeld = false;
+
+    /* 같은 자리, 같은 입력 — 기질만 빼면 급습이 안 나와야 한다 */
+    p.cfg.move = 'plain';
+    clearAttack();
+    await goAirborne(150, 300);
+    p.jumpHeld = true;
+    p.attack('light');
+    const plainAir = {
+      vy: Math.round(p.body.velocity.y),
+      name: p.getCurrentAttack()?.name ?? null,
+      damage: p.getCurrentAttack()?.damage ?? 0,
+    };
+    p.jumpHeld = false;
+
+    /* --- 2. 표류 공중 대시 ---------------------------------------- */
+    /*
+     * 대시 쿨다운은 매번 손으로 되돌린다. 되돌리지 않으면 두 번째가
+     * "한 체공에 한 번" 때문이 아니라 쿨다운 때문에 막히고, 그러면 이 검사는
+     * 아무것도 확인하지 못한 채 통과한다.
+     */
+    p.cfg.move = 'drift';
+    clearAttack();
+    await goAirborne(200, 100);
+    p.airDashed = false;
+    p.dashReadyAt = 0;
+    const drift1 = p.dash(1);
+    p.dashReadyAt = 0;
+    p.dashUntil = 0;
+    const drift2 = p.dash(1);
+
+    /* 자원도 기질도 없으면 공중에서는 대시가 아예 없다 */
+    p.cfg.move = 'plain';
+    clearAttack();
+    await goAirborne(200, 100);
+    p.airDashed = false;
+    p.dashReadyAt = 0;
+    p.dashUntil = 0;
+    const wasStacks = p.sigStacks;
+    p.sigStacks = 0;
+    const plainAirDash = p.dash(1);
+    p.sigStacks = wasStacks;
+
+    /* --- 3. 벽 차기 반격 ------------------------------------------ */
+    /*
+     * 벽을 진짜로 차게 만든다. wallBoostUntil 을 손으로 세우면 "창이 열리면
+     * 세진다"만 확인되고, 정작 **벽 차기가 그 창을 여는가**는 확인되지 않는다.
+     */
+    p.cfg.move = 'wallkick';
+    clearAttack();
+    p.wallKicked = false;
+    p.setPosition(40, 420);
+    p.body.setVelocity(-300, 0);
+    let kicked = false;
+    for (let i = 0; i < 40; i++) {
+      if (p.wallKicked) {
+        kicked = true;
+        break;
+      }
+      await wait(30);
+    }
+
+    /*
+     * 선딜이 끝나 판정이 켜지는 순간에 보정이 얹힌다. 고정 시간 뒤에 읽으면
+     * 이 환경(게임 시간이 실제의 1/5)에서 아직 선딜 중일 수 있다 —
+     * 시계가 아니라 상태가 바뀌는 것을 기다린다.
+     */
+    const swingUntilActive = async () => {
+      p.setPosition(1420, 300);
+      p.body.setVelocity(0, 60);
+      p.attack('heavy');
+      for (let i = 0; i < 60; i++) {
+        if (p.attackPhase === 'active') break;
+        await wait(30);
+      }
+      const a = p.getCurrentAttack();
+      return { phase: p.attackPhase, name: a?.name ?? null, damage: a?.damage ?? 0 };
+    };
+
+    const counter = await swingUntilActive();
+    clearAttack();
+    // 창은 한 번 쓰면 닫힌다 — 같은 입력이 이제 평범해야 한다
+    const after = await swingUntilActive();
+    clearAttack();
+
+    /* --- 4. 표준 — 남보다 빨리 모은다 ----------------------------- */
+    /*
+     * 공중 재주가 없는 대신 땅에서 모으는 시간이 짧다. 이건 시간을 흘려
+     * 재면 프레임이 드문 이 환경에서 한 틱에 다 차 버려 차이가 안 보이므로,
+     * 같은 delta 를 한 번 먹여 **한 틱에 얼마나 차는지**를 비교한다.
+     */
+    p.body.checkCollision.down = true;
+    const chargeIn = (trait) => {
+      p.cfg.move = trait;
+      clearAttack();
+      p.chargeMs = 0;
+      p.holdingHeavy = true;
+      // 차지가 도는 것은 지상 중립 강공격의 선딜 구간뿐이다
+      p.attackPhase = 'startup';
+      p.currentAttack = p.cfg.moves.heavy;
+      p.attackTimer = 9999;
+      /*
+       * 차지는 **땅에 붙어 있을 때만** 돈다. 앞 항목들을 재느라 공중에 떠
+       * 있는 상태라, 발이 닿았다는 표시를 세워 주지 않으면 두 기질 모두
+       * 0 으로 나오고 검사는 아무것도 확인하지 못한 채 실패한다.
+       */
+      p.body.blocked.down = true;
+      p.body.touching.down = true;
+      p.update(p.scene.time.now, 100);
+      const got = Math.round(p.chargeMs);
+      p.holdingHeavy = false;
+      clearAttack();
+      return got;
+    };
+    const chargePlain = chargeIn('plain');
+    const chargeOther = chargeIn('glide');
+
+    p.cfg.move = was;
+    p.body.checkCollision.down = true;
+    p.setJumpHeld(false);
+    p.airDashed = false;
+    p.dashReadyAt = 0;
+    return {
+      dive,
+      plainAir,
+      drift1,
+      drift2,
+      plainAirDash,
+      kicked,
+      counter,
+      after,
+      chargePlain,
+      chargeOther,
+    };
+  });
+  await releasePlayer();
+
+  if (!only.dive.airborne) {
+    errors.push('[전용기] 공중 상태를 못 만들어 전용기를 잴 수 없습니다');
+  } else if (!only.dive.gliding || !only.dive.ok) {
+    errors.push(`[전용기] 활공 중에 공격이 안 나갑니다 — ${JSON.stringify(only.dive)}`);
+  } else if (!/급습/.test(only.dive.name ?? '')) {
+    errors.push(
+      `[전용기] 활공 중 공격이 급습으로 안 바뀝니다 — ` +
+        `활공 "${only.dive.name}" / 표준 "${only.plainAir.name}"`,
+    );
+  } else if (!(only.dive.vy > only.plainAir.vy + 500)) {
+    errors.push(
+      `[전용기] 급습인데 안 내리꽂힙니다 — 활공 ${only.dive.vy} / 표준 ${only.plainAir.vy}`,
+    );
+  } else if (!(only.dive.damage > only.plainAir.damage)) {
+    errors.push(
+      `[전용기] 급습이 더 안 아픕니다 — ${only.dive.damage} vs ${only.plainAir.damage}`,
+    );
+  } else if (!only.drift1) {
+    errors.push('[전용기] 표류가 공중 대시를 못 합니다');
+  } else if (only.drift2) {
+    errors.push('[전용기] 표류의 공중 대시가 한 체공에 두 번 나갑니다 (대가가 없습니다)');
+  } else if (only.plainAirDash) {
+    errors.push('[전용기] 자원도 기질도 없는데 공중 대시가 됩니다 (전용기가 아닙니다)');
+  } else if (!only.kicked) {
+    errors.push('[전용기] 벽 차기가 발동하지 않아 반격을 잴 수 없습니다');
+  } else if (only.counter.phase !== 'active') {
+    errors.push(`[전용기] 벽 차기 뒤 공격이 판정까지 못 갑니다 — ${JSON.stringify(only.counter)}`);
+  } else if (!/반격/.test(only.counter.name ?? '')) {
+    errors.push(`[전용기] 벽 차기 뒤 첫 한 방이 반격으로 안 바뀝니다 — "${only.counter.name}"`);
+  } else if (!(only.counter.damage > only.after.damage)) {
+    errors.push(
+      `[전용기] 반격이 안 세집니다 — ${only.counter.damage} vs 평소 ${only.after.damage}`,
+    );
+  } else if (/반격/.test(only.after.name ?? '')) {
+    errors.push('[전용기] 반격 보정이 계속 남습니다 — 한 방만 세져야 합니다');
+  } else if (!(only.chargePlain > only.chargeOther * 1.2)) {
+    errors.push(
+      `[전용기] 표준이 남보다 빨리 안 모읍니다 — ` +
+        `표준 ${only.chargePlain} / 그 외 ${only.chargeOther} (같은 100ms)`,
+    );
+  } else {
+    console.log(
+      `  ✓ 활공 급습 (낙하 ${only.plainAir.vy}→${only.dive.vy}, ` +
+        `${only.plainAir.damage}→${only.dive.damage}) · ` +
+        `표류 공중 대시 1회 한정 · ` +
+        `벽 차기 반격 ${only.after.damage}→${only.counter.damage} · ` +
+        `표준 차지 ${only.chargeOther}→${only.chargePlain}`,
+    );
+  }
+  await shot('trait-exclusive');
+  await restartRound();
+  await waitGrounded();
+}
+
+/*
+ * 봇도 자기 기질을 쓰는가.
+ *
+ * ── 왜 재는가 ──────────────────────────────────────────────────────
+ * 전용기를 만들어도 봇이 안 쓰면 절반만 존재한다. 사람은 스무 명 중 한 명을
+ * 고르고 나머지 열아홉은 **상대로만** 만난다. 봇이 전부 똑같이 걸어와
+ * 똑같이 때리면 맞는 쪽에서는 이름과 색만 다른 하나를 스무 번 상대하는
+ * 셈이고, 그러면 캐릭터를 알아 갈 계기가 아예 안 생긴다.
+ *
+ * 봇의 판단은 시간·주사위·거리에 걸려 있어서 "한 판 지켜보다가 나오면
+ * 통과"로 재면 통과·실패가 운에 달린다. 그래서 상황을 만들어 놓고
+ * 판단 함수를 직접 한 번 돌린다 — 재는 것은 "지금 이 상황에서 그 수를
+ * 두는가"이지 "언제 두는가"가 아니다.
+ */
+console.log('봇 기질');
+{
+  await restartRound();
+  await waitGrounded();
+
+  const bots = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    const ai = s.ais[0];
+    if (!ai) return { why: '봇이 없습니다' };
+    const b = ai.self;
+    const foe = s.player;
+    const now = s.time.now;
+
+    // 재는 동안 발밑에 아무것도 없게 한다 (무대마다 발판 배치가 다르다)
+    b.body.checkCollision.down = false;
+    const was = b.cfg.move;
+
+    /*
+     * "떠 있다"는 표시를 손으로 세운다.
+     *
+     * 자리만 공중으로 옮겨서는 안 된다 — 땅에 닿았다는 표시(blocked.down)는
+     * 물리 한 틱이 지나야 갱신되므로, 방금까지 서 있던 봇은 공중으로 옮겨
+     * 놔도 한동안 "닿아 있음"으로 읽힌다. 판단 함수는 그 값을 보고 공중
+     * 행동을 통째로 건너뛴다 — 기능이 죽은 게 아니라 아직 땅에 있는 것이다.
+     */
+    const lift = () => {
+      b.body.blocked.down = false;
+      b.body.touching.down = false;
+    };
+
+    /* --- 활공 봇: 멀면 떠 있고, 머리 위에 오면 내리꽂는다 ---------- */
+    b.cfg.move = 'glide';
+    b.attackPhase = 'none';
+    b.currentAttack = null;
+    b.stunUntil = 0;
+    // 상대에게서 멀리, 위쪽에 떠 있는 상황
+    foe.setPosition(900, 500);
+    b.setPosition(500, 300);
+    b.body.setVelocity(0, 200);
+    b.jumpHeld = false;
+    lift();
+    ai.tickTrait(foe, now);
+    const hangs = b.jumpHeld;
+
+    // 이제 머리 바로 위 — 활공을 끊고 떨어져야 한다
+    b.setPosition(foe.x + 20, foe.y - 120);
+    b.body.setVelocity(0, 200);
+    b.attackPhase = 'none';
+    b.currentAttack = null;
+    ai.attackCooldown = 0;
+    lift();
+    ai.tickTrait(foe, now);
+    const dives = {
+      vy: Math.round(b.body.velocity.y),
+      name: b.getCurrentAttack()?.name ?? null,
+    };
+
+    /* --- 표류 봇: 멀면 공중 대시로 거리를 지운다 ------------------- */
+    b.cfg.move = 'drift';
+    b.attackPhase = 'none';
+    b.currentAttack = null;
+    b.setPosition(foe.x - 400, foe.y - 100);
+    b.body.setVelocity(0, 100);
+    b.airDashed = false;
+    b.dashReadyAt = 0;
+    b.dashUntil = 0;
+    lift();
+    ai.tickTrait(foe, now);
+    const drifts = b.airDashed;
+
+    b.cfg.move = was;
+    b.body.checkCollision.down = true;
+    b.setJumpHeld(false);
+    b.airDashed = false;
+    return { hangs, dives, drifts };
+  });
+
+  if (bots.why) {
+    errors.push(`[봇 기질] ${bots.why}`);
+  } else if (!bots.hangs) {
+    errors.push('[봇 기질] 활공 봇이 공중에서 안 버팁니다 — 그냥 떨어집니다');
+  } else if (!(bots.dives.vy > 1000)) {
+    errors.push(
+      `[봇 기질] 활공 봇이 머리 위에서 안 내리꽂습니다 — ${JSON.stringify(bots.dives)}`,
+    );
+  } else if (!bots.drifts) {
+    errors.push('[봇 기질] 표류 봇이 공중 대시를 안 씁니다');
+  } else {
+    console.log(
+      `  ✓ 봇이 자기 기질을 쓴다 — 활공은 버티다 내리꽂고(${bots.dives.vy}), ` +
+        `표류는 공중 대시로 붙는다`,
+    );
+  }
+  await restartRound();
+  await waitGrounded();
+}
+
 
 /*
  * 서든데스 — 판이 길어지면 전원의 주가가 흘러내려 마감이 온다.
@@ -2597,11 +3208,24 @@ console.log('새 기믹');
     const s = window.game.scene.getScene('Battle');
     s.fighters.forEach((f, i) => s.stock.setExact(f.fighterId, 60 + i * 70));
   });
-  const share = await tryGimmick('다 같이 똑같이 나눠', () => {
+  /*
+   * 이것만 **한 번의 왕복 안에서** 잰다.
+   *
+   * 앞·뒤 값을 따로 물어보면 그 사이에 프레임이 지나가고, 날아가던 탄이나
+   * 터지는 폭탄이 누군가의 주가를 건드린다 — 기믹은 제대로 돌았는데
+   * "격차가 남아 있다"고 나온다. 실제로 두 번 그랬다. 재는 것은 기믹이지
+   * 그 순간의 전투가 아니므로, 걸고 재는 것을 한 호흡에 끝낸다.
+   */
+  const share = await page.evaluate(() => {
     const s = window.game.scene.getScene('Battle');
-    const v = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
-    return Math.max(...v) - Math.min(...v);
-  }, 0);
+    const spread = () => {
+      const v = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+      return Math.max(...v) - Math.min(...v);
+    };
+    const before = spread();
+    s.applyPrompt('다 같이 똑같이 나눠', '검사');
+    return { before, after: spread(), got: s.gimmicks.getActive().map((a) => a.spec.name) };
+  });
   if (share.after >= share.before || share.after > 2) {
     errors.push(`[기믹] 균등 분배 뒤에도 주가가 벌어져 있습니다 (${share.before}→${share.after})`);
   } else {

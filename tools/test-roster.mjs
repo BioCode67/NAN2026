@@ -16,6 +16,7 @@
 
 import {
   MOVE_SLOTS,
+  MOVE_TRAITS,
   QUOTE_KINDS,
   readArtIds,
   readCharacterIds,
@@ -98,6 +99,134 @@ console.log('\n슬롯 목록');
     }
   } else {
     pass(`MoveSlot ${declared.length}개 — 타입과 검사 도구가 같은 목록을 봅니다`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 1.7 이동 기질이 고르게 퍼져 있는가                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 기질은 "이 사람이 어떻게 움직이는가"다. 한 갈래에 몰리면 스무 명이
+ * 다시 비슷해지고, 빠뜨린 사람이 있으면 그 캐릭터만 조용히 밋밋해진다 —
+ * 화면에는 아무 표시도 안 나므로 사람은 끝까지 모른다.
+ */
+console.log('\n이동 기질');
+{
+  const before = failed;
+  const count = new Map(MOVE_TRAITS.map((t) => [t, 0]));
+
+  for (const c of roster) {
+    if (!c.move) {
+      fail(`${c.id}: 이동 기질(move)이 없습니다`);
+    } else if (!count.has(c.move)) {
+      fail(`${c.id}: 모르는 기질 '${c.move}' (${MOVE_TRAITS.join(', ')} 중 하나여야 합니다)`);
+    } else {
+      count.set(c.move, count.get(c.move) + 1);
+    }
+  }
+
+  const empty = [...count].filter(([, n]) => n === 0).map(([t]) => t);
+  if (empty.length) {
+    fail(`아무도 안 쓰는 기질: ${empty.join(', ')} — 만들어 두고 안 쓰면 없는 것과 같습니다`);
+  }
+
+  /*
+   * **스무 명이 저마다 다른 자리에 있어야 한다.**
+   *
+   * 자원(시그니처) 다섯 × 기질 다섯 = 스물다섯 자리에 스무 명이 앉으므로
+   * 전원이 다른 칸에 앉을 수 있다. 두 사람이 같은 칸에 앉으면 그 둘은
+   * 기계적으로 **완전히 같은 캐릭터**다 — 이름과 기술 이름만 다르다.
+   * 실제로 넷이 겹쳐 있었고(게이츠=버피, 리누스=사토시, 잡스=저크버그,
+   * 머스크=황소), 화면 어디에도 그 사실이 안 나와서 아무도 몰랐다.
+   */
+  const seat = new Map();
+  for (const c of roster) {
+    if (!c.signature || !c.move) continue;
+    const key = `${c.signature}+${c.move}`;
+    const prev = seat.get(key);
+    if (prev) {
+      fail(`${prev} 와 ${c.id} 가 같은 자리입니다 (${key}) — 기계적으로 같은 캐릭터가 됩니다`);
+    } else {
+      seat.set(key, c.id);
+    }
+  }
+
+  if (failed === before) {
+    pass(
+      `${roster.length}명이 기질 ${count.size}갈래로 갈렸습니다 — ` +
+        [...count].map(([t, n]) => `${t} ${n}`).join(' · '),
+    );
+    pass(`자원×기질 조합 ${seat.size}가지 — 스무 명이 저마다 다른 자리에 있습니다`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 1.8 전용기를 쓸 때 자기 말을 하는가                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 기질 전용 동작(활공 급습·벽 차기 반격·급강하 착지·표류 공중 대시·풀차지)은
+ * 화면에서 순식간에 지나가서, 말이 없으면 "빠르게 떨어졌다" 이상으로 읽히지
+ * 않는다. 같은 급습이라도 베조스는 배송을 하고 둠은 심판을 해야 그 캐릭터를
+ * 쓰는 맛이 생긴다 — 그래서 문장이 **겹치지 않는 것**까지 확인한다.
+ */
+console.log('\n기질 전용 대사');
+{
+  const before = failed;
+  const seen = new Map();
+
+  for (const c of roster) {
+    const lines = c.traitLines ?? [];
+    if (!lines.length) {
+      fail(`${c.id}: 기질 전용 대사(quotes.trait)가 없습니다`);
+      continue;
+    }
+    for (const line of lines) {
+      const prev = seen.get(line);
+      if (prev && prev !== c.id) {
+        fail(`${prev} 와 ${c.id} 가 같은 전용 대사를 씁니다 — "${line}"`);
+      } else {
+        seen.set(line, c.id);
+      }
+    }
+  }
+
+  if (failed === before) {
+    pass(`전용 대사 ${seen.size}줄 — 스무 명이 저마다 다르게 말합니다`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 1.9 코드로 그린 몸이 서로 구별되는가                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 그림 시트는 240칸이라 한동안 대부분의 캐릭터가 **코드로 그린 모습**으로
+ * 나온다. 그 모습은 머리·머리 위·손에 든 것·안경·수염·입·눈 일곱 조각의
+ * 조합이 전부다. 두 사람이 같은 조합을 쓰면 화면에서는 색만 다른 같은
+ * 사람이 되고, 카드가 작아지는 선택 화면에서는 그 색마저 잘 안 보인다.
+ *
+ * 캐릭터를 새로 넣거나 외형을 손볼 때 조용히 겹치기 쉬운 자리라 검사가 맡는다.
+ */
+console.log('\n코드로 그린 외형');
+{
+  const before = failed;
+  const seen = new Map();
+
+  for (const c of roster) {
+    const a = c.art ?? {};
+    const key = [a.hair, a.headgear, a.prop, a.glasses, a.beard, a.mouth, a.eyes].join('|');
+    const prev = seen.get(key);
+    if (prev) {
+      fail(`${prev} 와 ${c.id} 의 외형 조합이 같습니다 (${key}) — 색만 다른 같은 사람이 됩니다`);
+    } else {
+      seen.set(key, c.id);
+    }
+  }
+
+  if (failed === before) {
+    pass(`외형 조합 ${seen.size}가지 — 시트가 없어도 스무 명이 구별됩니다`);
   }
 }
 

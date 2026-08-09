@@ -61,6 +61,7 @@ import {
   DEPTH,
   FIGHTER,
   GAME,
+  MOVE_TRAITS,
   STAGE,
   STOCK,
   TIERS,
@@ -3135,6 +3136,25 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.OVERLAY)
       .setScrollFactor(0);
 
+    /*
+     * 글이 앉을 자리를 따로 깐다.
+     *
+     * ── 왜 필요한가 ──────────────────────────────────────────────────
+     * 반투명 막 한 겹만으로는 무대가 비쳐 올라온다. 용암 지대처럼 밝고
+     * 복잡한 무대에서는 전적표의 숫자 위로 발판·불꽃·남아 있는 파이터가
+     * 그대로 겹쳐 찍혔다 — 실제로 "빌 게이츠맨" 줄 위에 주가 막대가,
+     * 그 아래 줄에는 캐릭터 하나가 통째로 올라와 있었다.
+     *
+     * 막을 더 어둡게 하는 것으로는 안 된다. 그러면 이긴 사람의 승리 포즈와
+     * 무대까지 같이 죽는다. 읽어야 하는 자리에만 바닥을 깔면, 뒤가 무엇이든
+     * 글자는 항상 읽히고 바깥은 그대로 보인다.
+     */
+    this.add
+      .rectangle(GAME.WIDTH / 2, 404, 1010, 620, 0x070b16, 0.88)
+      .setStrokeStyle(2, 0x2f3f6b, 0.9)
+      .setDepth(DEPTH.OVERLAY)
+      .setScrollFactor(0);
+
     /* 이긴 판이 몇 번째인가 — 이번 판을 포함한 수 */
     const wonSoFar = playerWon ? this.streak + 1 : this.streak;
     // 연승 도전은 혼자 할 때만. 둘이면 다음 상대가 아니라 다시 붙는 것이 맞다
@@ -4118,13 +4138,62 @@ export class BattleScene extends Phaser.Scene {
       );
     }
 
+    /*
+     * 마지막 줄은 **지금 고른 이 사람만 되는 것**이다.
+     *
+     * 위 두 줄은 스무 명에게 똑같이 적용되는 공용 조작이다. 그것만 보여 주면
+     * "누굴 골라도 같은 게임"으로 읽히고, 실제로 기질 전용기는 조건이 붙어
+     * 있어서(떨어지는 중에, 벽에 밀렸을 때, 공중에서) 우연히 눌러서는 평생
+     * 안 나온다. 선택 화면에서 한 번 읽은 설명은 판이 시작하면 잊히므로,
+     * 시작하는 자리에서 자기 것 한 줄을 다시 띄운다.
+     *
+     * 색을 그 캐릭터의 강조색으로 칠하는 것도 같은 이유다 — 공용 안내와
+     * 내 것을 색으로 갈라 놔야 "이건 나한테만 해당한다"가 읽힌다.
+     */
+    const traitOf = (f: BaseCharacter) => MOVE_TRAITS[f.cfg.move ?? 'plain'];
+    const onlyLine = (f: BaseCharacter) => {
+      const tr = traitOf(f);
+      const only = 'only' in tr ? tr.only : null;
+      return only ? `${tr.icon} ${tr.name} — ${only}` : null;
+    };
+
     if (localHumans > 2) {
-      const who = localHumans === 3 ? '3P' : '3P · 4P';
+      /*
+       * 셋 이상이면 **줄여서 한 줄**에 몰아 넣는다.
+       *
+       * 사람마다 한 줄씩 주면 공용 두 줄에 넉 줄이 더 붙어 화면 위쪽 140px 이
+       * 글자로 덮인다. 판이 시작되는 그 순간에 제일 보고 싶은 것은 무대와
+       * 내 캐릭터이지 설명이 아니다. 자세한 설명은 선택 화면이 이미 맡고
+       * 있으므로, 여기서는 **누가 어떤 기질인지**만 남긴다.
+       */
+      const line = this.humans
+        .filter((h) => !h.remote)
+        .map((h) => {
+          const seat = seatIndex(h.fighter);
+          const tr = traitOf(h.fighter);
+          return `${seat + 1}P ${tr.icon} ${tr.name}`;
+        })
+        .join('   ·   ');
+      hint(52, `각자 되는 것    ${line}`, '#c3d2f0');
       hint(
-        52,
-        `${who} (패드)   스틱·십자키 이동 · A 점프 · X 약 · B 강 · Y 스킬 · LB/RB 잡기 · LT/RT 방어 · 스타트 일시정지`,
+        70,
+        `3P·4P (패드)   스틱·십자키 이동 · A 점프 · X 약 · B 강 · Y 스킬 · LB/RB 잡기 · LT/RT 방어 · 스타트 일시정지`,
         SEAT_COLORS[2]!,
       );
+    } else if (this.player2) {
+      const a = onlyLine(this.player);
+      const b = onlyLine(this.player2);
+      if (a) hint(52, `1P만 되는 것    ${a}`, '#38bdf8');
+      if (b) hint(70, `2P만 되는 것    ${b}`, '#f472b6');
+    } else {
+      const a = onlyLine(this.player);
+      if (a) {
+        hint(
+          52,
+          `${this.player.cfg.name}만 되는 것    ${a}`,
+          `#${this.player.cfg.colors.accent.toString(16).padStart(6, '0')}`,
+        );
+      }
     }
 
     this.controlHints = hints;

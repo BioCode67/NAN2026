@@ -10,6 +10,9 @@ export const linus: CharacterConfig = {
   colors: { body: 0x334155, head: 0xf1c9a5, accent: 0x38bdf8 },
   stats: { speed: 250, jump: -700, doubleJump: -630, weight: 1.0 },
 
+  /* 이동 기질 — 무대 밖으로 밀려도 벽을 한 번 차고 돌아온다 */
+  move: 'wallkick',
+
   art: {
     hair: 'messy',
     hairColor: 0x7c6244,
@@ -177,5 +180,9 @@ export const linus: CharacterConfig = {
     surge: ['Open source, baby!'],
     comeback: ['포크해서 다시 만들면 되지.'],
     hurt: ['이건 내 커널이 아니야.'],
+    trait: [
+      '패치를 보냈다',
+      '이 코드는 쓰레기다',
+    ],
   },
 };

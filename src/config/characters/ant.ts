@@ -11,6 +11,9 @@ export const ant: CharacterConfig = {
   // 가장 가볍고 가장 잘 뜬다. 대신 한 방이 로스터 최약체
   stats: { speed: 320, jump: -820, doubleJump: -760, weight: 0.72 },
 
+  /* 이동 기질 — 무대 밖으로 밀려도 벽을 한 번 차고 돌아온다 */
+  move: 'wallkick',
+
   art: {
     hair: 'messy',
     hairColor: 0x1f2937,
@@ -38,7 +41,7 @@ export const ant: CharacterConfig = {
     id: 'balloon',
     name: '수익률',
     desc: '타격마다 수익이 1 쌓인다(최대 3). 하나당 공중 점프가 한 번 늘어난다',
-    how: '벌어서 뛴다. **한 대 맞으면 계좌가 녹는다**',
+    how: '벌어서 뛴다. 한 대 맞으면 계좌가 녹는다',
     max: 3,
     icon: '🐜',
     color: 0xef4444,
@@ -135,5 +138,9 @@ export const ant: CharacterConfig = {
     surge: ['드디어 파란불 탈출!'],
     comeback: ['물린 게 아니라 모으는 중이야.'],
     hurt: ['계좌가… 계좌가…'],
+    trait: [
+      '존버는 승리한다!',
+      '평단가 낮추러 왔다',
+    ],
   },
 };

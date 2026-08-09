@@ -10,6 +10,9 @@ export const zuck: CharacterConfig = {
   colors: { body: 0x9ca3af, head: 0xf6ddc9, accent: 0x1877f2 },
   stats: { speed: 265, jump: -720, doubleJump: -640, weight: 1.0 },
 
+  /* 이동 기질 — 관절이 로봇처럼 각지게 꺾인다 — 흐르지 않고 정직하게 움직인다 */
+  move: 'plain',
+
   art: {
     hair: 'short',
     hairColor: 0x8b5a3c,
@@ -35,7 +38,7 @@ export const zuck: CharacterConfig = {
     id: 'oneMoreThing',
     name: '사명 변경',
     desc: '스킬이 맞으면 짧은 순간 쿨다운 없이 한 번 더 쓸 수 있다',
-    how: '맞히면 곧바로 다시 누른다. **빗나가면 그냥 긴 쿨다운이다**',
+    how: '맞히면 곧바로 다시 누른다. 빗나가면 그냥 긴 쿨다운이다',
     max: 1,
     icon: '♾️',
     color: 0x1877f2,
@@ -131,5 +134,9 @@ export const zuck: CharacterConfig = {
     surge: ['참여도가 아주 좋네요.'],
     comeback: ['빠르게 움직이고 부수면 됩니다.'],
     hurt: ['오류가… 아니, 아픕니다.'],
+    trait: [
+      '메타버스를 불러오는 중…',
+      '저도 물을 마십니다',
+    ],
   },
 };

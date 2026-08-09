@@ -10,6 +10,9 @@ export const jobs: CharacterConfig = {
   colors: { body: 0x1f2937, head: 0xf1c9a5, accent: 0xe5e7eb },
   stats: { speed: 265, jump: -720, doubleJump: -650, weight: 0.95 },
 
+  /* 이동 기질 — 공중에서 관성이 오래 남아 미끄러지듯 흐른다 */
+  move: 'drift',
+
   art: {
     hair: 'short',
     hairColor: 0x6b7280,
@@ -172,5 +175,9 @@ export const jobs: CharacterConfig = {
     surge: ['Reality distortion!'],
     comeback: ["Here's the iPhone."],
     hurt: ['이건… 내 디자인이 아니야.'],
+    trait: [
+      '이건… 그냥 흐르는 겁니다',
+      '한 방이면 충분합니다',
+    ],
   },
 };

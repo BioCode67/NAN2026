@@ -10,6 +10,9 @@ export const bull: CharacterConfig = {
   colors: { body: 0x8a6a3c, head: 0xb08d57, accent: 0x22c55e },
   stats: { speed: 295, jump: -700, doubleJump: -590, weight: 1.4 },
 
+  /* 이동 기질 — 뒤로 가는 법은 안 배웠다 — 한번 달리면 방향이 곧바로 안 꺾인다 */
+  move: 'drift',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,
@@ -35,7 +38,7 @@ export const bull: CharacterConfig = {
     id: 'booster',
     name: '스탬피드',
     desc: '대시가 기세를 태운다(최대 3). 남아 있으면 공중에서도 대시할 수 있다',
-    how: '기세로 밀어붙인다. **멈추면 그냥 큰 표적이다**',
+    how: '기세로 밀어붙인다. 멈추면 그냥 큰 표적이다',
     max: 3,
     icon: '🐂',
     color: 0x22c55e,
@@ -127,5 +130,9 @@ export const bull: CharacterConfig = {
     surge: ['불장이다! 불장!'],
     comeback: ['아직 안 끝났어. 더 간다!'],
     hurt: ['크윽… 조정인가.'],
+    trait: [
+      '뒤로 가는 법은 안 배웠다!',
+      '뿔이 먼저 나간다',
+    ],
   },
 };

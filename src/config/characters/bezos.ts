@@ -10,6 +10,9 @@ export const bezos: CharacterConfig = {
   colors: { body: 0x1f2937, head: 0xf0cfae, accent: 0xff9900 },
   stats: { speed: 245, jump: -700, doubleJump: -600, weight: 1.3 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     // 반들반들한 민머리 + 지나치게 커진 어깨
     hair: 'none',
@@ -36,7 +39,7 @@ export const bezos: CharacterConfig = {
     id: 'booster',
     name: '블루 오리진',
     desc: '대시가 연료를 태운다(최대 3). 남아 있으면 공중에서도 대시할 수 있다',
-    how: '무거운 몸을 연료로 옮긴다. **다 태우면 정말 안 움직인다**',
+    how: '무거운 몸을 연료로 옮긴다. 다 태우면 정말 안 움직인다',
     max: 3,
     icon: '🚀',
     color: 0xff9900,
@@ -141,5 +144,9 @@ export const bezos: CharacterConfig = {
     surge: ['물량이 밀려들어온다.'],
     comeback: ['아직 1일차입니다.'],
     hurt: ['배송 지연이군…'],
+    trait: [
+      '문 앞에 두고 갑니다!',
+      '당일 배송 나갑니다',
+    ],
   },
 };

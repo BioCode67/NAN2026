@@ -10,6 +10,9 @@ export const son: CharacterConfig = {
   colors: { body: 0x3f3f46, head: 0xf5d9bd, accent: 0xf59e0b },
   stats: { speed: 270, jump: -730, doubleJump: -650, weight: 0.95 },
 
+  /* 이동 기질 — 공중에서 관성이 오래 남아 미끄러지듯 흐른다 */
+  move: 'drift',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,
@@ -35,7 +38,7 @@ export const son: CharacterConfig = {
     id: 'balloon',
     name: '기업가치',
     desc: '타격마다 밸류에이션이 1 오른다(최대 3). 하나당 공중 점프가 한 번 늘어난다',
-    how: '때려서 몸값을 올린다. **한 대 맞으면 전부 증발한다**',
+    how: '때려서 몸값을 올린다. 한 대 맞으면 전부 증발한다',
     max: 3,
     icon: '📈',
     color: 0xf59e0b,
@@ -130,5 +133,9 @@ export const son: CharacterConfig = {
     surge: ['이번엔 제대로 골랐어!'],
     comeback: ['한 종목만 터지면 돼.'],
     hurt: ['평가손일 뿐이야…'],
+    trait: [
+      '300년 앞을 봅니다',
+      '지금 지릅니다',
+    ],
   },
 };

@@ -10,6 +10,9 @@ export const musk: CharacterConfig = {
   colors: { body: 0xdc2626, head: 0xf1c9a5, accent: 0xfbbf24 },
   stats: { speed: 285, jump: -760, doubleJump: -690, weight: 0.9 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'swept',
     hairColor: 0x3f2d20,
@@ -33,7 +36,7 @@ export const musk: CharacterConfig = {
   signature: {
     id: 'booster',
     name: '부스터',
-    desc: '대시가 부스터를 1칸 쓴다(최대 3, 자동 충전). 남아 있으면 **공중에서도 대시**할 수 있다',
+    desc: '대시가 부스터를 1칸 쓴다(최대 3, 자동 충전). 남아 있으면 공중에서도 대시할 수 있다',
     how: '이 게임에서 유일하게 공중 대시를 쓴다. 장외에서 돌아오는 수단이자 도망 수단',
     max: 3,
     icon: '🔥',
@@ -187,5 +190,9 @@ export const musk: CharacterConfig = {
     surge: ['Dogecoin to the moon!'],
     comeback: ["I'm buying Twitter."],
     hurt: ['재진입 실패…'],
+    trait: [
+      '화성에 착륙한다!',
+      '떡상은 아무도 못 막는다',
+    ],
   },
 };

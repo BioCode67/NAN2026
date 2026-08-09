@@ -11,6 +11,9 @@ export const buffett: CharacterConfig = {
   // 가장 느리고 가장 무겁다 — 밀리지 않는 대신 따라잡지도 못한다
   stats: { speed: 205, jump: -690, doubleJump: -580, weight: 1.45 },
 
+  /* 이동 기질 — 남들이 팔 때 산다 — 밀려나도 벽을 차고 제자리로 돌아온다 */
+  move: 'wallkick',
+
   art: {
     hair: 'side-part',
     hairColor: 0xe5e7eb,
@@ -36,7 +39,7 @@ export const buffett: CharacterConfig = {
     id: 'shares',
     name: '복리',
     desc: '타격에 성공할 때마다 지분이 1씩 쌓인다(최대 4). 스킬이 쌓인 만큼 세진다',
-    how: '오래 버티며 차곡차곡 모은다. **급할 것 없다 — 시간이 편이다**',
+    how: '오래 버티며 차곡차곡 모은다. 급할 것 없다 — 시간이 편이다',
     max: 4,
     icon: '💰',
     color: 0xd4a017,
@@ -133,5 +136,9 @@ export const buffett: CharacterConfig = {
     surge: ['복리가 일하는 중이야.'],
     comeback: ['남들이 겁낼 때 욕심을 내라.'],
     hurt: ['단기 변동일 뿐이야.'],
+    trait: [
+      '남들이 팔 때 삽니다',
+      '10년 들고 있을 겁니다',
+    ],
   },
 };

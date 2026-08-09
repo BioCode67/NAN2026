@@ -46,9 +46,21 @@ export const MOVE_SLOTS = [
 ];
 
 /** 대사 갈래 — 비어 있으면 그 상황에서 캐릭터가 말을 안 한다 */
-export const QUOTE_KINDS = ['intro', 'skill', 'ko', 'surge', 'comeback', 'hurt'];
+export const QUOTE_KINDS = [
+  'intro',
+  'skill',
+  'ko',
+  'surge',
+  'comeback',
+  'hurt',
+  /** 기질 전용 동작 — 급습·반격·착지 충격·공중 대시·풀차지 */
+  'trait',
+];
 
 const first = (re, text) => re.exec(text)?.[1] ?? null;
+
+/** 이동 기질 다섯 갈래 — src/types 의 MoveTrait 와 같아야 한다 */
+export const MOVE_TRAITS = ['plain', 'glide', 'plunge', 'wallkick', 'drift'];
 
 /** 캐릭터 파일 하나를 읽어 검사에 필요한 것만 뽑는다 */
 function parseCharacter(file) {
@@ -73,6 +85,14 @@ function parseCharacter(file) {
     quotes[kind] = m ? m[1].trim().length > 0 : false;
   }
 
+  /*
+   * 기질 대사는 있는지뿐 아니라 **내용까지** 본다.
+   * 스무 명에게 같은 문장을 복사해 넣으면 "전용기"라는 말이 무의미해진다 —
+   * 화면에서는 누가 써도 똑같은 말이 뜨기 때문이다.
+   */
+  const traitBlock = /trait:\s*\[([^\]]*)\]/s.exec(qBlock)?.[1] ?? '';
+  const traitLines = [...traitBlock.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]);
+
   return {
     file,
     /** 아직 채우지 않은 자리 — 뼈대만 만들어 두고 잊은 캐릭터를 잡는다 */
@@ -81,9 +101,26 @@ function parseCharacter(file) {
     name: first(/\bname:\s*'([^']+)'/, src),
     realName: first(/realName:\s*'([^']+)'/, src),
     signature: first(/signature:\s*\{\s*\n\s*id:\s*'([^']+)'/, src),
+    /** 이동 기질 — 이 사람이 어떻게 움직이는가 */
+    move: first(/^\s*move:\s*'([^']+)'/m, src),
     passive: first(/passive:\s*\{\s*\n\s*type:\s*'([^']+)'/, src),
+    /*
+     * 코드로 그리는 SD 외형 — 그림 시트가 없는 캐릭터가 화면에서 갖는 몸이다.
+     * 스무 명 중 대부분이 당분간 이 모습으로 나오므로, 조합이 겹치면
+     * 그 둘은 색만 다른 같은 사람으로 보인다.
+     */
+    art: {
+      hair: first(/\bhair:\s*'([^']+)'/, src),
+      headgear: first(/headgear:\s*'([^']+)'/, src) ?? 'none',
+      prop: first(/\bprop:\s*'([^']+)'/, src) ?? 'none',
+      glasses: first(/glasses:\s*'([^']+)'/, src),
+      beard: first(/beard:\s*(true|false)/, src),
+      mouth: first(/mouth:\s*'([^']+)'/, src),
+      eyes: first(/\beyes:\s*'([^']+)'/, src),
+    },
     moves,
     quotes,
+    traitLines,
   };
 }
 

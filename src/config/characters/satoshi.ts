@@ -10,6 +10,9 @@ export const satoshi: CharacterConfig = {
   colors: { body: 0x27272a, head: 0x3f3f46, accent: 0xf7931a },
   stats: { speed: 310, jump: -790, doubleJump: -730, weight: 0.82 },
 
+  /* 이동 기질 — 채굴 곡괭이를 앞세우고 무겁게 내리꽂는다 */
+  move: 'plunge',
+
   art: {
     // 후드에 가려 얼굴이 없다 — 눈만 두 점으로 빛난다
     hair: 'none',
@@ -39,7 +42,7 @@ export const satoshi: CharacterConfig = {
     id: 'fork',
     name: '하드 포크',
     desc: '방어로 막아낸 기술을 통째로 복사한다. 다음 스킬이 그 기술로 나간다',
-    how: '먼저 막고 나서 돌려준다. **방어가 곧 공격이다**',
+    how: '먼저 막고 나서 돌려준다. 방어가 곧 공격이다',
     max: 1,
     icon: '⛓️',
     color: 0xf7931a,
@@ -134,5 +137,9 @@ export const satoshi: CharacterConfig = {
     surge: ['탈중앙이란 이런 거지.'],
     comeback: ['체인은 끊기지 않아.'],
     hurt: ['지갑이 털렸다…'],
+    trait: [
+      '블록을 캤습니다',
+      '나를 본 사람은 없습니다',
+    ],
   },
 };

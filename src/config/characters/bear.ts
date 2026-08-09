@@ -10,6 +10,9 @@ export const bear: CharacterConfig = {
   colors: { body: 0x1e1b1b, head: 0x5b4636, accent: 0x3b82f6 },
   stats: { speed: 240, jump: -690, doubleJump: -600, weight: 1.35 },
 
+  /* 이동 기질 — 특별한 기질 없이 정직하게 움직인다 */
+  move: 'plain',
+
   art: {
     hair: 'messy',
     hairColor: 0x2b211a,
@@ -37,7 +40,7 @@ export const bear: CharacterConfig = {
     id: 'fork',
     name: '대차 거래',
     desc: '방어로 막아낸 기술을 빌려온다. 다음 스킬이 그 기술로 나간다',
-    how: '빌려서 팔고 나중에 갚는다. **막지 못하면 아무것도 못 빌린다**',
+    how: '빌려서 팔고 나중에 갚는다. 막지 못하면 아무것도 못 빌린다',
     max: 1,
     icon: '🐻',
     color: 0x3b82f6,
@@ -136,5 +139,9 @@ export const bear: CharacterConfig = {
     surge: ['이럴 리가… 숏 커버링이다!'],
     comeback: ['바닥은 아직 멀었어.'],
     hurt: ['손실이 무제한이라니…'],
+    trait: [
+      '천천히, 확실하게 내린다',
+      '지금부터가 진짜 하락장',
+    ],
   },
 };

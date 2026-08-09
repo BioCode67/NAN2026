@@ -3,7 +3,14 @@ import { addBackdrop } from '../config/artAssets';
 import { buildCardArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
-import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS, MOVE_SLOTS } from '../config/gameConfig';
+import {
+  CHAIN_STRINGS,
+  DEPTH,
+  GAME,
+  MOVE_COMMANDS,
+  MOVE_SLOTS,
+  MOVE_TRAITS,
+} from '../config/gameConfig';
 import { PadMenu } from '../systems/InputFrame';
 import { sound } from '../systems/SoundSystem';
 import { MAX_PLAYERS, net } from '../systems/NetSystem';
@@ -98,11 +105,16 @@ export class SelectScene extends Phaser.Scene {
   private nameText!: Phaser.GameObjects.Text;
   private taglineText!: Phaser.GameObjects.Text;
   private passiveText!: Phaser.GameObjects.Text;
+  private traitText!: Phaser.GameObjects.Text;
   private signatureText!: Phaser.GameObjects.Text;
   private skillText!: Phaser.GameObjects.Text;
   private movesText!: Phaser.GameObjects.Text;
   /** 설명 패널 왼쪽의 캐릭터 색 띠 */
   private infoAccent?: Phaser.GameObjects.Rectangle;
+  /** 설명 줄들이 쌓이기 시작하는 y — 줄 수가 변하므로 매번 다시 쌓는다 */
+  private infoTop = 0;
+  /** 캐릭터가 바뀔 때마다 위에서부터 다시 쌓을 글줄들 */
+  private infoStack: Phaser.GameObjects.Text[] = [];
   private quoteText!: Phaser.GameObjects.Text;
   private prompt!: Phaser.GameObjects.Text;
   private modeLabel!: Phaser.GameObjects.Text;
@@ -662,7 +674,7 @@ export class SelectScene extends Phaser.Scene {
     const panelY = 452;
 
     this.add
-      .rectangle(GAME.WIDTH / 2, panelY + 92, 980, 226, 0x141c33, 0.85)
+      .rectangle(GAME.WIDTH / 2, panelY + 106, 980, 254, 0x141c33, 0.85)
       .setStrokeStyle(2, 0x2f3f6b)
       .setDepth(DEPTH.HUD - 1);
 
@@ -673,7 +685,7 @@ export class SelectScene extends Phaser.Scene {
      * "지금 이 사람 것"을 말해 준다.
      */
     this.infoAccent = this.add
-      .rectangle(GAME.WIDTH / 2 - 490 + 3, panelY + 92, 6, 226, 0xffffff)
+      .rectangle(GAME.WIDTH / 2 - 490 + 3, panelY + 106, 6, 254, 0xffffff)
       .setDepth(DEPTH.HUD);
 
     this.nameText = this.add
@@ -693,11 +705,30 @@ export class SelectScene extends Phaser.Scene {
       })
       .setDepth(DEPTH.HUD);
 
+    this.infoTop = panelY + 58;
+
     this.passiveText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 60, '', {
+      .text(GAME.WIDTH / 2 - 460, this.infoTop, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#cbd5e1',
+        wordWrap: { width: 900 },
+      })
+      .setDepth(DEPTH.HUD);
+
+    /*
+     * 이동 기질 — 어떻게 움직이고, 이 사람만 무엇이 되는가.
+     *
+     * 패시브 줄에 얹어 두었더니 그 줄이 두 줄이 되면서 아래의 고유
+     * 메커니즘 줄을 그대로 덮었다. 고정 간격으로 쌓은 패널에서는
+     * 어느 한 줄이 길어지는 순간 그 아래가 전부 겹친다 —
+     * 그래서 아래 updateInfo 에서 **높이를 재어 다시 쌓는다**.
+     */
+    this.traitText = this.add
+      .text(GAME.WIDTH / 2 - 460, panelY + 86, '', {
+        fontFamily: GAME.FONT,
+        fontSize: '14px',
+        color: '#93c5fd',
         wordWrap: { width: 900 },
       })
       .setDepth(DEPTH.HUD);
@@ -710,7 +741,7 @@ export class SelectScene extends Phaser.Scene {
      * 그래서 패시브보다 눈에 띄게 강조색으로 둔다.
      */
     this.signatureText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 86, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 112, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#facc15',
@@ -719,12 +750,8 @@ export class SelectScene extends Phaser.Scene {
       })
       .setDepth(DEPTH.HUD);
 
-    /*
-     * 고유 메커니즘은 두 줄이라 다음 줄과 26px 간격으로는 겹친다.
-     * 아래 두 줄을 그만큼 내렸다.
-     */
     this.skillText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 126, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 152, '', {
         fontFamily: GAME.FONT,
         fontSize: '14px',
         color: '#cbd5e1',
@@ -738,14 +765,22 @@ export class SelectScene extends Phaser.Scene {
      * 플레이어가 W+K / S+K 같은 입력이 있다는 사실 자체를 모른 채 끝난다.
      */
     this.movesText = this.add
-      .text(GAME.WIDTH / 2 - 460, panelY + 152, '', {
+      .text(GAME.WIDTH / 2 - 460, panelY + 178, '', {
         fontFamily: GAME.FONT,
         fontSize: '13px',
         color: '#8fa6d8',
         wordWrap: { width: 940 },
-        lineSpacing: 4,
+        lineSpacing: 2,
       })
       .setDepth(DEPTH.HUD);
+
+    this.infoStack = [
+      this.passiveText,
+      this.traitText,
+      this.signatureText,
+      this.skillText,
+      this.movesText,
+    ];
 
     this.quoteText = this.add
       .text(GAME.WIDTH / 2 + 460, panelY, '', {
@@ -763,19 +798,28 @@ export class SelectScene extends Phaser.Scene {
      * 모드 줄을 조작 안내보다 위에, 더 크게 둔다.
      * 2인 대전이 있다는 사실 자체를 모르면 없는 기능이나 마찬가지다.
      */
+    /*
+     * 지금 무슨 모드인가 — 설명 패널 **위쪽**에 둔다.
+     *
+     * 원래는 패널 아래(y 650)에 있었는데, 이동 기질 두 줄이 들어오면서
+     * 패널이 그만큼 내려와 이 줄을 덮었다. 뒤에 흐릿하게 비치는 글자는
+     * 정보가 아니라 얼룩이다. 카드 위 안내 줄 오른쪽으로 올리면 패널이
+     * 얼마나 커져도 부딪히지 않고, "고르기 전에 확인하는 것"이라는
+     * 성격에도 이쪽이 맞다.
+     */
     this.modeLabel = this.add
-      .text(GAME.WIDTH / 2, 650, this.modeText(), {
+      .text(GAME.WIDTH - 60, 140, this.modeText(), {
         fontFamily: GAME.FONT,
-        fontSize: '17px',
+        fontSize: '15px',
         color: '#6c86c4',
         fontStyle: 'bold',
       })
-      .setOrigin(0.5);
+      .setOrigin(1, 0.5);
 
     this.add
       .text(
         GAME.WIDTH / 2,
-        680,
+        698,
         `← → ↑ ↓ / A D W S : 선택      Enter · Space · 클릭 : 결정      ` +
           `TAB · I : 기술 ${MOVE_SLOTS.length}개 자세히      F2 : 2인 대전      F3 : 온라인 넷이서      (총 ${CHARACTER_ORDER.length}명)`,
         {
@@ -903,24 +947,66 @@ export class SelectScene extends Phaser.Scene {
       }),
       this.add.text(120, 158, cfg.passive.desc, {
         fontFamily: GAME.FONT,
-        fontSize: '15px',
+        fontSize: '14px',
         color: '#9fb3dd',
-        wordWrap: { width: 500 },
+        lineSpacing: 3,
+        wordWrap: { width: 520 },
       }),
-      this.add.text(720, 132, `[고유] ${cfg.signature.icon} ${cfg.signature.name}`, {
+      this.add.text(700, 132, `[고유] ${cfg.signature.icon} ${cfg.signature.name}`, {
         fontFamily: GAME.FONT,
         fontSize: '17px',
         color: accent,
         fontStyle: 'bold',
       }),
-      this.add.text(720, 158, `${cfg.signature.desc}\n${cfg.signature.how}`, {
+      this.add.text(700, 158, `${cfg.signature.desc}\n${cfg.signature.how}`, {
         fontFamily: GAME.FONT,
-        fontSize: '15px',
+        fontSize: '14px',
         color: '#9fb3dd',
-        lineSpacing: 4,
-        wordWrap: { width: 520 },
+        lineSpacing: 3,
+        wordWrap: { width: 470 },
       }),
     );
+
+    /*
+     * 이동 기질 — **이 캐릭터만 되는 것**.
+     *
+     * 상세 보기는 "이 사람을 파고들어 볼까" 하는 사람이 여는 화면인데,
+     * 정작 여기에 기질이 없었다. 패시브는 수치이고 고유 메커니즘은 자원
+     * 관리라, 둘 다 "어떻게 움직이고 어디서 싸우는가"는 말해 주지 않는다.
+     * 그 답이 기질이고, 전용기는 그 사람에게만 있는 수다 — 표 한복판의
+     * 빈자리에 두 줄로 넣는다.
+     */
+    {
+      const tr = MOVE_TRAITS[cfg.move ?? 'plain'];
+      const only = 'only' in tr ? tr.only : null;
+      /*
+       * 라벨과 설명을 **한 덩어리로** 쓴다.
+       *
+       * 처음에는 라벨을 왼쪽에 두고 설명을 x=240 에서 시작했는데,
+       * 기질 이름 길이가 제각각이라(표준·급강하·벽 차기) 긴 이름이
+       * 설명 자리를 파고들어 글자가 겹쳤다. 자리를 나누지 않으면
+       * 어떤 이름이 와도 겹칠 일이 없다.
+       */
+      parts.push(
+        this.add.text(120, 244, `[이동]  ${tr.icon} ${tr.name} — ${tr.desc}`, {
+          fontFamily: GAME.FONT,
+          fontSize: '15px',
+          color: '#c3d2f0',
+          wordWrap: { width: 1040 },
+        }),
+      );
+      if (only) {
+        parts.push(
+          this.add.text(120, 272, `이 캐릭터만 되는 것 —  ${only}`, {
+            fontFamily: GAME.FONT,
+            fontSize: '15px',
+            color: accent,
+            fontStyle: 'bold',
+            wordWrap: { width: 1040 },
+          }),
+        );
+      }
+    }
 
     /*
      * 커맨드 열네 개 — 두 단으로 나눠 한 화면에 담는다.
@@ -941,13 +1027,19 @@ export class SelectScene extends Phaser.Scene {
       move: cfg.moves[c.slot],
     }));
     const half = Math.ceil(rows.length / 2);
-    const TOP = 330;
-    // 커맨드가 스물하나로 늘면서 한 단이 열 줄이 됐다 — 줄 간격을 좁혀 담는다
-    const ROW_H = 30;
+    /*
+     * 표의 위아래를 둘 다 맞춘다.
+     *
+     * 위로는 이동 줄과, 아래로는 삼각형 안내와 부딪힌다. 스물한 줄이
+     * 열한 줄짜리 두 단이 되면서 마지막 줄이 안내 문구를 밟고 있었다 —
+     * 화면에는 겹쳐 찍힌 글자가 그대로 나온다.
+     */
+    const TOP = 336;
+    const ROW_H = 27;
 
     parts.push(
       this.add
-        .text(GAME.WIDTH / 2, TOP - 36, `커맨드 ${rows.length}개 — 이름이 전부 다르다`, {
+        .text(GAME.WIDTH / 2, TOP - 28, `커맨드 ${rows.length}개 — 이름이 전부 다르다`, {
           fontFamily: GAME.FONT,
           fontSize: '15px',
           color: '#6c86c4',
@@ -1013,6 +1105,15 @@ export class SelectScene extends Phaser.Scene {
   private closeDetail(): void {
     this.detail?.destroy();
     this.detail = undefined;
+  }
+
+  /** 설명 줄들을 위에서부터 높이만큼 내려 쌓는다 */
+  private restackInfo(): void {
+    let y = this.infoTop;
+    for (const t of this.infoStack) {
+      t.setY(Math.round(y));
+      y += t.height + 5;
+    }
   }
 
   private move(delta: number): void {
@@ -1087,7 +1188,22 @@ export class SelectScene extends Phaser.Scene {
     );
     this.nameText.setText(cfg.name);
     this.taglineText.setText(`"${cfg.tagline}"`);
-    this.passiveText.setText(`[패시브] ${cfg.passive.name} — ${cfg.passive.desc}`);
+    this.passiveText.setText(
+      `[패시브] ${cfg.passive.name} — ${cfg.passive.desc}`,
+    );
+
+    /*
+     * 이동 기질 — 어떻게 움직이는가, 그리고 이 사람만 무엇이 되는가.
+     *
+     * 고르기 전에 가장 궁금한 것인데 지금까지는 직접 뛰어 봐야 알 수
+     * 있었다. 한 명을 파고들 이유는 대부분 여기서 생긴다.
+     */
+    const tr = MOVE_TRAITS[cfg.move ?? 'plain'];
+    const only = 'only' in tr ? tr.only : null;
+    this.traitText.setText(
+      `[이동] ${tr.icon} ${tr.name} — ${tr.desc}` +
+        (only ? `\n[이 캐릭터만] ${only}` : ''),
+    );
     const sig = cfg.signature;
     this.signatureText.setText(
       `[고유] ${sig.icon} ${sig.name} — ${sig.desc}\n         ${sig.how}`,
@@ -1134,6 +1250,14 @@ export class SelectScene extends Phaser.Scene {
       'dashSlide',
       'airDive',
     ];
+    /*
+     * 줄들을 **위에서부터 다시 쌓는다**.
+     *
+     * 캐릭터마다 설명 길이가 달라 어떤 사람은 패시브가 한 줄, 어떤 사람은
+     * 두 줄이다. 고정 간격으로 두면 긴 쪽에서 아래 줄이 그대로 덮인다 —
+     * 실제로 이동 줄이 고유 메커니즘 줄 위에 겹쳐 찍히고 있었다.
+     * 높이를 재어 쌓으면 어떤 캐릭터가 와도 겹칠 일이 없다.
+     */
     this.movesText.setText(
       `[연속기] ${chains}\n[마무리 갈래] ${branches}\n[기술 ${MOVE_SLOTS.length}개 중] ` +
         featured.map((slot) => `${cfg.moves[slot].name}`).join(' · ') +
@@ -1141,6 +1265,7 @@ export class SelectScene extends Phaser.Scene {
     );
 
     this.quoteText.setText(`“${cfg.quotes.intro[0] ?? ''}”`);
+    this.restackInfo();
   }
 
   private confirm(): void {

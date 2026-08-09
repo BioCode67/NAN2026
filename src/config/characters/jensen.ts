@@ -10,6 +10,9 @@ export const jensen: CharacterConfig = {
   colors: { body: 0x1c1917, head: 0xe8c9a0, accent: 0x76b900 },
   stats: { speed: 285, jump: -740, doubleJump: -660, weight: 1.05 },
 
+  /* 이동 기질 — 특별한 기질 없이 정직하게 움직인다 */
+  move: 'plain',
+
   art: {
     hair: 'short',
     hairColor: 0x111827,
@@ -35,7 +38,7 @@ export const jensen: CharacterConfig = {
     id: 'booster',
     name: '전력 공급',
     desc: '대시가 전력을 태운다(최대 3). 남아 있으면 공중에서도 대시할 수 있다',
-    how: '전력으로 위치를 산다. **다 태우면 지상에 묶인다**',
+    how: '전력으로 위치를 산다. 다 태우면 지상에 묶인다',
     max: 3,
     icon: '⚡',
     color: 0x76b900,
@@ -130,5 +133,9 @@ export const jensen: CharacterConfig = {
     surge: ['수요가 미쳤어.'],
     comeback: ['다음 세대는 다르다.'],
     hurt: ['전력이 부족해…'],
+    trait: [
+      '많이 살수록 많이 아낍니다',
+      '재고는 이미 다 팔렸습니다',
+    ],
   },
 };

@@ -10,6 +10,9 @@ export const chairman: CharacterConfig = {
   colors: { body: 0x111827, head: 0xf0d0ae, accent: 0xd4af37 },
   stats: { speed: 215, jump: -670, doubleJump: -560, weight: 1.5 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'side-part',
     hairColor: 0xd1d5db,
@@ -36,7 +39,7 @@ export const chairman: CharacterConfig = {
     id: 'shares',
     name: '지분율',
     desc: '타격에 성공할 때마다 지분이 1씩 쌓인다(최대 4). 스킬이 쌓인 만큼 세진다',
-    how: '조금씩 사 모아 이사회를 장악한다. **다 모으면 아무도 못 막는다**',
+    how: '조금씩 사 모아 이사회를 장악한다. 다 모으면 아무도 못 막는다',
     max: 4,
     icon: '👑',
     color: 0xd4af37,
@@ -139,5 +142,9 @@ export const chairman: CharacterConfig = {
     surge: ['역시 내 판단이 옳았어.'],
     comeback: ['이 회사, 내가 세웠어.'],
     hurt: ['이런 무례한…'],
+    trait: [
+      '회장님 나가신다!',
+      '이봐, 해보기는 했어?',
+    ],
   },
 };

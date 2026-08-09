@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { PHASER_CONFIG } from './config/phaserConfig';
 import { sound } from './systems/SoundSystem';
+import { imageGenDebug } from './config/imageGen';
 import { BootScene } from './scenes/BootScene';
 import { TitleScene } from './scenes/TitleScene';
 import { SelectScene } from './scenes/SelectScene';
@@ -30,6 +31,30 @@ if (import.meta.env.DEV) {
   w.game = game;
   // 소리는 스크린샷에 안 남는다 — 스모크가 시퀀서 상태를 직접 읽는다
   w.sound = sound;
+}
+
+/*
+ * 그림 생성 서버가 붙어 있는지 콘솔에서 바로 볼 수 있게 한다.
+ *
+ * 시연 자리에서 "그림이 안 나온다"의 원인은 대개 주소·CORS·키 셋 중
+ * 하나인데, 그걸 알아내려고 코드를 열게 하면 안 된다.
+ *
+ *   sdStatus()                     — 지금 어디에 붙어 있나
+ *   sdConnect('http://127.0.0.1:7860')  — 그 자리에서 주소를 바꾼다
+ */
+{
+  const w = window as unknown as Record<string, unknown>;
+  w.sdStatus = imageGenDebug;
+  w.sdConnect = (url: string, key = '', mode = 'auto'): string => {
+    try {
+      localStorage.setItem('sd.url', url);
+      localStorage.setItem('sd.key', key);
+      localStorage.setItem('sd.mode', mode);
+    } catch {
+      return '이 브라우저에서는 저장할 수 없습니다';
+    }
+    return '저장했습니다. 새로고침하면 적용됩니다.';
+  };
 }
 
 /**

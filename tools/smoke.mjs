@@ -2219,10 +2219,26 @@ console.log('이동 기질');
       return out;
     };
 
+    /*
+     * 속도가 아니라 **가속도**를 잰다.
+     *
+     * 같은 시간을 흘려 마지막 속도를 비교했더니, 프레임이 드문 이 환경에서는
+     * 두 번의 측정 사이에 물리 틱이 한 번 더 도느냐 마느냐로 값이 통째로
+     * 뒤집혔다 — 급강하가 표준보다 느리게 나오는 회차가 실제로 있었다.
+     * 기질이 죽은 게 아니라 그 회차에 틱을 덜 받은 것이다.
+     *
+     * 등가속 운동에서 v² = v₀² + 2aΔy 이므로, 속도와 떨어진 거리만 있으면
+     * **몇 틱이 돌았든** 가속도가 나온다. 재려던 것이 원래 이것이다.
+     */
+    const accel = (f) => {
+      const dy = f.y - 120;
+      if (dy <= 0) return 0;
+      return Math.round((f.vy * f.vy - 400 * 400) / (2 * dy));
+    };
     const plainFall = await fallOver('plain');
     const plungeFall = await fallOver('plunge');
-    const plain = plainFall.vy;
-    const plunge = plungeFall.vy;
+    const plain = accel(plainFall);
+    const plunge = accel(plungeFall);
 
     /* 활공 — 한 틱만 직접 돌려 뚜껑이 씌워지는지 본다 */
     p.cfg.move = 'glide';
@@ -2274,10 +2290,11 @@ console.log('이동 기질');
 
   if (!(traits.glide <= 200)) {
     errors.push(`[기질] 활공이 낙하에 뚜껑을 안 씌웁니다 — 900 을 넣었는데 ${traits.glide}`);
-  } else if (!(traits.plunge > traits.plain * 1.15)) {
+  } else if (!(traits.plunge > traits.plain * 1.25)) {
     errors.push(
-      `[기질] 급강하가 더 안 빠릅니다 — ` +
-        `표준 ${JSON.stringify(traits.plainFall)} / 급강하 ${JSON.stringify(traits.plungeFall)}`,
+      `[기질] 급강하가 더 안 무겁습니다 — 가속도 표준 ${traits.plain} / ` +
+        `급강하 ${traits.plunge} ` +
+        `(원본 ${JSON.stringify(traits.plainFall)} · ${JSON.stringify(traits.plungeFall)})`,
     );
   } else if (!(traits.driftV > traits.plainV + 100)) {
     errors.push(
@@ -2288,7 +2305,7 @@ console.log('이동 기질');
   } else {
     console.log(
       `  ✓ 넷이 다르게 움직인다 — 활공 900→${traits.glide} · ` +
-        `급강하 ${traits.plunge} vs 표준 ${traits.plain} (낙하) · ` +
+        `급강하 ${traits.plunge} vs 표준 ${traits.plain} (낙하 가속도) · ` +
         `표류 ${traits.driftV} vs 표준 ${traits.plainV} (관성) · 벽 차기 ↗${traits.kick.vx}`,
     );
   }

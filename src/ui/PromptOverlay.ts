@@ -1,4 +1,5 @@
 import { PROMPT_EXAMPLES, PROMPT_PLACEHOLDER } from '../config/gimmicks';
+import { imageGenReady } from '../config/imageGen';
 
 /**
  * 프롬프트 입력 오버레이.
@@ -73,8 +74,16 @@ export function openPromptOverlay(
      * 안내가 없으면 아무도 두 개를 쓰지 않고, 안 쓰면 그런 규칙이 있다는
      * 것도 모른 채 게임이 끝난다.
      */
-    guide.textContent =
-      '무엇이든 입력하세요. 판이 그대로 바뀝니다. (두 가지를 한 문장에 쓰면 둘 다 걸립니다)';
+    /*
+     * 그림 서버가 붙어 있으면 그 사실을 여기서 알린다.
+     *
+     * "내가 쓴 문장이 그림이 된다"는 이 게임에서 가장 큰 한 방인데,
+     * 쓰기 전에 모르면 그냥 규칙 하나 고르고 만다. 붙어 있지 않을 때는
+     * 적지 않는다 — 안 일어나는 일을 약속하면 그게 더 나쁘다.
+     */
+    guide.textContent = imageGenReady()
+      ? '무엇이든 입력하세요. 판이 바뀌고, 그 문장으로 이 판의 배경이 그려집니다.'
+      : '무엇이든 입력하세요. 판이 그대로 바뀝니다. (두 가지를 한 문장에 쓰면 둘 다 걸립니다)';
     Object.assign(guide.style, {
       fontSize: '15px',
       color: '#8fa6d8',

@@ -11,8 +11,8 @@ export const buffett: CharacterConfig = {
   // 가장 느리고 가장 무겁다 — 밀리지 않는 대신 따라잡지도 못한다
   stats: { speed: 205, jump: -690, doubleJump: -580, weight: 1.45 },
 
-  /* 이동 기질 — 특별한 기질 없이 정직하게 움직인다 */
-  move: 'plain',
+  /* 이동 기질 — 남들이 팔 때 산다 — 밀려나도 벽을 차고 제자리로 돌아온다 */
+  move: 'wallkick',
 
   art: {
     hair: 'side-part',

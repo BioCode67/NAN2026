@@ -181,10 +181,21 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private readonly seatRing: Phaser.GameObjects.Ellipse;
   /** 이번 체공에서 벽을 이미 찼는가 (벽 차기 기질) */
   private wallKicked = false;
+  /** 이번 체공에서 공중 대시를 이미 썼는가 (표류 기질) */
+  private airDashed = false;
+  /** 벽을 찬 뒤 이 시각까지의 첫 공격이 세진다 (벽 차기 기질) */
+  private wallBoostUntil = 0;
 
   /** 이 캐릭터의 이동 기질 */
   get trait(): MoveTrait {
     return this.cfg.move ?? 'plain';
+  }
+
+  /** 지금 활공 중인가 — 활공 기질이 떨어지면서 점프를 누르고 있을 때 */
+  isGliding(): boolean {
+    if (this.trait !== 'glide' || !this.jumpHeld) return false;
+    const onGround = this.body.blocked.down || this.body.touching.down;
+    return !onGround && this.body.velocity.y > 0;
   }
 
   /**
@@ -251,6 +262,14 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (this.y > STAGE.GROUND_Y + 40) return;
 
     this.wallKicked = true;
+    /*
+     * 되돌아오며 내는 **첫 한 방**이 세진다.
+     *
+     * 벽을 차고 돌아오는 것만으로는 "겨우 살았다"에서 끝난다. 몰렸다가
+     * 뒤집는 순간이 되려면 돌아오는 길에 무기가 있어야 한다 — 이 캐릭터가
+     * 궁지에서 강해진다는 말이 숫자로 성립하는 자리다.
+     */
+    this.wallBoostUntil = this.scene.time.now + MOVE_TRAITS.wallkick.boostMs;
     this.body.setVelocity(
       MOVE_TRAITS.wallkick.kickX * out,
       MOVE_TRAITS.wallkick.kickY,
@@ -1342,8 +1361,20 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const booster = this.cfg.signature.id === 'booster';
 
     if (!onGround) {
-      // 공중 대시는 부스터를 가진 캐릭터가 자원을 쓸 때만
-      if (!booster || this.sigStacks <= 0) return false;
+      /*
+       * 공중 대시로 가는 길이 둘이다 — 서로 다른 대가를 치른다.
+       *
+       *  부스터: 자원을 태운다. 남아 있는 만큼 몇 번이고 쓸 수 있다
+       *  표류  : 자원이 없는 대신 **한 체공에 한 번**뿐이다. 대신
+       *          관성이 남는 기질이라 대시가 끝나도 그 방향으로 계속 흐른다 —
+       *          같은 공중 대시인데 손에 남는 것이 전혀 다르다
+       */
+      if (this.trait === 'drift') {
+        if (this.airDashed) return false;
+        this.airDashed = true;
+      } else if (!booster || this.sigStacks <= 0) {
+        return false;
+      }
     }
     if (booster) {
       if (this.sigStacks <= 0) return false;
@@ -1443,6 +1474,27 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     // 방어는 공격으로 캔슬할 수 있다 (S를 누른 채 하단기를 내기 위해)
     this.guarding = false;
+
+    /*
+     * 활공 급습 — 이 기질만 되는 것.
+     *
+     * 떠 있는 중에 공격을 누르면 활공을 끊고 그대로 내리꽂는다. 활공만으로는
+     * "느리게 떨어진다"에서 끝나고 그건 도망 수단이지 무기가 아니다. 아래에서
+     * 기다리는 쪽이 언제 떨어질지 못 읽으면, 떠 있는 시간 자체가 압박이 된다.
+     */
+    if (this.isGliding()) {
+      const t = MOVE_TRAITS.glide;
+      const dive = this.cfg.moves.airDive;
+      this.body.setVelocityY(t.diveSpeed);
+      this.jumpHeld = false;
+      this.beginAttack({
+        ...dive,
+        name: `활공 급습: ${dive.name}`,
+        damage: dive.damage * t.diveMul,
+        knockbackY: dive.knockbackY * t.diveMul,
+      });
+      return true;
+    }
 
     this.beginAttack(this.resolveMove(intent, dir));
     return true;
@@ -2194,7 +2246,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
              * 원본을 건드리면 그 캐릭터의 기술이 영구히 세지므로,
              * 이 한 번의 공격에만 쓰는 복사본을 만든다.
              */
-            const charged = this.applyCharge(atk);
+            const charged = this.applyTraitBoost(this.applyCharge(atk));
             this.currentAttack = charged;
             /*
              * 화면에 뜨는 이름·수치도 모은 뒤의 것으로 갈아 끼운다.
@@ -2271,6 +2323,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       // 급강하 기질 — 세게 떨어져 닿으면 발밑이 터진다
       if (!this.wasOnGround) this.landSlam();
       this.wallKicked = false;
+      this.airDashed = false;
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
       this.jumpRising = false;
@@ -2849,6 +2902,31 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   }
 
   /** 모은 만큼 강해진 사본 (안 모았으면 원본 그대로) */
+  /**
+   * 기질이 이 한 방에 얹는 것.
+   *
+   * 벽을 차고 돌아오는 길의 첫 공격만 세진다. 몰렸다가 뒤집는 순간이
+   * 이 캐릭터의 정체성인데, 벽 차기만으로는 "겨우 살았다"에서 끝난다 —
+   * 돌아오는 길에 무기가 있어야 그 말이 숫자로 성립한다.
+   */
+  private applyTraitBoost(atk: AttackConfig): AttackConfig {
+    if (this.trait !== 'wallkick') return atk;
+    if (this.scene.time.now >= this.wallBoostUntil) return atk;
+    this.wallBoostUntil = 0;
+
+    const m = MOVE_TRAITS.wallkick.boostMul;
+    this.say('반격이다!', this.cfg.colors.accent);
+    return {
+      ...atk,
+      name: `${atk.name} (반격)`,
+      damage: atk.damage * m,
+      knockbackX: atk.knockbackX * m,
+      knockbackY: atk.knockbackY * m,
+      hitstop: atk.hitstop + 40,
+      finisher: true,
+    };
+  }
+
   private applyCharge(atk: AttackConfig): AttackConfig {
     if (this.chargeMs < FIGHTER.CHARGE_MIN_MS) return atk;
 

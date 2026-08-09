@@ -131,11 +131,33 @@ console.log('\n이동 기질');
     fail(`아무도 안 쓰는 기질: ${empty.join(', ')} — 만들어 두고 안 쓰면 없는 것과 같습니다`);
   }
 
+  /*
+   * **스무 명이 저마다 다른 자리에 있어야 한다.**
+   *
+   * 자원(시그니처) 다섯 × 기질 다섯 = 스물다섯 자리에 스무 명이 앉으므로
+   * 전원이 다른 칸에 앉을 수 있다. 두 사람이 같은 칸에 앉으면 그 둘은
+   * 기계적으로 **완전히 같은 캐릭터**다 — 이름과 기술 이름만 다르다.
+   * 실제로 넷이 겹쳐 있었고(게이츠=버피, 리누스=사토시, 잡스=저크버그,
+   * 머스크=황소), 화면 어디에도 그 사실이 안 나와서 아무도 몰랐다.
+   */
+  const seat = new Map();
+  for (const c of roster) {
+    if (!c.signature || !c.move) continue;
+    const key = `${c.signature}+${c.move}`;
+    const prev = seat.get(key);
+    if (prev) {
+      fail(`${prev} 와 ${c.id} 가 같은 자리입니다 (${key}) — 기계적으로 같은 캐릭터가 됩니다`);
+    } else {
+      seat.set(key, c.id);
+    }
+  }
+
   if (failed === before) {
     pass(
       `${roster.length}명이 기질 ${count.size}갈래로 갈렸습니다 — ` +
         [...count].map(([t, n]) => `${t} ${n}`).join(' · '),
     );
+    pass(`자원×기질 조합 ${seat.size}가지 — 스무 명이 저마다 다른 자리에 있습니다`);
   }
 }
 

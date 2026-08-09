@@ -2089,9 +2089,19 @@ console.log('이동 기질');
      * 같은 값으로 보인다 — 기질이 죽은 게 아니라 떨어질 곳이 없던 것이다.
      * 아래쪽 충돌을 잠깐 꺼 두면 무대가 무엇이든 같은 조건이 된다.
      */
+    /*
+     * 재는 동안만 **낙하 속도 뚜껑을 걷는다**.
+     *
+     * 몸에는 최고 낙하 속도(1700)가 걸려 있다. 이 환경은 프레임이 드물어
+     * 한 틱에 속도가 크게 붙으므로, 320ms 만 흘려도 표준·급강하가 **둘 다**
+     * 뚜껑에 닿는다. 그러면 1700 대 1867 이 되어 "급강하가 안 빠르다"로
+     * 보인다 — 느린 게 아니라 둘 다 천장에 눌린 것이다.
+     * 천장을 잠깐 올려 두면 기울기 자체를 비교할 수 있다.
+     */
     const fallOver = async (trait) => {
       p.cfg.move = trait;
       p.body.checkCollision.down = false;
+      p.body.setMaxVelocity(1400, 100000);
       p.setPosition(1420, 120);
       p.body.setVelocity(0, 400);
       p.stunUntil = 0;
@@ -2102,6 +2112,7 @@ console.log('이동 기질');
         down: p.body.blocked.down || p.body.touching.down,
         trait: p.trait,
       };
+      p.body.setMaxVelocity(1400, 1700);
       p.body.checkCollision.down = true;
       return out;
     };
@@ -2180,6 +2191,232 @@ console.log('이동 기질');
     );
   }
   await shot('move-traits');
+  await restartRound();
+  await waitGrounded();
+}
+
+/*
+ * 기질 전용기 — "이 캐릭터로만 되는 것"이 실제로 있는가.
+ *
+ * ── 왜 따로 재는가 ──────────────────────────────────────────────────
+ * 앞의 검사는 기질이 **이동**을 다르게 만드는지까지만 본다. 그런데 이동만
+ * 다르면 손에 남는 것은 "얘는 좀 느리게 떨어지네" 정도이고, 그건 캐릭터를
+ * 고를 이유가 되지 못한다. 고를 이유는 그 기질이 **공격과 엮일 때** 생긴다 —
+ * 활공은 도망이 아니라 압박이 되고, 벽 차기는 생존이 아니라 반격이 되고,
+ * 표류는 관성이 아니라 이동 수단이 된다.
+ *
+ * 그래서 여기서 확인하는 것은 세 문장이다.
+ *   1. 활공 중에 공격하면 급습으로 내리꽂힌다 (다른 기질은 그냥 공중 공격)
+ *   2. 벽을 찬 직후의 첫 한 방이 실제로 세진다 (그리고 한 번만 세진다)
+ *   3. 표류는 자원 없이 공중 대시를 한다 — 대신 한 체공에 한 번뿐이다
+ *
+ * 셋 다 "값이 달라졌다"까지 읽는다. 이름만 바뀌고 숫자가 그대로면 연출이지
+ * 기술이 아니다.
+ */
+console.log('기질 전용기');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const only = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const was = p.cfg.move;
+
+    /** 공격 상태를 손으로 비운다 — 후딜을 실제로 기다리면 검사가 느려진다 */
+    const clearAttack = () => {
+      p.attackPhase = 'none';
+      p.currentAttack = null;
+      p.chainQueue = [];
+      p.chainNext = null;
+      p.chainUntil = 0;
+      p.stunUntil = 0;
+      p.chargeMs = 0;
+      p.holdingHeavy = false;
+    };
+
+    /* 발밑에 아무것도 없게 만든다 — 무대마다 발판 배치가 달라서다 */
+    p.body.checkCollision.down = false;
+
+    /**
+     * **실제로 뜬 상태**로 만든다.
+     *
+     * 자리만 옮겨 놓고 바로 재면 안 된다. 땅에 닿았다는 표시(blocked.down)는
+     * 물리 한 틱이 지나야 갱신되므로, 방금까지 서 있던 몸은 공중에 옮겨 놔도
+     * 한동안 "닿아 있음"으로 읽힌다. 그 상태에서는 활공도 공중 대시도
+     * 발동 조건에서 걸러진다 — 기능이 죽은 게 아니라 아직 땅에 있는 것이다.
+     */
+    const goAirborne = async (y, vy) => {
+      for (let i = 0; i < 40; i++) {
+        p.setPosition(1420, y);
+        p.body.setVelocity(0, vy);
+        p.stunUntil = 0;
+        if (!(p.body.blocked.down || p.body.touching.down)) return true;
+        await wait(30);
+      }
+      return false;
+    };
+
+    /* --- 1. 활공 급습 -------------------------------------------- */
+    /*
+     * 뜬 것을 확인한 **뒤부터는** 한 프레임도 흘리지 않는다. 활공 판정은
+     * "점프를 누르고 있는가"를 보는데, 사람 입력 루프가 매 프레임 그 값을
+     * 키보드 상태로 덮어쓴다. 기다리는 순간 검사가 입력 처리와 싸우게 된다.
+     */
+    p.cfg.move = 'glide';
+    clearAttack();
+    const airborne = await goAirborne(150, 300);
+    p.jumpHeld = true;
+    const gliding = p.isGliding();
+    const dived = p.attack('light');
+    const dive = {
+      ok: dived,
+      airborne,
+      gliding,
+      vy: Math.round(p.body.velocity.y),
+      name: p.getCurrentAttack()?.name ?? null,
+      damage: p.getCurrentAttack()?.damage ?? 0,
+    };
+    p.jumpHeld = false;
+
+    /* 같은 자리, 같은 입력 — 기질만 빼면 급습이 안 나와야 한다 */
+    p.cfg.move = 'plain';
+    clearAttack();
+    await goAirborne(150, 300);
+    p.jumpHeld = true;
+    p.attack('light');
+    const plainAir = {
+      vy: Math.round(p.body.velocity.y),
+      name: p.getCurrentAttack()?.name ?? null,
+      damage: p.getCurrentAttack()?.damage ?? 0,
+    };
+    p.jumpHeld = false;
+
+    /* --- 2. 표류 공중 대시 ---------------------------------------- */
+    /*
+     * 대시 쿨다운은 매번 손으로 되돌린다. 되돌리지 않으면 두 번째가
+     * "한 체공에 한 번" 때문이 아니라 쿨다운 때문에 막히고, 그러면 이 검사는
+     * 아무것도 확인하지 못한 채 통과한다.
+     */
+    p.cfg.move = 'drift';
+    clearAttack();
+    await goAirborne(200, 100);
+    p.airDashed = false;
+    p.dashReadyAt = 0;
+    const drift1 = p.dash(1);
+    p.dashReadyAt = 0;
+    p.dashUntil = 0;
+    const drift2 = p.dash(1);
+
+    /* 자원도 기질도 없으면 공중에서는 대시가 아예 없다 */
+    p.cfg.move = 'plain';
+    clearAttack();
+    await goAirborne(200, 100);
+    p.airDashed = false;
+    p.dashReadyAt = 0;
+    p.dashUntil = 0;
+    const wasStacks = p.sigStacks;
+    p.sigStacks = 0;
+    const plainAirDash = p.dash(1);
+    p.sigStacks = wasStacks;
+
+    /* --- 3. 벽 차기 반격 ------------------------------------------ */
+    /*
+     * 벽을 진짜로 차게 만든다. wallBoostUntil 을 손으로 세우면 "창이 열리면
+     * 세진다"만 확인되고, 정작 **벽 차기가 그 창을 여는가**는 확인되지 않는다.
+     */
+    p.cfg.move = 'wallkick';
+    clearAttack();
+    p.wallKicked = false;
+    p.setPosition(40, 420);
+    p.body.setVelocity(-300, 0);
+    let kicked = false;
+    for (let i = 0; i < 40; i++) {
+      if (p.wallKicked) {
+        kicked = true;
+        break;
+      }
+      await wait(30);
+    }
+
+    /*
+     * 선딜이 끝나 판정이 켜지는 순간에 보정이 얹힌다. 고정 시간 뒤에 읽으면
+     * 이 환경(게임 시간이 실제의 1/5)에서 아직 선딜 중일 수 있다 —
+     * 시계가 아니라 상태가 바뀌는 것을 기다린다.
+     */
+    const swingUntilActive = async () => {
+      p.setPosition(1420, 300);
+      p.body.setVelocity(0, 60);
+      p.attack('heavy');
+      for (let i = 0; i < 60; i++) {
+        if (p.attackPhase === 'active') break;
+        await wait(30);
+      }
+      const a = p.getCurrentAttack();
+      return { phase: p.attackPhase, name: a?.name ?? null, damage: a?.damage ?? 0 };
+    };
+
+    const counter = await swingUntilActive();
+    clearAttack();
+    // 창은 한 번 쓰면 닫힌다 — 같은 입력이 이제 평범해야 한다
+    const after = await swingUntilActive();
+    clearAttack();
+
+    p.cfg.move = was;
+    p.body.checkCollision.down = true;
+    p.setJumpHeld(false);
+    p.airDashed = false;
+    p.dashReadyAt = 0;
+    return { dive, plainAir, drift1, drift2, plainAirDash, kicked, counter, after };
+  });
+  await releasePlayer();
+
+  if (!only.dive.airborne) {
+    errors.push('[전용기] 공중 상태를 못 만들어 전용기를 잴 수 없습니다');
+  } else if (!only.dive.gliding || !only.dive.ok) {
+    errors.push(`[전용기] 활공 중에 공격이 안 나갑니다 — ${JSON.stringify(only.dive)}`);
+  } else if (!/급습/.test(only.dive.name ?? '')) {
+    errors.push(
+      `[전용기] 활공 중 공격이 급습으로 안 바뀝니다 — ` +
+        `활공 "${only.dive.name}" / 표준 "${only.plainAir.name}"`,
+    );
+  } else if (!(only.dive.vy > only.plainAir.vy + 500)) {
+    errors.push(
+      `[전용기] 급습인데 안 내리꽂힙니다 — 활공 ${only.dive.vy} / 표준 ${only.plainAir.vy}`,
+    );
+  } else if (!(only.dive.damage > only.plainAir.damage)) {
+    errors.push(
+      `[전용기] 급습이 더 안 아픕니다 — ${only.dive.damage} vs ${only.plainAir.damage}`,
+    );
+  } else if (!only.drift1) {
+    errors.push('[전용기] 표류가 공중 대시를 못 합니다');
+  } else if (only.drift2) {
+    errors.push('[전용기] 표류의 공중 대시가 한 체공에 두 번 나갑니다 (대가가 없습니다)');
+  } else if (only.plainAirDash) {
+    errors.push('[전용기] 자원도 기질도 없는데 공중 대시가 됩니다 (전용기가 아닙니다)');
+  } else if (!only.kicked) {
+    errors.push('[전용기] 벽 차기가 발동하지 않아 반격을 잴 수 없습니다');
+  } else if (only.counter.phase !== 'active') {
+    errors.push(`[전용기] 벽 차기 뒤 공격이 판정까지 못 갑니다 — ${JSON.stringify(only.counter)}`);
+  } else if (!/반격/.test(only.counter.name ?? '')) {
+    errors.push(`[전용기] 벽 차기 뒤 첫 한 방이 반격으로 안 바뀝니다 — "${only.counter.name}"`);
+  } else if (!(only.counter.damage > only.after.damage)) {
+    errors.push(
+      `[전용기] 반격이 안 세집니다 — ${only.counter.damage} vs 평소 ${only.after.damage}`,
+    );
+  } else if (/반격/.test(only.after.name ?? '')) {
+    errors.push('[전용기] 반격 보정이 계속 남습니다 — 한 방만 세져야 합니다');
+  } else {
+    console.log(
+      `  ✓ 활공 급습 (낙하 ${only.plainAir.vy}→${only.dive.vy}, ` +
+        `${only.plainAir.damage}→${only.dive.damage}) · ` +
+        `표류 공중 대시 1회 한정 · ` +
+        `벽 차기 반격 ${only.after.damage}→${only.counter.damage}`,
+    );
+  }
+  await shot('trait-exclusive');
   await restartRound();
   await waitGrounded();
 }

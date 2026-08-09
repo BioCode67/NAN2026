@@ -10,8 +10,8 @@ export const bull: CharacterConfig = {
   colors: { body: 0x8a6a3c, head: 0xb08d57, accent: 0x22c55e },
   stats: { speed: 295, jump: -700, doubleJump: -590, weight: 1.4 },
 
-  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
-  move: 'plunge',
+  /* 이동 기질 — 뒤로 가는 법은 안 배웠다 — 한번 달리면 방향이 곧바로 안 꺾인다 */
+  move: 'drift',
 
   art: {
     hair: 'none',

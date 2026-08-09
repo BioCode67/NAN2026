@@ -53,6 +53,8 @@ export class AISystem {
   private pummelsLeft = 0;
   /** 다음 잡기를 시도할 수 있는 시각 — 계속 잡으러만 오면 읽힌다 */
   private grabTryAt = 0;
+  /** 이 시각까지 강공격 버튼을 붙잡고 모은다 (표준 기질) */
+  private chargeUntil = 0;
 
   constructor(
     private readonly self: BaseCharacter,
@@ -113,7 +115,84 @@ export class AISystem {
       this.state = this.pendingState;
     }
 
+    this.tickTrait(target, time);
     this.act(target, time);
+  }
+
+  /* ================================================================ */
+  /* 기질 전용기                                                       */
+  /* ================================================================ */
+
+  /**
+   * 봇이 **자기 기질로만 되는 것**을 쓴다.
+   *
+   * ── 왜 필요한가 ────────────────────────────────────────────────────
+   * 전용기를 만들어도 봇이 안 쓰면 절반만 존재한다. 사람은 스무 명 중 한 명을
+   * 고르고 나머지 열아홉은 **상대로만** 만나기 때문이다. 봇이 전부 똑같이
+   * 걸어와 똑같이 때리면, 맞는 쪽에서는 이름과 색만 다른 하나를 스무 번
+   * 상대하는 셈이 된다 — 캐릭터를 알아 갈 계기가 아예 안 생긴다.
+   *
+   * 반대로 활공하는 봇이 머리 위에 떠 있다가 내리꽂으면, 그걸 맞아 본
+   * 사람은 그 캐릭터를 골라 보고 싶어진다. 전용기는 여기서 처음으로
+   * "구경거리"가 된다.
+   *
+   * 벽 차기·급강하는 봇이 따로 누를 것이 없다(밀리면 알아서 차고, 떨어지면
+   * 알아서 무거워진다). 손이 필요한 것은 활공·표류·표준 셋이다.
+   */
+  private tickTrait(target: BaseCharacter, time: number): void {
+    const onGround =
+      this.self.body.blocked.down || this.self.body.touching.down;
+    const dx = target.x - this.self.x;
+    const dy = target.y - this.self.y;
+
+    switch (this.self.trait) {
+      case 'glide': {
+        /*
+         * 떠 있는 동안 점프를 누른 채로 버티다가, 상대 머리 위에 오면 놓는다.
+         *
+         * 가로로 멀 때 활공을 유지하는 것이 핵심이다 — 그래야 "따라오다가
+         * 위에서 떨어진다"는 그림이 나온다. 붙었을 때까지 활공하면 그냥
+         * 느리게 내려오는 봇이 된다.
+         */
+        if (onGround) {
+          this.self.setJumpHeld(false);
+          break;
+        }
+        const above = dy > 30 && Math.abs(dx) < 90;
+        this.self.setJumpHeld(!above);
+        // 머리 위에 왔다 — 활공을 끊고 내리꽂는다
+        if (above && this.attackCooldown <= 0) {
+          this.self.setJumpHeld(true);
+          if (this.self.attack('heavy', 'down')) {
+            this.attackCooldown = this.difficulty.attackCooldown;
+          }
+          this.self.setJumpHeld(false);
+        }
+        break;
+      }
+
+      case 'drift': {
+        // 자원이 안 드는 공중 대시 — 멀면 한 번 써서 거리를 지운다
+        if (!onGround && Math.abs(dx) > 200) {
+          this.self.dash(dx >= 0 ? 1 : -1);
+        }
+        break;
+      }
+
+      case 'plain':
+        /*
+         * 모으기로 정한 동안만 버튼을 붙잡는다.
+         *
+         * 매번 모으면 읽히고 한 번도 안 모으면 기질이 없는 것과 같다.
+         * 낼 때 주사위를 굴려 정하므로(swing 참조) 여기서는 그 시각까지
+         * 손을 떼지 않는 일만 한다.
+         */
+        this.self.setHeavyHeld(time < this.chargeUntil);
+        break;
+
+      default:
+        break;
+    }
   }
 
   /**
@@ -278,7 +357,9 @@ export class AISystem {
 
         if (this.attackCooldown <= 0) {
           // 막고 선 상대는 때려서 못 뚫는다 — 잡아야 한다
-          if (!this.tryGrab(target, time)) this.swing(dy, Math.abs(target.x - this.self.x));
+          if (!this.tryGrab(target, time)) {
+            this.swing(dy, Math.abs(target.x - this.self.x), time);
+          }
         }
         break;
       }
@@ -355,7 +436,7 @@ export class AISystem {
    * 링크마다 정확한 타이밍을 계산하지는 않는다 — 판정 중에 누르면 선입력으로
    * 쌓이고, 끝난 직후에 누르면 여운으로 이어지므로 대충 눌러도 성립한다.
    */
-  private swing(dy: number, gap: number): void {
+  private swing(dy: number, gap: number, time: number): void {
     // 막은 채로는 못 친다
     this.releaseGuard();
 
@@ -392,6 +473,25 @@ export class AISystem {
     this.chainLeft = 0;
     this.attackCooldown =
       atk.startup + atk.active + atk.recovery + this.difficulty.attackCooldown;
+
+    /*
+     * 표준 기질은 여기서 가끔 모은다.
+     *
+     * 모을 수 있는 것은 지상 중립 강공격뿐이라 조건을 그대로 맞춘다.
+     * 다 모을 때까지 다음 입력을 넣지 않도록 쿨다운도 그만큼 늘린다 —
+     * 안 그러면 봇이 모으는 도중에 다시 치려 들어 차지가 매번 끊긴다.
+     */
+    if (
+      this.self.trait === 'plain' &&
+      intent === 'heavy' &&
+      atkDir === 'neutral' &&
+      (this.self.body.blocked.down || this.self.body.touching.down) &&
+      Phaser.Math.FloatBetween(0, 1) < 0.4
+    ) {
+      const hold = Phaser.Math.Between(420, 700);
+      this.chargeUntil = time + hold;
+      this.attackCooldown += hold;
+    }
   }
 
   /**

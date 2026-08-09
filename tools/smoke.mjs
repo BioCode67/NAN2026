@@ -2470,6 +2470,117 @@ console.log('기질 전용기');
   await waitGrounded();
 }
 
+/*
+ * 봇도 자기 기질을 쓰는가.
+ *
+ * ── 왜 재는가 ──────────────────────────────────────────────────────
+ * 전용기를 만들어도 봇이 안 쓰면 절반만 존재한다. 사람은 스무 명 중 한 명을
+ * 고르고 나머지 열아홉은 **상대로만** 만난다. 봇이 전부 똑같이 걸어와
+ * 똑같이 때리면 맞는 쪽에서는 이름과 색만 다른 하나를 스무 번 상대하는
+ * 셈이고, 그러면 캐릭터를 알아 갈 계기가 아예 안 생긴다.
+ *
+ * 봇의 판단은 시간·주사위·거리에 걸려 있어서 "한 판 지켜보다가 나오면
+ * 통과"로 재면 통과·실패가 운에 달린다. 그래서 상황을 만들어 놓고
+ * 판단 함수를 직접 한 번 돌린다 — 재는 것은 "지금 이 상황에서 그 수를
+ * 두는가"이지 "언제 두는가"가 아니다.
+ */
+console.log('봇 기질');
+{
+  await restartRound();
+  await waitGrounded();
+
+  const bots = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Battle');
+    const ai = s.ais[0];
+    if (!ai) return { why: '봇이 없습니다' };
+    const b = ai.self;
+    const foe = s.player;
+    const now = s.time.now;
+
+    // 재는 동안 발밑에 아무것도 없게 한다 (무대마다 발판 배치가 다르다)
+    b.body.checkCollision.down = false;
+    const was = b.cfg.move;
+
+    /*
+     * "떠 있다"는 표시를 손으로 세운다.
+     *
+     * 자리만 공중으로 옮겨서는 안 된다 — 땅에 닿았다는 표시(blocked.down)는
+     * 물리 한 틱이 지나야 갱신되므로, 방금까지 서 있던 봇은 공중으로 옮겨
+     * 놔도 한동안 "닿아 있음"으로 읽힌다. 판단 함수는 그 값을 보고 공중
+     * 행동을 통째로 건너뛴다 — 기능이 죽은 게 아니라 아직 땅에 있는 것이다.
+     */
+    const lift = () => {
+      b.body.blocked.down = false;
+      b.body.touching.down = false;
+    };
+
+    /* --- 활공 봇: 멀면 떠 있고, 머리 위에 오면 내리꽂는다 ---------- */
+    b.cfg.move = 'glide';
+    b.attackPhase = 'none';
+    b.currentAttack = null;
+    b.stunUntil = 0;
+    // 상대에게서 멀리, 위쪽에 떠 있는 상황
+    foe.setPosition(900, 500);
+    b.setPosition(500, 300);
+    b.body.setVelocity(0, 200);
+    b.jumpHeld = false;
+    lift();
+    ai.tickTrait(foe, now);
+    const hangs = b.jumpHeld;
+
+    // 이제 머리 바로 위 — 활공을 끊고 떨어져야 한다
+    b.setPosition(foe.x + 20, foe.y - 120);
+    b.body.setVelocity(0, 200);
+    b.attackPhase = 'none';
+    b.currentAttack = null;
+    ai.attackCooldown = 0;
+    lift();
+    ai.tickTrait(foe, now);
+    const dives = {
+      vy: Math.round(b.body.velocity.y),
+      name: b.getCurrentAttack()?.name ?? null,
+    };
+
+    /* --- 표류 봇: 멀면 공중 대시로 거리를 지운다 ------------------- */
+    b.cfg.move = 'drift';
+    b.attackPhase = 'none';
+    b.currentAttack = null;
+    b.setPosition(foe.x - 400, foe.y - 100);
+    b.body.setVelocity(0, 100);
+    b.airDashed = false;
+    b.dashReadyAt = 0;
+    b.dashUntil = 0;
+    lift();
+    ai.tickTrait(foe, now);
+    const drifts = b.airDashed;
+
+    b.cfg.move = was;
+    b.body.checkCollision.down = true;
+    b.setJumpHeld(false);
+    b.airDashed = false;
+    return { hangs, dives, drifts };
+  });
+
+  if (bots.why) {
+    errors.push(`[봇 기질] ${bots.why}`);
+  } else if (!bots.hangs) {
+    errors.push('[봇 기질] 활공 봇이 공중에서 안 버팁니다 — 그냥 떨어집니다');
+  } else if (!(bots.dives.vy > 1000)) {
+    errors.push(
+      `[봇 기질] 활공 봇이 머리 위에서 안 내리꽂습니다 — ${JSON.stringify(bots.dives)}`,
+    );
+  } else if (!bots.drifts) {
+    errors.push('[봇 기질] 표류 봇이 공중 대시를 안 씁니다');
+  } else {
+    console.log(
+      `  ✓ 봇이 자기 기질을 쓴다 — 활공은 버티다 내리꽂고(${bots.dives.vy}), ` +
+        `표류는 공중 대시로 붙는다`,
+    );
+  }
+  await restartRound();
+  await waitGrounded();
+}
+
 
 /*
  * 서든데스 — 판이 길어지면 전원의 주가가 흘러내려 마감이 온다.

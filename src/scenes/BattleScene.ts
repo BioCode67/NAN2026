@@ -120,15 +120,15 @@ interface FighterHud {
   parts: Phaser.GameObjects.GameObject[];
 }
 
+/** 등수 색 — 1위 금, 2위 은, 3위 동, 그 밖은 옅게 */
+const PLACE_COLORS = ['#ffd54a', '#cbd5e1', '#d19a66', '#6c86c4'];
+
 /**
  * 자리 색 — 1P 파랑, 2P 분홍, 3P 보라, 4P 노랑.
  *
  * 넷이 뒤엉키면 화면에서 자기 캐릭터를 놓친다. 자리마다 색을 고정해 두고
- * HUD부터 결과 화면까지 같은 색을 쓴다.
+ * HUD부터 결과 화면·화면 밖 화살표까지 같은 색을 쓴다.
  */
-/** 등수 색 — 1위 금, 2위 은, 3위 동, 그 밖은 옅게 */
-const PLACE_COLORS = ['#ffd54a', '#cbd5e1', '#d19a66', '#6c86c4'];
-
 const SEAT_COLORS = ['#38bdf8', '#f472b6', '#a78bfa', '#facc15'];
 const BOT_COLOR = '#7f93bd';
 
@@ -141,6 +141,11 @@ function seatIndex(f: BaseCharacter): number {
 function seatColor(f: BaseCharacter): string {
   const i = seatIndex(f);
   return i >= 0 ? (SEAT_COLORS[i] ?? SEAT_COLORS[0]!) : BOT_COLOR;
+}
+
+/** 같은 자리 색을 도형용 숫자로 (`#38bdf8` → 0x38bdf8) */
+function seatTint(f: BaseCharacter): number {
+  return Number.parseInt(seatColor(f).slice(1), 16);
 }
 
 /** HUD 패널 규격 — 4명이 한 줄에 들어가야 한다 */
@@ -2898,7 +2903,21 @@ export class BattleScene extends Phaser.Scene {
       this.physics.world.pause();
       if (this.input.keyboard) this.input.keyboard.enabled = false;
 
-      const result = await openPromptOverlay(breaker.cfg.name, accent);
+      /*
+       * 누가 치는지 **자리로** 말한다.
+       *
+       * 한 화면 앞에 넷이 앉아 있으면 입력창이 뜨는 순간 제일 먼저 갈리는
+       * 것이 "이거 누구 차례야?"다. 캐릭터 이름만 뜨면 방금 자기가 고른
+       * 것을 기억 못 하는 사람이 손을 뻗고, 정작 깬 사람은 구경한다.
+       * 자리 번호는 HUD·결과 화면과 같은 이름이라 바로 읽힌다.
+       */
+      const seat = seatIndex(breaker);
+      const who =
+        seat >= 0 && this.humans.length > 1
+          ? `${seat + 1}P · ${breaker.cfg.name}`
+          : breaker.cfg.name;
+
+      const result = await openPromptOverlay(who, accent);
       text = result.text;
 
       if (this.input.keyboard) this.input.keyboard.enabled = true;
@@ -3878,10 +3897,17 @@ export class BattleScene extends Phaser.Scene {
     ui: <T extends Phaser.GameObjects.GameObject>(obj: T) => T,
   ): void {
     this.offscreenMarks = this.humans.map((h) => {
-      // HUD 패널과 같은 색을 쓴다 — 1P는 파랑, 2P는 분홍으로 고정
-      const first = h.fighter === this.player;
-      const accent = first ? 0x38bdf8 : 0xf472b6;
-      const label = first ? '1P' : '2P';
+      /*
+       * HUD 패널·결과 화면과 같은 자리 색을 쓴다.
+       *
+       * 전에는 "내 것이면 1P 파랑, 아니면 전부 2P 분홍"이었다. 사람이 둘일
+       * 때는 맞는 말이지만 넷이 붙으면 **3P·4P 화살표가 둘 다 "2P" 라고**
+       * 뜬다. 화면 밖으로 밀려난 사람을 찾으라고 만든 표시가, 정작 셋이
+       * 밀려난 순간 같은 이름 셋을 같은 색으로 내놓는다 — 없느니만 못하다.
+       */
+      const seat = seatIndex(h.fighter);
+      const accent = seatTint(h.fighter);
+      const label = seat >= 0 ? `${seat + 1}P` : '';
 
       const arrow = ui(
         this.add.triangle(0, 0, 0, 0, 22, 11, 0, 22, accent, 0.92).setVisible(false),
@@ -3921,22 +3947,50 @@ export class BattleScene extends Phaser.Scene {
     const right = cam.midPoint.x + halfView;
     const MARGIN = 44;
 
+    /*
+     * 같은 쪽으로 나간 사람들을 **세로로 벌린다.**
+     *
+     * 세로 위치는 그 사람의 실제 높이를 따라간다 — 위아래 어디쯤인지도
+     * 정보다. 그런데 넷이 붙는 판에서는 둘이 나란히 밀려나는 일이 흔하고,
+     * 그러면 화살표 두 개가 같은 자리에 겹쳐 하나로 보인다. 뒤엣것은 통째로
+     * 가려져서 자기 화살표를 찾던 사람은 "나는 표시가 안 뜨네" 가 된다.
+     *
+     * 한 번에 한 개씩 아래로 밀어내는 방식은 안 된다 — 아래 끝에 닿으면
+     * 도로 같은 자리로 잘려 원점이다(실제로 그렇게 겹쳤다). 그 쪽으로 나간
+     * 사람을 다 모아 놓고, 높이 순서는 지킨 채 **덩어리째** 화면 안에 앉힌다.
+     */
+    const MIN_GAP = 54;
+    const TOP = 90;
+    const BOTTOM = GAME.HEIGHT - 150;
+
+    type Mark = BattleScene['offscreenMarks'][number];
+    const sides: Record<'L' | 'R', Array<{ m: Mark; y: number }>> = { L: [], R: [] };
+
     for (const m of this.offscreenMarks) {
       const f = m.fighter;
       const out = !f.alive ? 0 : f.x < left + MARGIN ? -1 : f.x > right - MARGIN ? 1 : 0;
-
       if (!out) {
         m.arrow.setVisible(false);
         m.text.setVisible(false);
         continue;
       }
+      sides[out < 0 ? 'L' : 'R'].push({ m, y: Phaser.Math.Clamp(f.y, TOP, BOTTOM) });
+    }
 
-      // 화면 안에서의 세로 위치는 그대로 따라간다 — 위아래 어디쯤인지도 정보다
-      const y = Phaser.Math.Clamp(f.y, 90, GAME.HEIGHT - 150);
-      const x = out < 0 ? 26 : GAME.WIDTH - 26;
+    for (const key of ['L', 'R'] as const) {
+      const list = sides[key].sort((a, b) => a.y - b.y);
+      if (!list.length) continue;
 
-      m.arrow.setPosition(x, y).setAngle(out < 0 ? 180 : 0).setVisible(true);
-      m.text.setPosition(x, y - 26).setVisible(true);
+      // 덩어리 전체 높이를 먼저 재고, 아래로 넘치면 위로 당겨 앉힌다
+      const span = MIN_GAP * (list.length - 1);
+      const first = Phaser.Math.Clamp(list[0]!.y, TOP, Math.max(TOP, BOTTOM - span));
+      const x = key === 'L' ? 26 : GAME.WIDTH - 26;
+
+      list.forEach((e, i) => {
+        const y = first + i * MIN_GAP;
+        e.m.arrow.setPosition(x, y).setAngle(key === 'L' ? 180 : 0).setVisible(true);
+        e.m.text.setPosition(x, y - 26).setVisible(true);
+      });
     }
   }
 

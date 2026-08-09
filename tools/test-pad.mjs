@@ -659,20 +659,22 @@ try {
         const cam = s.cameras.main;
         const hud = s.hudLayer;
         // HUD 자식 하나가 실제로 그려지는 화면 좌표 (상쇄가 맞으면 줌과 무관)
-        const kid = hud.list.find((o) => typeof o.x === 'number');
-        if (!kid) return { zoom: cam.zoom, hudScale: hud.scaleX, kidScreenX: null };
-
         /*
-         * **화면** 좌표를 구해야 한다.
+         * 실제 자식이 아니라 **고정된 한 점**을 통과시켜 본다.
          *
-         * 처음에는 월드 좌표(hud.x + kid.x·scale)를 비교했는데, 그건 상쇄가
-         * 제대로 걸릴수록 오히려 달라지는 값이다 — 되돌리기의 원리 자체가
-         * 월드 좌표를 옮겨서 화면 좌표를 붙잡아 두는 것이기 때문이다.
+         * 처음에는 hudLayer 의 첫 자식을 집었는데, 그 자리에 화면 밖
+         * 화살표가 들어오면서 검사가 깨졌다 — 그 화살표는 사람을 따라
+         * 매 프레임 움직이므로, 두 번 읽으면 당연히 다른 자리에 있다.
+         * 재려는 것은 "어떤 자식이 어디 있나"가 아니라 **컨테이너의 변환이
+         * 줌을 정확히 지우는가**이므로, 아무 점이나 하나 넣어 보면 된다.
+         *
          * scrollFactor 0 인 것은 월드 w 를 (w - c)·줌 + c 에 그린다.
+         * 되돌리기가 맞으면 어떤 국소 좌표든 화면 좌표가 줌과 무관해진다.
          */
         const c = { x: cam.width / 2, y: cam.height / 2 };
-        const worldX = hud.x + kid.x * hud.scaleX;
-        const worldY = hud.y + kid.y * hud.scaleY;
+        const local = { x: 100, y: 100 };
+        const worldX = hud.x + local.x * hud.scaleX;
+        const worldY = hud.y + local.y * hud.scaleY;
         return {
           zoom: cam.zoom,
           hudScale: hud.scaleX,
@@ -736,6 +738,64 @@ try {
       } else {
         ok('HUD 는 당겨도 제자리 (되돌리기 상쇄 확인)');
       }
+    }
+  }
+
+  /*
+   * 10.4 화면 밖 화살표가 자리마다 갈리는가.
+   *
+   * ── 왜 보는가 ──────────────────────────────────────────────────
+   * 넷이 양 끝으로 갈라지면 화면 밖으로 밀려나는 사람이 생기고, 그 몇 초는
+   * 게임이 아니라 추측이 된다. 그걸 메우라고 있는 표시인데 이름이 "1P"와
+   * "2P" 둘뿐이면 3P·4P 는 같은 이름 같은 색으로 뜬다 — 찾으라고 만든
+   * 표시가 정작 셋이 밀려난 순간 아무것도 안 가리킨다.
+   */
+  {
+    // 넷을 양 끝으로 **둘씩** 갈라 놓는다 — 같은 쪽에 둘이 겹치는 상황을 만든다
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.ais.length = 0;
+      s.fighters.forEach((f, i) => {
+        f.x = i < 2 ? 120 : 1800;
+        f.y = 500; // 일부러 같은 높이 — 안 벌려 주면 정확히 포개진다
+        f.body?.setVelocity(0, 0);
+        f.invulnUntil = s.time.now + 600000;
+      });
+    });
+    await page.waitForTimeout(2500);
+
+    const marks = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      return (s.offscreenMarks ?? []).map((m) => ({
+        label: m.text.text,
+        tint: m.arrow.fillColor,
+        visible: m.arrow.visible,
+        x: Math.round(m.arrow.x),
+        y: Math.round(m.arrow.y),
+      }));
+    });
+
+    const shown = marks.filter((m) => m.visible);
+    const labels = shown.map((m) => m.label);
+    // 같은 쪽(같은 x)에 있는 것끼리 세로로 겹치지 않아야 한다
+    const overlap = shown.some((a, i) =>
+      shown.some((b, j) => j > i && a.x === b.x && Math.abs(a.y - b.y) < 30),
+    );
+
+    if (shown.length !== 4) {
+      bad(`[화면밖] 넷을 다 내보냈는데 표시가 ${shown.length}개입니다`);
+    } else if (new Set(labels).size !== 4) {
+      bad(`[화면밖] 이름이 겹칩니다 — ${labels.join(', ')}`);
+    } else if (new Set(shown.map((m) => m.tint)).size !== 4) {
+      bad(`[화면밖] 색이 겹칩니다 — ${labels.join(', ')}`);
+    } else if (overlap) {
+      bad(
+        `[화면밖] 같은 쪽 화살표가 포개집니다 — ${shown
+          .map((m) => `${m.label}(${m.x},${m.y})`)
+          .join(' ')}`,
+      );
+    } else {
+      ok(`화면 밖 화살표가 자리마다 갈리고 안 포개진다 (${labels.join(' ')})`);
     }
   }
 

@@ -1153,6 +1153,43 @@ export class SelectScene extends Phaser.Scene {
     if (isNetOverlayOpen()) return;
 
     const picked = CHARACTER_ORDER[this.selectedIndex]!;
+
+    /*
+     * 앞사람이 고른 캐릭터는 못 고른다.
+     *
+     * ── 왜 막는가 ──────────────────────────────────────────────────
+     * 같은 캐릭터 둘이 판에 서면 화면에서 누가 누구인지 구별할 방법이
+     * 사라진다. 이름표도 같고 색도 같고 모션도 같다 — 넷이 뒤엉킨 판에서는
+     * 자기 캐릭터를 놓치는 것이 곧 조작 불능이다. 대난투류가 같은 캐릭터에
+     * 색을 갈아 입히는 이유가 그것인데, 여기는 색이 곧 그 인물이라
+     * (빌 게이츠맨은 파랑이어야 한다) 그 방법을 쓸 수 없다.
+     *
+     * 로스터가 스물이라 막아도 고를 것이 없어지지 않는다. 그리고 카드에
+     * 이미 "1P" 딱지가 붙어 있어 무엇이 나갔는지 보인다 — 막히는 이유가
+     * 화면에 먼저 있는 셈이다.
+     *
+     * 온라인은 막지 않는다. 거기서는 넷이 **동시에** 고르므로, 먼저 도착한
+     * 쪽이 이기는 경주가 되어 "눌렀는데 안 됐다"가 회선 탓처럼 보인다.
+     */
+    if (!this.online && this.localPicks.includes(picked)) {
+      const who = this.localPicks.indexOf(picked) + 1;
+      sound.play('uiMove');
+      this.prompt.setText(`${CHARACTERS[picked].name} — 이미 ${who}P 가 골랐다`);
+      this.prompt.setColor('#ef4444');
+      this.tweens.add({
+        targets: this.cards[this.selectedIndex]!.root,
+        x: { from: this.cards[this.selectedIndex]!.root.x - 6, to: this.cards[this.selectedIndex]!.root.x },
+        duration: 90,
+        yoyo: true,
+        repeat: 1,
+      });
+      // 다음 카드로 옮기면 원래 안내로 돌아온다
+      this.time.delayedCall(1100, () => {
+        if (!this.confirmed) this.refreshPrompt();
+      });
+      return;
+    }
+
     const card = this.cards[this.selectedIndex]!;
     this.tweens.add({
       targets: card.root,

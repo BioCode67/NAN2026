@@ -531,16 +531,40 @@ try {
     } else {
       ok('F2 ×3 → 4인 대전');
 
-      // 넷이 차례로 고른다 — 매번 다른 캐릭터를 집도록 커서를 옮긴다
-      for (let i = 0; i < 4; i++) {
+      /*
+       * 같은 캐릭터를 두 번 고르려 해 본다 — 막혀야 한다.
+       *
+       * 같은 캐릭터 둘이 판에 서면 이름표도 색도 모션도 같아, 넷이 뒤엉킨
+       * 판에서 자기 캐릭터를 놓친다. 막혔는지는 **인원 수가 안 늘어난
+       * 것**으로 확인한다 — 화면에는 흔들리는 카드 한 장이 전부라
+       * 스크린샷으로는 "안 눌린 건지 막힌 건지"를 가릴 수 없다.
+       */
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(500);
+      const afterFirst = await page.evaluate(
+        () => window.game.scene.getScene('Select').localPicks.length,
+      );
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(700);
+      const afterDup = await page.evaluate(
+        () => window.game.scene.getScene('Select').localPicks.length,
+      );
+      if (afterFirst !== 1) {
+        bad(`[중복] 1P 선택이 안 됐습니다 (${afterFirst})`);
+      } else if (afterDup !== 1) {
+        bad(`[중복] 같은 캐릭터를 2P 도 골랐습니다 (${afterDup}명 확정)`);
+      } else {
+        ok('같은 캐릭터는 두 번 못 고른다');
+      }
+
+      // 나머지 셋은 서로 다른 캐릭터로 고른다
+      for (let i = 1; i < 4; i++) {
+        for (let k = 0; k < 3; k++) {
+          await page.keyboard.press('ArrowRight');
+          await page.waitForTimeout(140);
+        }
         await page.keyboard.press('Enter');
         await page.waitForTimeout(500);
-        if (i < 3) {
-          for (let k = 0; k < 3; k++) {
-            await page.keyboard.press('ArrowRight');
-            await page.waitForTimeout(140);
-          }
-        }
       }
 
       if (!(await waitScene('Battle', 40))) {

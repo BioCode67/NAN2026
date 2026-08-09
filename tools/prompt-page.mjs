@@ -25,6 +25,7 @@ import { BATCHES, CHARACTERS } from './art-characters.mjs';
 
 const SRC = 'art-source/prompts';
 const OUT = 'art-source/prompts/복사용';
+const CHAR_OUT = `${OUT}/캐릭터별`;
 
 /**
  * 파일 이름 — 띄어쓰기와 가운뎃점을 뺀다.
@@ -130,6 +131,90 @@ ${body || '_이 묶음은 모두 끝났습니다._'}
 `;
 }
 
+/**
+ * 뽑는 순서 — 화면에 자주 나오는 것부터.
+ *
+ * 표지 설명과 캐릭터별 페이지가 같은 순서를 봐야 한다. 두 군데에 손으로
+ * 적어 두면 한쪽만 고쳐지고, 그러면 문서가 서로 다른 말을 한다.
+ */
+const ORDER = [1, 3, 8, 7, 4, 2, 10, 12, 9, 11, 5, 6];
+
+/**
+ * 캐릭터 한 명 페이지 — 한 대화에서 끝까지 간다.
+ *
+ * ── 왜 묶음별 페이지만으로는 부족한가 ────────────────────────────
+ * 2묶음부터는 **1묶음 그림을 참조로 함께 넣어야** 같은 인물이 나온다.
+ * 묶음별 페이지대로 하면 "빌 게이츠맨 3묶음 → 스티브 잡스맨 3묶음 → …"
+ * 순으로 캐릭터가 매번 바뀌므로, 한 칸 뽑을 때마다 그 사람의 기준 그림을
+ * 다시 찾아 첨부하게 된다. 스무 명 × 열두 묶음이면 첨부만 240번이다.
+ *
+ * 사람 하나를 잡고 한 대화에서 쭉 뽑으면 첨부는 **한 번**이면 된다.
+ * 생성기가 그 인물을 맥락에 쥐고 있으므로 옷 색과 무기도 덜 흔들린다 —
+ * 프롬프트가 매번 경고하는 바로 그 문제가 애초에 안 생긴다.
+ */
+function buildCharPage(row) {
+  const { id, c, done } = row;
+  const todo = ORDER.map((n) => BATCHES.find((b) => b.id === n)).filter(
+    (b) => b && !done.includes(b.id),
+  );
+
+  const body = todo
+    .map((batch, i) => {
+      const text = promptText(id, batch);
+      const head = `## ${i + 1}. ${batch.id}묶음 · ${batch.title}`;
+      if (!text) {
+        return `${head}\n\n_프롬프트 파일이 없습니다 — \`npm run prompts\` 를 먼저 돌려 주세요._`;
+      }
+      return [
+        head,
+        '',
+        `받은 파일 이름 → **\`${c.key}_b${batch.id}.png\`**`,
+        '',
+        '```text',
+        text,
+        '```',
+        '',
+        '<sub>[▲ 맨 위로](#top)</sub>',
+      ].join('\n');
+    })
+    .join('\n\n---\n\n');
+
+  const doneLine = done.length
+    ? `이미 끝난 묶음: ${done.sort((a, b) => a - b).join(' · ')}\n\n`
+    : '';
+
+  const first = done.includes(1)
+    ? `1묶음이 이미 있으므로, **\`art-source/${c.key}_b1.png\` 을 첨부**하고 시작하세요.`
+    : `아직 1묶음이 없습니다. 아래 첫 상자(1묶음)부터 뽑고, **그 결과 그림을 첨부한 채로** 나머지를 이어가세요.`;
+
+  return `<a id="top"></a>
+
+# ${c.inGameName} — 남은 ${todo.length}묶음
+
+${doneLine}## 이 페이지를 쓰는 법
+
+그림 생성기에 **대화 하나를 열고, 그 안에서 아래를 위에서부터 차례로**
+붙여넣으세요. 대화를 옮기지 않는 것이 요령입니다.
+
+1. ${first}
+2. 아래 첫 상자를 복사해 붙여넣고 → 받는다
+3. **첨부를 다시 하지 않고** 다음 상자를 붙여넣고 → 받는다
+4. 끝까지 반복
+
+한 대화 안에 있으면 생성기가 이 인물을 계속 기억하므로, 묶음마다 옷 색과
+무기가 흔들리는 일이 줄어듭니다. 첨부도 맨 처음 한 번이면 됩니다.
+
+> 순서는 **화면에 자주 나오는 것부터**입니다. 중간에 그만두셔도 그때까지
+> 뽑은 것만으로 게임이 제일 나아 보이도록 짠 순서입니다.
+
+${HOWTO}
+
+---
+
+${body || '_이 캐릭터는 열두 묶음이 모두 끝났습니다._'}
+`;
+}
+
 /** 표지 — 진행표와 링크 */
 function buildIndex(list) {
   const head = `| 캐릭터 | ${BATCHES.map((b) => b.id).join(' | ')} |`;
@@ -148,6 +233,15 @@ function buildIndex(list) {
     const left = list.filter((r) => !r.done.includes(b.id)).length;
     return `| [${b.id}. ${b.title}](${encodeURIComponent(fileName(b))}) | ${left}명 | ${b.note} |`;
   }).join('\n');
+
+  /* 캐릭터별 링크 — 남은 것이 많은 사람이 위로 온다 */
+  const charLinks = [...list]
+    .sort((a, b) => a.done.length - b.done.length || a.c.inGameName.localeCompare(b.c.inGameName))
+    .map((r) => {
+      const left = BATCHES.length - r.done.length;
+      return `| [${r.c.inGameName}](캐릭터별/${r.c.key}.md) | ${left}묶음 |`;
+    })
+    .join('\n');
 
   return `# 프롬프트 — 복사해서 바로 쓰는 판
 
@@ -179,6 +273,21 @@ GitHub 웹에서 열면 회색 상자마다 복사 단추가 붙습니다. 휴�
 | 묶음 | 남은 사람 | 이 묶음의 요령 |
 |---|---|---|
 ${links}
+
+## 사람 하나씩 끝내려면 — 캐릭터별 페이지
+
+위의 묶음별 페이지는 "스무 명의 3묶음"을 한 번에 훑을 때 좋습니다. 다만
+2묶음부터는 **1묶음 그림을 참조로 첨부해야** 같은 인물이 나오는데, 묶음별로
+가면 칸마다 캐릭터가 바뀌어 매번 그 사람의 기준 그림을 다시 찾게 됩니다.
+스무 명 × 열두 묶음이면 첨부만 240번입니다.
+
+아래 페이지는 **한 사람의 남은 묶음을 순서대로** 담고 있습니다. 생성기에
+대화를 하나 열고, 1묶음 그림을 **한 번만** 첨부한 뒤 위에서부터 쭉
+붙여넣으면 됩니다. 같은 대화 안이라 옷 색과 무기도 덜 흔들립니다.
+
+| 캐릭터 | 남은 것 |
+|---|---|
+${charLinks}
 
 ## 누가 어디까지 되어 있나
 
@@ -229,6 +338,23 @@ for (const batch of BATCHES) {
   const left = rows.filter((r) => !r.done).length;
   console.log(`  ${batch.id}. ${batch.title.padEnd(12)} 남은 ${String(left).padStart(2)}명 → ${file}`);
 }
+
+/*
+ * 캐릭터별 페이지 — 파일 이름은 key 로 둔다.
+ *
+ * 한글 이름으로 두면 주소창에서 %EB%B9%8C… 로 부풀어 링크가 안 읽히고,
+ * 휴대폰에서 주소를 손으로 넘길 때 걸린다. 문서 안 제목은 한글 그대로다.
+ */
+mkdirSync(CHAR_OUT, { recursive: true });
+let charLeft = 0;
+for (const row of list) {
+  const file = `${CHAR_OUT}/${row.c.key}.md`;
+  writeFileSync(file, buildCharPage(row), 'utf8');
+  charLeft += BATCHES.length - row.done.length;
+}
+console.log(
+  `\n  캐릭터별 ${list.length}장 — 남은 ${charLeft}묶음 → ${CHAR_OUT}/`,
+);
 
 const total = list.length * BATCHES.length;
 const finished = list.reduce((n, r) => n + r.done.length, 0);

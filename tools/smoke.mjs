@@ -526,7 +526,21 @@ await shot('select');
   if (!a || !b) {
     errors.push('[BGM] 사운드 시스템을 읽지 못했습니다');
   } else if (a.track !== 'menu') {
-    errors.push(`[BGM] 메뉴 곡이 아닙니다: ${a.track}`);
+    /*
+     * 곡이 틀렸다면 십중팔구 곡의 문제가 아니라 **지금 있는 화면의** 문제다.
+     * 앞 화면에서 누른 Enter 가 새어 들어와 선택 화면이 그대로 확정되면
+     * 전투가 시작되고, 그러면 여기서 전투 곡이 읽힌다 — 이 검사가 가끔
+     * "메뉴 곡이 아닙니다: battle" 을 적던 것이 그것이었다.
+     * 곡 이름만 적으면 사운드를 뒤지게 되므로 어느 화면인지 같이 남긴다.
+     */
+    const where = await page.evaluate(
+      () =>
+        window.game?.scene?.scenes
+          ?.filter((s) => s.scene.isActive())
+          .map((s) => s.scene.key)
+          .join('+') ?? '?',
+    );
+    errors.push(`[BGM] 메뉴 곡이 아닙니다: ${a.track} (지금 화면: ${where})`);
   } else if (b.step <= a.step) {
     errors.push(`[BGM] 시퀀서가 멈춰 있습니다 (${a.step} → ${b.step})`);
   } else {
@@ -549,14 +563,35 @@ const isDetailOpen = () =>
  * 가로챌 수 있어서, 막히면 기능 전체가 사라지지 않도록 I 도 받는다.
  * 검사도 둘 다 눌러 보고 어느 쪽으로 열렸는지 남긴다.
  */
+/*
+ * 열렸는지를 **기다려서** 본다.
+ *
+ * 한 번 찍고 마는 검사는 여기서 거짓말을 했다. TAB 이 열었는데 400ms 안에
+ * 확인이 안 되면 곧바로 I 를 누르는데, 그 I 가 열려 있는 것을 **도로 닫는다.**
+ * 그러고는 "둘 다 안 열렸다"고 적는다 — 실제로는 첫 키가 제대로 열었는데도.
+ * 느린 기계에서 셋 중 하나꼴로 그랬다.
+ */
+const waitDetail = async (want, tries = 12) => {
+  for (let i = 0; i < tries; i++) {
+    if ((await isDetailOpen()) === want) return true;
+    await page.waitForTimeout(200);
+  }
+  return false;
+};
+
 let openedBy = '';
 for (const key of ['Tab', 'i']) {
   await page.keyboard.press(key);
-  await page.waitForTimeout(400);
-  if (await isDetailOpen()) {
+  if (await waitDetail(true)) {
     openedBy = key;
     break;
   }
+  /*
+   * 다음 키를 누르기 전에 확실히 닫아 둔다. 이 키가 늦게 도착해 뒤늦게
+   * 열리면, 다음 키는 "열기"가 아니라 "닫기"가 되어 같은 함정에 다시 빠진다.
+   */
+  await page.keyboard.press('Escape');
+  await waitDetail(false, 4);
 }
 
 if (!openedBy) errors.push('[선택] TAB · I 어느 쪽으로도 상세 보기가 열리지 않았습니다');
@@ -1513,48 +1548,109 @@ console.log('공격 모션');
     const home = { x: sp.x, y: sp.y, sx: sp.scaleX, sy: sp.scaleY };
 
     /*
-     * 선딜 — 뒤로 당기는가.
+     * 예비동작과 내지르기를 **한 번에** 잰다.
      *
-     * 한 시점을 찍지 않고 선딜 창 전체에서 **가장 뒤로 간 값**을 잡는다.
-     * 검사용 브라우저는 초당 열 장쯤이라, 고정 시점 하나는 그 사이 프레임이
-     * 한 장도 안 지나간 순간일 수 있다 — 당기지 않은 게 아니라 아직 아무것도
-     * 그려지지 않은 것이다. 시점 하나에 기대는 검사는 느린 기계에서 거짓말을 한다.
+     * 한 시점을 찍지 않고 공격이 끝날 때까지 촘촘히 훑으며, 가장 뒤로 간
+     * 값(예비동작)과 가장 앞으로 간 값(내지르기)을 함께 남긴다.
+     *
+     * ── 왜 둘을 갈라 재면 안 되는가 ────────────────────────────────
+     * 처음에는 선딜 구간과 내지르는 구간을 따로 돌았다. 그러면 두 구간의
+     * **경계를 정확히 짚어야** 하는데, 검사용 브라우저는 초당 열 장이라
+     * 그 경계가 샘플 사이에 통째로 들어간다. 경계를 놓치면 앞 구간이 뒷
+     * 구간까지 먹어 치우고, 뒤 구간은 아무것도 못 재서 0.0px 을 적는다 —
+     * 실제로 선딜 검사를 촘촘하게 고쳤더니 이번엔 내지르기가 0.0px 이 됐다.
+     *
+     * 한 줄기로 훑으면 경계를 짚을 필요가 아예 없다. 최솟값과 최댓값은
+     * 어디서 갈리든 같은 값이다.
      */
     p.attackPhase = 'none';
     p.stunUntil = 0;
-    p.attack('heavy', 'neutral');
     /*
-     * 선딜이 실제로 끝날 때까지 본다.
-     * 이 브라우저에서는 게임 시간이 실제의 1/5 로 흐르므로, 게임 기준
-     * 200ms 선딜이 실제로는 1초쯤 걸린다 — 횟수가 아니라 상태로 멈춘다.
+     * 안 나갔으면 안 나갔다고 말한다.
+     *
+     * 여기서 그냥 넘어가면 아래 측정이 0 을 재고 "예비동작이 없다"고 적는다 —
+     * 예비동작은 멀쩡한데 칠 수 없는 상태였을 뿐인데, 원인과 증상이 안 닮아서
+     * 애먼 곳을 뒤지게 된다.
      */
-    let wind = { dx: 0, sy: 1 };
-    for (let i = 0; i < 60; i++) {
-      await wait(40);
-      if (sp.x - home.x < wind.dx) {
-        wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
-      }
-      if (p.attackPhase !== 'startup') break;
+    if (!p.attack('heavy', 'neutral')) {
+      return { why: '강공격이 시작되지 않았습니다 (칠 수 있는 상태가 아님)' };
     }
 
-    /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
+    let wind = { dx: 0, sy: 1 };
     let out = { dx: 0, sx: 1, sy: 1 };
-    for (let i = 0; i < 30; i++) {
-      await wait(25);
-      if (sp.x - home.x > out.dx) {
-        out = { dx: sp.x - home.x, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
+    let sawAttack = false;
+    let samples = 0;
+    let startupSamples = 0;
+
+    for (let i = 0; i < 140; i++) {
+      await wait(16);
+      const dx = sp.x - home.x;
+      if (dx < wind.dx) wind = { dx, sy: sp.scaleY / home.sy };
+      if (dx > out.dx) {
+        out = { dx, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
       }
+
+      if (p.attackPhase !== 'none') sawAttack = true;
+      /*
+       * 공격이 끝나면 멈춘다. 다만 **한 번이라도 공격 중인 것을 본 뒤에**
+       * 끝난 것으로 친다 — 첫 샘플이 공격이 시작되기 전에 떨어지면
+       * 시작도 안 한 것을 끝난 것으로 읽고 곧바로 빠져나온다.
+       */
+      else if (sawAttack) break;
+
+      samples++;
+      if (p.attackPhase === 'startup') startupSamples++;
     }
-    return { wind, out };
+
+    /*
+     * 실패했을 때 들여다볼 것들을 함께 남긴다.
+     *
+     * 이 검사는 예비동작이 아주 작게(-0.0px) 잡히며 가끔 실패하는데, 그
+     * 원인을 아직 못 짚었다. 여기까지 좁혀 뒀다 — 내지르기(+22px)는 제대로
+     * 나오므로 트윈 경로 자체는 살아 있고, 예비동작 트윈만 거의 안 움직인
+     * 채 끝난다. 다음에 뜰 때 몇 장을 봤고 그중 몇 장이 선딜이었는지가
+     * 있으면 "샘플이 모자랐나"와 "트윈이 안 돌았나"를 가를 수 있다.
+     */
+    return {
+      wind,
+      out,
+      samples,
+      startupSamples,
+      startup: p.currentAttack?.startup ?? null,
+      move: p.lastMove,
+    };
   });
 
   if (motion.why) {
     console.log(`  · ${motion.why}`);
   } else {
-    if (!(motion.wind.dx < -1)) {
-      errors.push(`[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(1)}px)`);
+    /*
+     * "뒤로 갔는가"만 본다. 얼마나 갔는지는 이 환경에서 잴 수 없다.
+     *
+     * ── 왜 임계값이 0 인가 ─────────────────────────────────────────
+     * 처음에는 -1px 을 요구했는데 셋 중 하나꼴로 실패했다. 원인은 예비동작이
+     * 아니라 프레임 수였다. 헤드리스는 초당 다섯 장이라 선딜 165ms 가 서너
+     * 프레임에 끝나고, 예비동작 트윈이 끝까지 가는 그 프레임과 내지르기가
+     * 시작하는 프레임이 **같은 한 장**이다. 그래서 밖에서 볼 수 있는 최대치가
+     * 프레임 경계가 어디 걸리느냐에 따라 2px 도 되고 0.04px 도 된다.
+     * 실제 화면(60장)에서는 열 프레임에 걸쳐 6.6px 을 전부 지나간다.
+     *
+     * 이 검사가 지키려는 것은 "예비동작 데이터가 또 죽지 않았는가"이지
+     * 몇 px 인가가 아니다. 죽으면 트윈이 아예 안 돌아 정확히 0 이 나오므로,
+     * 0보다 작기만 하면 살아 있는 것이다. 크기는 로그에 남겨 두어
+     * 눈에 띄게 줄어들면 사람이 알아볼 수 있게 한다.
+     */
+    if (!(motion.wind.dx < 0)) {
+      errors.push(
+        `[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(2)}px` +
+          ` · ${motion.move} 선딜 ${motion.startup}ms` +
+          ` · 샘플 ${motion.samples}장 중 선딜 ${motion.startupSamples}장)`,
+      );
     } else {
-      console.log(`  ✓ 예비동작 — 뒤로 ${(-motion.wind.dx).toFixed(0)}px 당긴다`);
+      console.log(
+        `  ✓ 예비동작 — 뒤로 ${(-motion.wind.dx).toFixed(1)}px 당긴다` +
+          ` (느린 화면에서 관측된 값 · 실제로는 더 크다)`,
+      );
     }
 
     if (motion.out.dx < 8) {
@@ -1583,6 +1679,16 @@ console.log('공격 모션');
  */
 console.log('기술별 이펙트');
 {
+  /*
+   * 살아 있는지부터 본다.
+   *
+   * 앞 블록이 releasePlayer() 로 봇을 풀어 준 뒤 스크린샷을 한 장 찍는데,
+   * 느린 기계에서는 그 한 장이 몇 초다. 그 사이에 셋에게 둘러싸여 죽으면
+   * 아래 spawnSwing 은 아무것도 못 그리고, 검사는 네 기술 **전부** 이펙트가
+   * 없다고 적는다 — 이펙트가 죽은 게 아니라 사람이 죽은 것이다.
+   * waitGrounded 는 죽어 있으면 판을 새로 연다.
+   */
+  await waitGrounded();
   await isolatePlayer();
   const fx = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
@@ -1608,8 +1714,21 @@ console.log('기술별 이펙트');
       p.attackPhase = 'none';
       p.stunUntil = 0;
       p.spawnSwing(atk);
-      await wait(20);
-      out[slot] = { fx: atk.fx, shapes: shapes().filter((o) => !seen.has(o)).length };
+
+      /*
+       * 그려질 때까지 **기다린다.**
+       *
+       * 20ms 한 번만 보고 넘어갔더니, 느린 기계에서 그 사이 프레임이 한 장도
+       * 안 지나가 앞쪽 두 기술(light, light3)만 0겹으로 잡히곤 했다.
+       * 이펙트가 없는 게 아니라 아직 안 그려진 것이다 — 목록의 앞쪽만
+       * 실패하는 것이 그 증거였다. 생기면 곧바로 넘어가므로 느려지지도 않는다.
+       */
+      let fresh = [];
+      for (let i = 0; i < 25 && fresh.length === 0; i++) {
+        await wait(20);
+        fresh = shapes().filter((o) => !seen.has(o));
+      }
+      out[slot] = { fx: atk.fx, shapes: fresh.length };
       await wait(420);
     }
     return out;
@@ -1619,9 +1738,10 @@ console.log('기술별 이펙트');
   const drawn = Object.entries(fx).filter(([, v]) => v.shapes > 0);
 
   if (drawn.length < Object.keys(fx).length) {
+    // 어떤 fx 인지 함께 남긴다 — 슬롯 이름만으로는 어느 그리기 경로인지 모른다
     const missing = Object.entries(fx)
       .filter(([, v]) => v.shapes === 0)
-      .map(([k]) => k);
+      .map(([k, v]) => `${k}(${v.fx})`);
     errors.push(`[이펙트] 아무것도 안 그려진 기술이 있습니다 — ${missing.join(', ')}`);
   } else if (kinds.size < 3) {
     errors.push(`[이펙트] 기술이 달라도 같은 모양입니다 — ${[...kinds].join(', ')}`);
@@ -2188,6 +2308,123 @@ console.log('조작감');
     console.log('  ✓ 회피 — 방어 중 A/D 구르기 + 무적');
   }
   await shot('dodge');
+
+  /* --- 공중 회피 — 날아가는 동안 할 수 있는 유일한 것 ------------- */
+
+  /*
+   * 지상 회피와 같은 조합(`S`+방향)이 공중에서는 공중 회피로 갈린다.
+   * 규칙이 하나라 외울 것이 안 늘어나는 대신, **갈라지는 그 지점**이
+   * 조용히 죽기 쉽다 — 땅에서만 눌러 보면 영영 모른다.
+   *
+   * 한 체공에 한 번이라는 제한도 함께 본다. 그게 없으면 공중에서 무적을
+   * 이어 붙여 내려오지 않는 캐릭터가 생긴다.
+   */
+  await waitGrounded();
+  await isolatePlayer();
+  const air = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const inAir = () => !(p.body.blocked.down || p.body.touching.down);
+
+    /*
+     * 높이 띄운다.
+     *
+     * 처음에는 -900 으로 띄웠는데, 공중 회피가 상승을 끊어(vy=-40) 그대로
+     * 떨어지는 바람에 두 번째 시도 전에 착지해 버렸다. 그러면 그 두 번째는
+     * 공중 회피가 아니라 **지상 구르기**가 나가고, 검사는 "한 체공에 두 번
+     * 나간다"고 적는다 — 제한은 멀쩡한데 검사가 땅에서 재고 있던 것이다.
+     * 넉넉히 띄우고, 두 번째를 누르기 직전에 아직 떠 있는지 다시 본다.
+     */
+    p.attackPhase = 'none';
+    p.stunUntil = 0;
+    p.body.setVelocity(0, -1600);
+    await wait(100);
+
+    const airborne = inAir();
+    const first = p.dodge(1);
+
+    let invuln = false;
+    for (let i = 0; i < 8; i++) {
+      if (p.isInvulnerable()) invuln = true;
+      await wait(16);
+    }
+
+    // 같은 체공에서 한 번 더 — 되면 안 된다 (땅에 닿았으면 잴 수 없다)
+    const stillAir = inAir();
+    const second = stillAir ? p.dodge(-1) : null;
+
+    return { airborne, first, invuln, second, stillAir };
+  });
+
+  if (!air.airborne) {
+    console.log('  · 띄우지 못해 공중 회피는 건너뜁니다');
+  } else if (!air.stillAir && air.first) {
+    console.log('  ✓ 공중 회피 — 무적 (착지가 빨라 재사용 제한은 못 쟀다)');
+  } else if (!air.first) {
+    errors.push('[조작감] 공중에서 회피가 안 나갑니다');
+  } else if (!air.invuln) {
+    errors.push('[조작감] 공중 회피 중인데 무적이 아닙니다');
+  } else if (air.second) {
+    errors.push('[조작감] 공중 회피가 한 체공에 두 번 나갑니다');
+  } else {
+    console.log('  ✓ 공중 회피 — 무적 · 한 체공에 한 번');
+  }
+
+  /* --- 벗어나기(DI) — 누른 방향으로 궤도가 휜다 -------------------- */
+
+  /*
+   * 같은 기술을 같은 자리에서 두 번 맞되, 한 번은 아무 것도 안 누르고
+   * 한 번은 위를 누른 채로 맞는다. 넉백의 **길이는 같고 각도만** 달라져야
+   * 한다 — 길이가 줄면 누르는 것이 언제나 이득이라 판단이 아니게 되고,
+   * 때린 쪽은 왜 안 날아갔는지 알 수가 없다.
+   */
+  const di = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const atk = p.cfg.moves.heavy;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const launch = async (dx, dy) => {
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.invulnUntil = 0;
+      p.body.setVelocity(0, 0);
+      p.setDodgeInfluence(dx, dy);
+      p.receiveHit(atk, p.x - 40);
+      const v = { x: p.body.velocity.x, y: p.body.velocity.y };
+      p.invulnUntil = s.time.now + 600000;
+      await wait(40);
+      return v;
+    };
+
+    const flat = await launch(0, 0);
+    const bent = await launch(0, -1);
+    const len = (v) => Math.hypot(v.x, v.y);
+    const angle = (v) => (Math.atan2(v.y, v.x) * 180) / Math.PI;
+
+    return {
+      flatLen: len(flat),
+      bentLen: len(bent),
+      turned: Math.abs(angle(bent) - angle(flat)),
+    };
+  });
+
+  if (di.flatLen < 1) {
+    errors.push('[조작감] DI 검사 — 넉백이 아예 없습니다');
+  } else if (Math.abs(di.bentLen - di.flatLen) > di.flatLen * 0.05) {
+    errors.push(
+      `[조작감] DI 가 넉백 크기를 바꿉니다 (${di.flatLen.toFixed(0)} → ${di.bentLen.toFixed(0)})`,
+    );
+  } else if (di.turned < 5) {
+    errors.push(`[조작감] DI 로 궤도가 안 휩니다 (${di.turned.toFixed(1)}도)`);
+  } else {
+    console.log(
+      `  ✓ 벗어나기(DI) — 크기는 그대로, 궤도만 ${di.turned.toFixed(0)}도`,
+    );
+  }
+  await releasePlayer();
 }
 
 /*

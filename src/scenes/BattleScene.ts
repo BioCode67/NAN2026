@@ -1895,15 +1895,24 @@ export class BattleScene extends Phaser.Scene {
      * 전부다. 빠져나가는 선택지가 있어야 공격하는 쪽도 읽을 것이 생긴다.
      */
     const wantGuard = down && onGround;
+    /*
+     * 회피 조합키는 지상·공중 모두 `S` 다.
+     *
+     * 공중에는 방어가 없지만 **회피는 있다.** 규칙을 "S를 누르고 방향이면
+     * 회피"로 하나로 두면 외울 것이 안 늘어난다 — 땅에서는 구르기가,
+     * 공중에서는 공중 회피가 나갈 뿐이다. dodge() 가 발이 땅에 있는지 보고
+     * 알아서 갈라 준다.
+     */
+    const dodgeMod = down;
     let dodged = false;
-    if (wantGuard) {
+    if (dodgeMod) {
       if (tapLeft) dodged = p.dodge(reversed ? 1 : -1);
       else if (tapRight) dodged = p.dodge(reversed ? -1 : 1);
       else if (tapJump) dodged = p.dodge(0);
     }
 
     /* A/D 더블탭 → 대시 (방어 중에는 구르기가 먼저다) */
-    if (!wantGuard) {
+    if (!dodgeMod) {
       if (tapLeft && this.checkDoubleTap(tap, -1)) p.dash(-1);
       if (tapRight && this.checkDoubleTap(tap, 1)) p.dash(1);
     }
@@ -1911,8 +1920,8 @@ export class BattleScene extends Phaser.Scene {
     /* 조작 반전 룰이 걸려 있으면 좌우가 뒤집힌다 */
     p.moveHorizontal(heldWorld);
 
-    // 방어 중 점프는 회피로 쓰이므로 여기서는 뛰지 않는다
-    if (tapJump && !wantGuard) p.jump();
+    // S를 누르고 있을 때의 점프는 회피다 — 지상이든 공중이든 여기서는 안 뛴다
+    if (tapJump && !dodgeMod) p.jump();
     /*
      * 점프 버튼을 떼면 상승이 잘린다 (숏홉).
      * 짧게 누르면 낮게, 길게 누르면 높게 — 같은 버튼에 두 선택지가 생긴다.
@@ -1950,6 +1959,17 @@ export class BattleScene extends Phaser.Scene {
 
     p.setGuard(wantGuard && !dodged && !p.isDodging());
     if (down && !onGround) p.fastFall();
+
+    /*
+     * 지금 누르고 있는 방향을 적어 둔다 — 맞는 순간 이것으로 궤도가 휜다(DI).
+     *
+     * 매 프레임 적는 이유는, 맞는 순간이 언제일지 모르기 때문이다. 피격은
+     * 상대의 판정이 정하는 것이라 이쪽에서는 미리 알 수 없다.
+     * 위/아래는 방어·급강하와 같은 키를 쓰지만, 여기서는 "어디로 벗어나려
+     * 하는가"로만 읽는다 — 한 손가락이 두 가지 뜻을 갖는 것이 아니라
+     * 누르고 있는 방향이 곧 벗어나려는 방향이라 자연스럽다.
+     */
+    p.setDodgeInfluence(heldWorld, up ? -1 : down ? 1 : 0);
   }
 
   /**

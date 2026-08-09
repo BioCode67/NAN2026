@@ -2375,6 +2375,12 @@ console.log('기질 전용기');
       return false;
     };
 
+    /** 연달아 잴 때 "떠 있음"을 유지한다 — 대시가 몸을 옮겨 놓기 때문 */
+    const lift = () => {
+      p.body.blocked.down = false;
+      p.body.touching.down = false;
+    };
+
     /* --- 1. 활공 급습 -------------------------------------------- */
     /*
      * 뜬 것을 확인한 **뒤부터는** 한 프레임도 흘리지 않는다. 활공 판정은
@@ -2410,32 +2416,32 @@ console.log('기질 전용기');
     };
     p.jumpHeld = false;
 
-    /* --- 2. 표류 공중 대시 ---------------------------------------- */
+    /* --- 2. 공중 대시 — 모두 한 번, 표류만 두 번 ------------------- */
     /*
      * 대시 쿨다운은 매번 손으로 되돌린다. 되돌리지 않으면 두 번째가
-     * "한 체공에 한 번" 때문이 아니라 쿨다운 때문에 막히고, 그러면 이 검사는
+     * "한 체공에 몇 번" 때문이 아니라 쿨다운 때문에 막히고, 그러면 이 검사는
      * 아무것도 확인하지 못한 채 통과한다.
      */
-    p.cfg.move = 'drift';
-    clearAttack();
-    await goAirborne(200, 100);
-    p.airDashed = false;
-    p.dashReadyAt = 0;
-    const drift1 = p.dash(1);
-    p.dashReadyAt = 0;
-    p.dashUntil = 0;
-    const drift2 = p.dash(1);
+    const airDashRun = async (trait, times) => {
+      p.cfg.move = trait;
+      clearAttack();
+      await goAirborne(200, 100);
+      p.airDashes = 0;
+      const got = [];
+      for (let i = 0; i < times; i++) {
+        p.dashReadyAt = 0;
+        p.dashUntil = 0;
+        lift();
+        got.push(p.dash(1));
+      }
+      return got;
+    };
 
-    /* 자원도 기질도 없으면 공중에서는 대시가 아예 없다 */
-    p.cfg.move = 'plain';
-    clearAttack();
-    await goAirborne(200, 100);
-    p.airDashed = false;
-    p.dashReadyAt = 0;
-    p.dashUntil = 0;
+    // 부스터(자원 대시)가 섞이면 횟수가 아니라 자원을 재게 된다
     const wasStacks = p.sigStacks;
     p.sigStacks = 0;
-    const plainAirDash = p.dash(1);
+    const plainDashes = await airDashRun('plain', 2);
+    const driftDashes = await airDashRun('drift', 3);
     p.sigStacks = wasStacks;
 
     /* --- 3. 벽 차기 반격 ------------------------------------------ */
@@ -2515,14 +2521,13 @@ console.log('기질 전용기');
     p.cfg.move = was;
     p.body.checkCollision.down = true;
     p.setJumpHeld(false);
-    p.airDashed = false;
+    p.airDashes = 0;
     p.dashReadyAt = 0;
     return {
       dive,
       plainAir,
-      drift1,
-      drift2,
-      plainAirDash,
+      plainDashes,
+      driftDashes,
       kicked,
       counter,
       after,
@@ -2549,12 +2554,14 @@ console.log('기질 전용기');
     errors.push(
       `[전용기] 급습이 더 안 아픕니다 — ${only.dive.damage} vs ${only.plainAir.damage}`,
     );
-  } else if (!only.drift1) {
-    errors.push('[전용기] 표류가 공중 대시를 못 합니다');
-  } else if (only.drift2) {
-    errors.push('[전용기] 표류의 공중 대시가 한 체공에 두 번 나갑니다 (대가가 없습니다)');
-  } else if (only.plainAirDash) {
-    errors.push('[전용기] 자원도 기질도 없는데 공중 대시가 됩니다 (전용기가 아닙니다)');
+  } else if (!(only.plainDashes[0] && !only.plainDashes[1])) {
+    errors.push(
+      `[전용기] 공중 대시가 한 체공에 한 번이 아닙니다 — ${JSON.stringify(only.plainDashes)}`,
+    );
+  } else if (!(only.driftDashes[0] && only.driftDashes[1] && !only.driftDashes[2])) {
+    errors.push(
+      `[전용기] 표류의 공중 대시가 두 번이 아닙니다 — ${JSON.stringify(only.driftDashes)}`,
+    );
   } else if (!only.kicked) {
     errors.push('[전용기] 벽 차기가 발동하지 않아 반격을 잴 수 없습니다');
   } else if (only.counter.phase !== 'active') {
@@ -2576,7 +2583,7 @@ console.log('기질 전용기');
     console.log(
       `  ✓ 활공 급습 (낙하 ${only.plainAir.vy}→${only.dive.vy}, ` +
         `${only.plainAir.damage}→${only.dive.damage}) · ` +
-        `표류 공중 대시 1회 한정 · ` +
+        `공중 대시 기본 1회 · 표류 2회 · ` +
         `벽 차기 반격 ${only.after.damage}→${only.counter.damage} · ` +
         `표준 차지 ${only.chargeOther}→${only.chargePlain}`,
     );
@@ -2663,17 +2670,17 @@ console.log('봇 기질');
     b.currentAttack = null;
     b.setPosition(foe.x - 400, foe.y - 100);
     b.body.setVelocity(0, 100);
-    b.airDashed = false;
+    b.airDashes = 0;
     b.dashReadyAt = 0;
     b.dashUntil = 0;
     lift();
     ai.tickTrait(foe, now);
-    const drifts = b.airDashed;
+    const drifts = b.airDashes > 0;
 
     b.cfg.move = was;
     b.body.checkCollision.down = true;
     b.setJumpHeld(false);
-    b.airDashed = false;
+    b.airDashes = 0;
     return { hangs, dives, drifts };
   });
 

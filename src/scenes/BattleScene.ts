@@ -34,6 +34,15 @@ const NET_SEND_MS = 33;
 const QUIET_SEAT_MS = 4000;
 /** 조용한 자리를 얼마나 자주 살피는가 */
 const QUIET_CHECK_MS = 1000;
+/**
+ * 이만큼 지나면 서든데스 — 전원의 주가가 초당 1%씩 흘러내린다.
+ *
+ * 2분 30초는 보통 판이 이미 끝나 있는 시간이다. 여기 걸리는 판은
+ * "둘 다 안 다가가는" 판뿐이고, 그 판이 바로 마감이 필요한 판이다.
+ */
+const SUDDEN_DEATH_MS = 150000;
+/** 서든데스 초당 하락폭 (%) */
+const SUDDEN_DEATH_DRAIN = 1;
 import type { StageConfig, StageId } from '../config/stages';
 import { CHARACTERS } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
@@ -268,6 +277,11 @@ export class BattleScene extends Phaser.Scene {
   private netKos: number[][] = [];
   /** 마지막 타격의 리듬 판정 번호 — damageHook 이 쓰고 combat:hit 수집기가 읽는다 */
   private netJudge = -1;
+  /** 서든데스 발동 여부 + 다음 하락 틱 시각 */
+  private suddenDeath = false;
+  private sdNextTickAt = 0;
+  /** 서든데스 화면 가장자리 붉은 테 */
+  private sdVignette?: Phaser.GameObjects.Rectangle;
   /** 참가자 쪽 — 회선으로 미리 알게 된 격추자 (자리번호). setExact 의 ko 가 쓴다 */
   private remoteKillers = new Map<number, number>();
   /** 회선이 끊겼을 때 한 번만 알린다 */
@@ -309,6 +323,16 @@ export class BattleScene extends Phaser.Scene {
    * 리더를 둔다. 키보드와 패드는 합집합이다 — 어느 쪽을 눌러도 통하므로
    * 설정할 것도, 고를 것도 없다.
    */
+  /**
+   * 인원을 따라가는 줌 (격추 펀치는 빠져 있다).
+   *
+   * cam.zoom 을 그대로 읽으면 안 된다 — 펀치가 얹힌 값이라, 그것을 기준으로
+   * 다시 보간하면 펀치가 따라가는 줌 자체를 끌고 다닌다.
+   */
+  private baseZoom = 1;
+  /** 격추 순간의 카메라 펀치 세기 (0~1) — 따라가는 줌 위에 배수로 얹힌다 */
+  private zoomPunch = 0;
+
   private padReaders: PadReader[] = [];
   /** 스타트 버튼 — 일시정지·다음 상대. 전투 조작과 갈라 둔다 */
   private padMenu = new PadMenu();
@@ -388,6 +412,14 @@ export class BattleScene extends Phaser.Scene {
     this.netHits = [];
     this.netKos = [];
     this.remoteKillers = new Map();
+    // 씬 인스턴스는 재사용된다 — 앞 판의 파괴된 표시물을 들고 있으면 안 된다
+    this.killFeed = [];
+    this.controlHints = [];
+    this.hintsFolded = false;
+    this.netHealthText = undefined;
+    this.suddenDeath = false;
+    this.sdNextTickAt = 0;
+    this.sdVignette = undefined;
     this.leaderId = '';
     this.leaderAnnouncedAt = 0;
 
@@ -1133,6 +1165,9 @@ export class BattleScene extends Phaser.Scene {
             Math.max(0, HIT_REACTION_ORDER.indexOf(victim?.getHitReaction() ?? 'jab')),
             // 리듬 판정 번호 (-1 = 리듬 배틀 아님)
             this.netJudge,
+            // 연타 카운터 — 참가자 화면에도 "N HIT · 가즈아!"가 떠야 한다
+            this.fighters.indexOf(attacker ?? this.player),
+            this.combat.getCombo(e.attackerId),
           ]);
           this.netJudge = -1;
         }),
@@ -1246,6 +1281,7 @@ export class BattleScene extends Phaser.Scene {
         time >= g.readyAt ? 1 : 0,
       ]);
     }
+    if (this.suddenDeath) snap.sd = 1;
     if (!this.battleActive) {
       const alive = this.fighters.findIndex((f) => f.alive);
       snap.over = alive;
@@ -1301,10 +1337,50 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** 게스트 — 받은 모습을 그대로 그린다 */
+  /** 마지막 스냅샷이 도착한 시각 (참가자) — 회선 상태 표시가 본다 */
+  private lastSnapRecvAt = 0;
+  private netHealthText?: Phaser.GameObjects.Text;
+
+  /**
+   * 회선 상태 표시 (참가자 화면 오른쪽 위).
+   *
+   * 온라인에서 화면이 굳으면 사람은 자기 탓부터 한다 — "내가 뭘 잘못
+   * 눌렀나". 스냅샷이 끊긴 지 얼마나 됐는지를 화면이 말해 주면, 게임
+   * 문제와 회선 문제를 사람이 구별할 수 있다.
+   */
+  private updateNetHealth(time: number): void {
+    if (!this.netHealthText) {
+      this.netHealthText = this.add
+        .text(GAME.WIDTH - 14, 12, '', {
+          fontFamily: GAME.FONT,
+          fontSize: '13px',
+          fontStyle: 'bold',
+        })
+        .setOrigin(1, 0)
+        .setDepth(DEPTH.HUD + 1)
+        .setScrollFactor(0);
+      this.netHealthText.setStroke('#0b1020', 4);
+      this.lastSnapRecvAt = time;
+    }
+
+    const gap = time - this.lastSnapRecvAt;
+    if (gap < 400) {
+      // 정상 — 조용히 있는다. 초록 점을 계속 띄우면 그것도 소음이다
+      this.netHealthText.setText('');
+    } else if (gap < 2000) {
+      this.netHealthText.setText('📶 회선 지연…').setColor('#facc15');
+    } else {
+      this.netHealthText
+        .setText(`📶 연결이 끊긴 것 같습니다 (${Math.floor(gap / 1000)}초)`)
+        .setColor('#ef4444');
+    }
+  }
+
   private applySnapshot(snap: NetSnapshot): void {
     // 늦게 도착한 옛 상태는 버린다 (되감기면 캐릭터가 뒤로 튄다)
     if (snap.n <= this.netSeq) return;
     this.netSeq = snap.n;
+    this.lastSnapRecvAt = this.time.now;
 
     /* 유령 — 자리와 "던질 수 있는가"만 받는다 */
     for (const [slot, x, ready] of snap.gh ?? []) {
@@ -1385,10 +1461,21 @@ export class BattleScene extends Phaser.Scene {
       // 리듬 배틀 판정 — 호스트 시계로 판정된 것을 그대로 띄운다
       const judge = judgeAt(h[6] ?? -1);
       if (judge) this.rhythm.showJudge(h[0]!, h[1]!, judge);
+      // 연타 카운터 — 호스트가 센 수 그대로
+      this.combat.playRemoteCombo(this.fighters[h[7] ?? -1], h[8] ?? 0);
     }
     this.orbs.applyRemote(snap.orb, this.time.now);
     this.items.applyRemote(snap.item ?? []);
     this.projectiles.applyRemote(snap.pj ?? []);
+
+    // 서든데스 — 하락 자체는 setExact 로 오고, 여기서는 연출만 켠다
+    if (snap.sd && !this.suddenDeath) {
+      this.suddenDeath = true;
+      this.announce('⏰ 서든데스 — 전원 주가가 흘러내린다!', '#ef4444', 2400);
+      sound.play('finisher');
+      this.startSdVignette();
+      sound.setIntensity(1);
+    }
 
     // 전적 주입은 결과 화면을 세우기 전에 — 표가 0으로 굳은 뒤에는 늦다
     snap.stat?.forEach((row, i) => {
@@ -1529,6 +1616,62 @@ export class BattleScene extends Phaser.Scene {
     for (const slot of net.quietSlots(QUIET_SEAT_MS)) {
       net.dropSlot(slot, '소식이 끊겼습니다.');
     }
+  }
+
+  /**
+   * 서든데스 — 판이 이만큼 지나면 전원의 주가가 흘러내리기 시작한다.
+   *
+   * ── 왜 필요한가 ────────────────────────────────────────────────
+   * 신중한 둘이 남으면 판이 한없이 길어진다. 서로 다가가지 않는 것이
+   * 항상 안전하기 때문이다 — 특히 온라인에서 그렇다. 시간이 지나면
+   * 버티는 쪽이 반드시 지게 되어 있어야, 남은 판이 마감을 향해 조여든다.
+   *
+   * 흘러내리는 주가는 "지속 피해"가 아니라 **마감**이다. 맞아서 깎이는
+   * 것과 달리 누구의 전적에도 안 잡히고, 전원이 똑같이 잃으므로 유불리를
+   * 바꾸지 않는다 — 단지 시간을 무기로 쓰는 선택지를 지운다.
+   */
+  private tickSuddenDeath(time: number): void {
+    if (!this.battleActive || this.prompting) return;
+
+    if (!this.suddenDeath) {
+      if (this.battleActiveSince === 0) return;
+      if (time - this.battleActiveSince < SUDDEN_DEATH_MS) return;
+
+      this.suddenDeath = true;
+      this.sdNextTickAt = time;
+      this.announce('⏰ 서든데스 — 전원 주가가 흘러내린다!', '#ef4444', 2400);
+      sound.play('finisher');
+      this.startSdVignette();
+      // 곡도 최고 단계로 — 귀로도 "이제 끝이 온다"가 들려야 한다
+      sound.setIntensity(1);
+      return;
+    }
+
+    if (time < this.sdNextTickAt) return;
+    this.sdNextTickAt = time + 1000;
+    for (const f of this.fighters) {
+      if (f.alive) this.stock.add(f.fighterId, -SUDDEN_DEATH_DRAIN);
+    }
+  }
+
+  /** 서든데스 표시 — 화면 가장자리가 붉게 고동친다 (호스트·참가자 공통) */
+  private startSdVignette(): void {
+    if (this.sdVignette) return;
+    this.sdVignette = this.add
+      .rectangle(0, 0, GAME.WIDTH, GAME.HEIGHT)
+      .setOrigin(0)
+      .setDepth(DEPTH.HUD - 2)
+      .setScrollFactor(0)
+      .setFillStyle(0x000000, 0)
+      .setStrokeStyle(26, 0xef4444, 0.28);
+    this.tweens.add({
+      targets: this.sdVignette,
+      alpha: { from: 1, to: 0.35 },
+      duration: 640,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
   }
 
   /**
@@ -1780,6 +1923,7 @@ export class BattleScene extends Phaser.Scene {
     kb.on('keydown-SPACE', () => this.startNextRound());
     kb.on('keydown-ESC', () => this.leaveToSelect());
     kb.on('keydown-P', () => this.togglePause());
+    kb.on('keydown-F1', () => this.toggleControlHints());
     kb.on('keydown-M', () => {
       const muted = sound.toggleMute();
       this.muteLabel.setText(muted ? '🔇 M' : '🔊 M');
@@ -2140,7 +2284,9 @@ export class BattleScene extends Phaser.Scene {
      * 판이 끝난 뒤의 카메라 위치는 아무 정보도 아니므로 원점으로 되돌린다.
      */
     if (this.resultShown) {
-      this.applyZoom(1);
+      this.baseZoom = 1;
+      this.zoomPunch = 0;
+      this.applyZoom();
       cam.setScroll(0, 0);
       return;
     }
@@ -2199,10 +2345,11 @@ export class BattleScene extends Phaser.Scene {
      * 당기는 것보다 물러나는 것을 조금 더 빠르게 둔다 — 늦게 물러나면
      * 누군가 화면 밖에 잠깐 머물게 되고, 그 순간은 게임이 아니라 추측이 된다.
      */
-    const zoomIn = wantZoom > cam.zoom;
+    const zoomIn = wantZoom > this.baseZoom;
     const zt = 1 - Math.pow(zoomIn ? CAMERA.ZOOM_IN_EASE : CAMERA.ZOOM_OUT_EASE, delta / 1000);
-    const zoom = Phaser.Math.Linear(cam.zoom, wantZoom, zt);
-    this.applyZoom(zoom);
+    const zoom = Phaser.Math.Linear(this.baseZoom, wantZoom, zt);
+    this.baseZoom = zoom;
+    this.applyZoom();
 
     /*
      * 좌우 한계는 **보이는 폭**으로 잡는다.
@@ -2227,17 +2374,22 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * 줌을 걸고, HUD 를 그만큼 거꾸로 줄여 제자리에 붙여 둔다.
+   * 지금의 줌(따라가는 줌 × 격추 펀치)을 걸고, HUD 를 그만큼 거꾸로 줄인다.
    *
    * scrollFactor 0 인 것은 화면 좌표 p 를 (p - c)·z + c 자리에 그린다
    * (c = 화면 중앙). 그러니 컨테이너를 1/z 로 줄이고 c - c/z 로 옮기면
    * 자식들이 정확히 원래 자리에 온다 — 카메라를 하나 더 두지 않아도 된다.
    *
+   * 두 줌을 **곱해서** 한 군데서 거는 이유가 이 되돌리기다. 두 곳에서 따로
+   * setZoom 을 부르면 나중에 부른 쪽이 앞엣것을 지우고, HUD 되돌리기는
+   * 그중 한쪽 값만 보고 어긋난다.
+   *
    * hudLayer 밖에 있는 화면 고정 글자(중앙 안내·격추 도장)는 일부러
    * 그냥 둔다. 둘 다 화면 한가운데 잠깐 떴다 사라지는 것이라, 당긴 판에서
    * 조금 크게 뜨는 편이 오히려 그 순간을 강조한다.
    */
-  private applyZoom(zoom: number): void {
+  private applyZoom(): void {
+    const zoom = this.baseZoom * (1 + CAMERA.KO_PUNCH * this.zoomPunch);
     const cam = this.cameras.main;
     if (Math.abs(cam.zoom - zoom) > 0.0005) cam.setZoom(zoom);
 
@@ -2275,6 +2427,92 @@ export class BattleScene extends Phaser.Scene {
    *     궁금한 것이 그거다. "상장폐지!"만으로는 내 공이었는지 알 수 없다.
    *  3. **남은 인원을 알린다** — 판이 어디까지 왔는지가 곧 긴장이다.
    */
+  /** 오른쪽 위에 쌓이는 격추 기록 */
+  private killFeed: Phaser.GameObjects.Text[] = [];
+  /** 상단 조작 안내 두 줄 — 몇 초 뒤 접힌다 (F1 로 다시 편다) */
+  private controlHints: Phaser.GameObjects.Text[] = [];
+  private hintsFolded = false;
+
+  /** 조작 안내를 접는다 — 지우지 않고 아주 옅게 남긴다 */
+  private fadeControlHints(): void {
+    if (this.hintsFolded || !this.controlHints.length) return;
+    this.hintsFolded = true;
+    this.tweens.add({
+      targets: this.controlHints.filter((h) => h.active),
+      alpha: 0,
+      y: '-=6',
+      duration: 500,
+      ease: 'Quad.easeIn',
+    });
+  }
+
+  /** F1 — 조작 안내를 다시 편다 (한 번 더 누르면 접는다) */
+  private toggleControlHints(): void {
+    const live = this.controlHints.filter((h) => h.active);
+    if (!live.length) return;
+    const show = this.hintsFolded;
+    this.hintsFolded = !show;
+    this.tweens.killTweensOf(live);
+    // 접을 때 위로 6px 올렸으므로 펼 때는 제자리로 되돌린다
+    live.forEach((h, i) => {
+      this.tweens.add({
+        targets: h,
+        alpha: show ? 1 : 0,
+        y: show ? 16 + i * 18 : h.y - 6,
+        duration: 220,
+        ease: 'Quad.easeOut',
+      });
+    });
+    // 다시 편 것은 잠시 뒤 알아서 접힌다 — 끄는 법을 또 외우게 하지 않는다
+    if (show) this.time.delayedCall(6000, () => this.fadeControlHints());
+  }
+
+  /**
+   * 킬 피드 — 누가 누구를 보냈는지가 화면 구석에 잠깐 남는다.
+   *
+   * 넷이 뒤엉킨 판에서는 가운데 배너를 놓치기 일쑤다. 놓친 사람도
+   * "아까 누가 누굴 보냈지?"를 구석에서 확인할 수 있어야 판의 흐름을
+   * 따라간다 — 난투 게임이 다들 이것을 두는 이유다.
+   */
+  private pushKillFeed(victim: BaseCharacter, killer: BaseCharacter | null): void {
+    const text = killer
+      ? `${killer.cfg.name}  ⚔  ${victim.cfg.name}`
+      : `${victim.cfg.name}  💥  자멸`;
+    const color = killer
+      ? `#${killer.cfg.colors.accent.toString(16).padStart(6, '0')}`
+      : '#ff8a8a';
+
+    const line = this.add
+      .text(GAME.WIDTH - 14, 36 + this.killFeed.length * 24, text, {
+        fontFamily: GAME.FONT,
+        fontSize: '14px',
+        color,
+        fontStyle: 'bold',
+      })
+      .setOrigin(1, 0)
+      .setDepth(DEPTH.HUD + 1)
+      .setScrollFactor(0)
+      .setAlpha(0);
+    line.setStroke('#0b1020', 4);
+
+    this.killFeed.push(line);
+    this.tweens.add({ targets: line, alpha: 1, x: '-=10', duration: 180 });
+    this.time.delayedCall(4200, () => {
+      this.tweens.add({
+        targets: line,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          line.destroy();
+          const at = this.killFeed.indexOf(line);
+          if (at >= 0) this.killFeed.splice(at, 1);
+          // 남은 줄을 위로 당긴다
+          this.killFeed.forEach((l, i) => (l.y = 36 + i * 24));
+        },
+      });
+    });
+  }
+
   private playKo(victim: BaseCharacter, killer: BaseCharacter | null): void {
     const left = this.fighters.filter((f) => f.alive).length;
 
@@ -2302,6 +2540,43 @@ export class BattleScene extends Phaser.Scene {
      * 가운데 배너만으로는 **어디서** 벌어진 일인지 안 보인다. 넷이 흩어져
      * 싸우는 판에서는 그 자리를 짚어 줘야 "저기서 터졌구나"가 된다.
      */
+    /*
+     * 카메라 펀치 — 상장폐지는 이 게임에서 가장 큰 사건이다.
+     * 흔들림만으로는 잦은 타격과 구별이 안 된다. 한 호흡 줌이 들어갔다
+     * 나오면 "방금 큰 일이 났다"가 몸으로 전달된다.
+     */
+    /*
+     * 펀치는 **지금 줌 위에 얹는다** (1 에서 시작하지 않는다).
+     *
+     * 카메라는 인원이 뭉치면 이미 당겨져 있다. 펀치가 절대값으로 1.09 를
+     * 써 버리면 당겨 있던 판에서는 오히려 **확 물러났다 돌아오는** 반대
+     * 연출이 되고, 끝나면서 1 로 스냅해 다음 프레임에 원래 줌으로 튄다.
+     * 배수로 얹고, 되돌리는 것은 세기(zoomPunch)를 0 으로 두는 것으로 한다.
+     *
+     * 트윈이 직접 applyZoom 을 부르는 이유는 히트스탑 때문이다 — 격추 순간엔
+     * 판이 멈춰 있어 updateCamera 가 안 돈다. 그래도 펀치는 보여야 한다.
+     */
+    const cam = this.cameras.main;
+    this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 130,
+      yoyo: true,
+      hold: 90,
+      ease: 'Quad.easeOut',
+      onUpdate: (t) => {
+        this.zoomPunch = this.resultShown ? 0 : (t.getValue() as number);
+        this.applyZoom();
+      },
+      onComplete: () => {
+        this.zoomPunch = 0;
+        this.applyZoom();
+      },
+    });
+    cam.shake(200, 0.012);
+
+    this.pushKillFeed(victim, killer);
+
     const label = this.add
       .text(victim.x, victim.y - 40, killer ? `${killer.cfg.name} KO!` : 'KO!', {
         fontFamily: GAME.FONT,
@@ -2741,6 +3016,20 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setScroll(0, 0);
 
     /*
+     * 킬 피드를 걷는다.
+     *
+     * 판 중에는 "누가 누구를 보냈는지"가 쓸모 있지만, 결과 화면에는 그
+     * 내용이 전적표에 이미 다 있다. 옅게 남은 글자가 오른쪽 위에 겹쳐 있으면
+     * 정보가 아니라 얼룩이다.
+     */
+    this.killFeed.forEach((l) => l.destroy());
+    this.killFeed = [];
+    this.netHealthText?.destroy();
+    this.netHealthText = undefined;
+    // 연타 카운터도 같은 이유로 걷는다 — 결과 위에 떠 있으면 얼룩이다
+    this.combat.clearComboLabels();
+
+    /*
      * 2인 대전에서는 "이겼다/졌다"가 성립하지 않는다.
      *
      * 사람이 둘이면 한 화면을 둘이 같이 본다. 한쪽 기준으로 "패배…"를
@@ -2968,7 +3257,12 @@ export class BattleScene extends Phaser.Scene {
     const top = this.stats.topDealer();
 
     const rowH = 42;
-    const y0 = 332;
+    /*
+     * 표 머리글이 연승 배지(y 288, 26px)와 겹쳐 있었다.
+     * 배지는 화면 가운데, KO 열도 거의 가운데라 글자가 그대로 포개졌다.
+     * 표를 한 줄만큼 내려 사이를 띄운다.
+     */
+    const y0 = 350;
     const left = GAME.WIDTH / 2 - 430;
 
     const header = ['', '준 피해', '맞은 피해', 'KO', '최고 주가', '가장 많이 쓴 기술'];
@@ -3009,10 +3303,18 @@ export class BattleScene extends Phaser.Scene {
        */
       const rowFrom = this.children.list.length;
 
-      // 내 줄만 배경을 깐다 — 넷 중 어느 줄이 나인지 한눈에 찾게
+      /*
+       * 내 줄만 배경을 깐다 — 넷 중 어느 줄이 나인지 한눈에 찾게.
+       *
+       * 화면 가운데 기준으로 깔았더니 이름 앞부분이 배경 밖으로 삐져나와
+       * "빌"만 배경 없이 뜨고 "게이츠맨"부터 배경 위에 놓였다. 글자 하나가
+       * 두 색으로 갈려 보인다. 배경은 **줄의 실제 내용**에 맞춘다.
+       */
       if (isPlayer) {
+        const bgX = left - 52;
         this.add
-          .rectangle(GAME.WIDTH / 2, y, 900, rowH - 6, f.cfg.colors.accent, 0.12)
+          .rectangle(bgX, y, left + colX[5]! + 210 - bgX, rowH - 6, f.cfg.colors.accent, 0.12)
+          .setOrigin(0, 0.5)
           .setDepth(DEPTH.OVERLAY + 1);
       }
 
@@ -3300,9 +3602,21 @@ export class BattleScene extends Phaser.Scene {
     label.setStroke('#0b1020', 9);
     this.announceLabel = label;
 
+    /*
+     * 긴 문장은 화면에 맞춰 줄인다.
+     *
+     * 58px 고정이라 "빌 게이츠맨 — 공매도 유령이 됐다 (← → 이동 · J 투하)"
+     * 같은 긴 안내가 **양쪽으로 잘려 나갔다.** 가운데 토막만 보이니
+     * 무슨 말인지도 모르고, 화면 밖으로 넘친 글자가 무대까지 가린다.
+     * 긴 소식일수록 중요한 소식이라 자르는 대신 줄이는 쪽이 맞다.
+     */
+    const maxW = GAME.WIDTH - 80;
+    const fit = label.width > maxW ? maxW / label.width : 1;
+    label.setScale(fit);
+
     this.tweens.add({
       targets: label,
-      scale: { from: 1.7, to: 1 },
+      scale: { from: fit * 1.7, to: fit },
       duration: 260,
       ease: 'Back.easeOut',
       onComplete: () => {
@@ -3505,7 +3819,23 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * 사람이 잡은 캐릭터의 발밑에 자리 색 고리를 붙인다.
+   *
+   * HUD 를 세우는 자리에서 함께 한다 — 자리 색의 출처가 한 곳이어야
+   * 화면마다 다른 색이 뜨는 일이 없다.
+   */
+  private markHumanSeats(): void {
+    for (const h of this.humans) {
+      const i = seatIndex(h.fighter);
+      if (i < 0) continue;
+      const hex = (SEAT_COLORS[i] ?? '#ffffff').replace('#', '');
+      h.fighter.markSeat(Number.parseInt(hex, 16));
+    }
+  }
+
   private buildHud(): void {
+    this.markHumanSeats();
     /*
      * HUD는 카메라를 따라 움직이면 안 된다.
      * 하나의 레이어 컨테이너에 담고 scrollFactor 0을 주면
@@ -3535,6 +3865,15 @@ export class BattleScene extends Phaser.Scene {
      * 배경이 밝은지 어두운지에 따라 색을 바꾸는 것보다, 글자마다 어두운
      * 테두리를 두르는 쪽이 어떤 그림 위에서도 통한다.
      */
+    /*
+     * 조작 안내는 **처음 몇 초만** 화면에 있는다.
+     *
+     * 두 줄이 상단을 상시 점유하고 있었다. 첫 판에는 꼭 필요한 정보지만,
+     * 아는 사람에게는 그때부터 끝까지 무대와 캐릭터를 가리는 띠일 뿐이다 —
+     * 실제로 화면 위 1/10 을 계속 먹고 있었다. 6초 뒤 옅게 접어 두고,
+     * 필요하면 F1 로 다시 편다.
+     */
+    const hints: Phaser.GameObjects.Text[] = [];
     const hint = (y: number, text: string, color: string) => {
       const label = ui(
         this.add
@@ -3546,6 +3885,7 @@ export class BattleScene extends Phaser.Scene {
           .setOrigin(0.5),
       );
       label.setStroke('#080d1a', 4);
+      hints.push(label);
       return label;
     };
 
@@ -3569,7 +3909,7 @@ export class BattleScene extends Phaser.Scene {
        */
       hint(
         16,
-        '1P   A/D 이동 · SPACE 점프 · S 방어 · J 약 · K 강 · L 스킬 · U 잡기 · AA/DD 대시',
+        '1P   A/D 이동 · SPACE 점프 · S 방어 · J 약 · K 강 · L 스킬 · U 잡기 · AA/DD 대시      (F1 : 이 안내)',
         '#38bdf8',
       );
       hint(
@@ -3580,7 +3920,7 @@ export class BattleScene extends Phaser.Scene {
     } else {
       hint(
         16,
-        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
+        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작 · F1 이 안내',
         '#8ea3cc',
       );
       hint(
@@ -3598,6 +3938,9 @@ export class BattleScene extends Phaser.Scene {
         SEAT_COLORS[2]!,
       );
     }
+
+    this.controlHints = hints;
+    this.time.delayedCall(6000, () => this.fadeControlHints());
 
     this.muteLabel = ui(
       this.add
@@ -3748,7 +4091,12 @@ export class BattleScene extends Phaser.Scene {
 
       const tierLabel = ui(
         this.add
-          .text(x + HUD_PANEL_W - 12, y + 30, '보통', {
+          /*
+           * 등급 글자는 주가 숫자 **아래로 확실히 내린다.**
+           * 22px 숫자가 y+5 에서 시작해 y+32 까지 내려오는데 여기가 y+30
+           * 이라 두 글자가 맞닿아 있었다 — "166%떡상 1단계"로 읽힌다.
+           */
+          .text(x + HUD_PANEL_W - 12, y + 34, '보통', {
             fontFamily: GAME.FONT,
             fontSize: '10px',
             color: '#cbd5e1',
@@ -3933,11 +4281,18 @@ export class BattleScene extends Phaser.Scene {
         hud.parts.forEach((o) =>
           (o as unknown as { setAlpha?: (a: number) => void }).setAlpha?.(0.32),
         );
-        const cx = hud.percent.x - HUD_PANEL_W / 2 + 12;
+        /*
+         * 도장은 패널 **아래쪽 절반**에 찍는다.
+         *
+         * 패널 가운데에 찍었더니 주가 숫자와 포개져 둘 다 안 읽혔다.
+         * 이름·숫자는 위쪽에, 바와 자원은 아래쪽에 있으므로 아래에 겹치는
+         * 편이 덜 가린다 — 어차피 죽은 사람의 게이지는 볼 일이 없다.
+         */
+        const cx = hud.percent.x - HUD_PANEL_W / 2 + 30;
         const stamp = this.add
-          .text(cx, hud.percent.y + HUD_PANEL_H / 2 - 4, '상장폐지', {
+          .text(cx, hud.percent.y + HUD_PANEL_H - 22, '상장폐지', {
             fontFamily: GAME.FONT,
-            fontSize: '21px',
+            fontSize: '19px',
             color: '#ef4444',
             fontStyle: 'bold',
           })
@@ -4166,6 +4521,8 @@ export class BattleScene extends Phaser.Scene {
        */
       this.gimmicks.update(time, scaled);
       this.rhythm.update(time);
+      this.combat.updateRemoteLabels(time);
+      this.updateNetHealth(time);
       this.updateHud();
       return;
     }
@@ -4189,6 +4546,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.reapQuietSeats(time);
+    this.tickSuddenDeath(time);
 
     // 판이 끝난 뒤에도 몇 번 더 보낸다 — 결과가 상대에게 닿아야 한다
     this.sendSnapshot(time);

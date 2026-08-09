@@ -8,6 +8,8 @@ import {
   resolveArtPath,
   jsonExists,
 } from '../config/artAssets';
+import { probeAudio } from '../config/audioAssets';
+import { sound } from '../systems/SoundSystem';
 import { GAME } from '../config/gameConfig';
 import { SHEET_DEFS, animKey, applyLayout, metaKey } from '../config/spriteSheets';
 import type { Pose, SheetMeta, SpriteSheetDef } from '../config/spriteSheets';
@@ -57,10 +59,25 @@ export class BootScene extends Phaser.Scene {
    * 대부분이다), 메타 역시 있는 것만 골라 걸어야 콘솔이 조용하다.
    */
   private async loadArt(): Promise<void> {
-    const [available, sheets] = await Promise.all([
+    /*
+     * 소리 파일도 그림과 같이 찾는다.
+     *
+     * 소리는 Phaser 로더를 안 태운다 — AudioContext 가 첫 사용자 입력
+     * 뒤에야 생기므로, 로더가 만든 것과 우리 ctx 가 서로 다른 세계에 있다.
+     * 바이트만 받아 두고 ctx 가 생기는 순간 디코드하는 편이 단순하다.
+     */
+    const [available, sheets, audio] = await Promise.all([
       probeArt([...ART_IMAGES, ...ART_STRIPS]),
       this.findSheets(),
+      probeAudio(),
     ]);
+
+    if (audio.bgm.length || audio.sfx.length) {
+      console.info(
+        `[Boot] 소리 파일 — 곡 ${audio.bgm.length}개 · 효과음 ${audio.sfx.length}개 (나머지는 합성)`,
+      );
+      void sound.loadFiles(audio.bgm, audio.sfx);
+    }
 
     // 확인하는 사이 씬이 내려갔다면(새로고침 등) 더 진행하지 않는다
     if (!this.scene.isActive()) return;

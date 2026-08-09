@@ -175,6 +175,17 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   remoteItemIcon = '';
   /** 꼭두각시 모드 — 시뮬레이션 없이 호스트가 보낸 것만 그린다 */
   private puppet = false;
+  /** 발밑 자리 고리 (사람이 잡은 캐릭터에만) */
+  private readonly seatRing: Phaser.GameObjects.Ellipse;
+
+  /**
+   * 이 캐릭터가 몇 번 자리의 사람인지 발밑에 표시한다.
+   * 색은 HUD·결과 화면과 같은 자리 색을 쓴다 — 화면마다 다르면 배울 것이 는다.
+   */
+  markSeat(color: number): void {
+    this.seatRing.setStrokeStyle(3, color, 0.9);
+    this.seatRing.setVisible(true);
+  }
 
   /** 온라인 참가자 화면에서 호출 — 이후 이 파이터는 그리기만 한다 */
   makePuppet(): void {
@@ -370,6 +381,24 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.shadow = scene.add
       .ellipse(x, STAGE.GROUND_Y + 4, 62, 14, 0x000000, 0.32)
       .setDepth(DEPTH.STAGE + 1);
+
+    /*
+     * 발밑 자리 고리 — 사람이 잡은 캐릭터에만 붙는다.
+     *
+     * ── 왜 필요한가 ──────────────────────────────────────────────
+     * 넷이 뒤엉키면 **화면에서 자기 캐릭터를 놓친다.** 자리 색은 HUD
+     * 패널 테두리에만 있었는데, 싸우는 동안 시선은 화면 가운데에 있지
+     * 아래 표에 있지 않다. 놓친 사람은 아무 데나 버튼을 누르게 되고,
+     * 그 순간부터 판이 재미없어진다.
+     *
+     * 그림자 위에 자리 색 고리를 겹치면 캐릭터가 겹쳐 서 있어도 발밑에서
+     * 갈린다. 봇에는 안 붙인다 — 넷 다 고리를 두르면 아무것도 안 가리킨다.
+     */
+    this.seatRing = scene.add
+      .ellipse(x, STAGE.GROUND_Y + 4, 74, 20)
+      .setDepth(DEPTH.STAGE + 2)
+      .setStrokeStyle(3, 0xffffff, 0.9)
+      .setVisible(false);
 
     /* 떡상 오라 — 가산 합성으로 어두운 배경 위에서 발광하게 한다 */
     this.aura = scene.add.circle(0, -4, 54, cfg.colors.accent, 0.3);
@@ -2264,6 +2293,16 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.shadow.setScale(1 - airGap * 0.5);
     this.shadow.setAlpha(0.32 * (1 - airGap * 0.75));
 
+    /*
+     * 자리 고리는 그림자를 따라간다. 공중에 뜨면 옅어지는 것도 같다 —
+     * 발밑 표시가 발에서 떨어져 있으면 오히려 헷갈린다.
+     */
+    if (this.seatRing.visible) {
+      this.seatRing.setPosition(this.x, groundY);
+      this.seatRing.setScale(1 - airGap * 0.5);
+      this.seatRing.setAlpha((0.75 - airGap * 0.5) * (this.alive ? 1 : 0));
+    }
+
     // 경직 중에는 게이지를 살짝 흔들어 피격 상태를 알린다
     this.gauge.x = time < this.stunUntil ? Phaser.Math.Between(-2, 2) : 0;
 
@@ -2893,6 +2932,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.auraTween?.stop();
     this.flameEmitter?.destroy();
     this.shadow.destroy();
+    this.seatRing.destroy();
     this.view.destroy();
     super.destroy(fromScene);
   }

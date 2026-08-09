@@ -926,6 +926,15 @@ console.log('앞뒤 커맨드');
  */
 console.log('대시 공격 두 갈래');
 {
+  /*
+   * 다른 블록과 같은 절차를 밟는다 — 판을 새로 열고, 땅을 딛고, 격리.
+   * 공중에서 재면 같은 입력이 공중기로 해석되어 "팝업 광고"가 나오는데,
+   * 그건 대시 갈래가 고장난 것이 아니라 지금 떠 있는 것이다.
+   */
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
   const dash = await page.evaluate(() => {
     const p = window.game.scene.getScene('Battle').player;
     return { j: p.cfg.moves.dashAttack.name, k: p.cfg.moves.dashSlide.name };
@@ -934,14 +943,20 @@ console.log('대시 공격 두 갈래');
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
     // 대시 중 상태를 만들어 두고 무엇으로 해석되는지 물어본다
-    p.dashUntil = s.time.now + 400;
+    p.dashUntil = s.time.now + 60000;
     const out = {
       j: p.resolveMove('light', 'neutral').name,
       k: p.resolveMove('heavy', 'neutral').name,
+      onGround: p.body.blocked.down || p.body.touching.down,
     };
     p.dashUntil = 0;
     return out;
   });
+  await releasePlayer();
+
+  if (!slots.onGround) {
+    errors.push('[대시] 땅을 딛지 못한 채로 쟀습니다 (격리 실패)');
+  }
 
   if (slots.j !== dash.j || slots.k !== dash.k) {
     errors.push(
@@ -1545,112 +1560,70 @@ console.log('공격 모션');
     if (!sp) return { why: '도형 아트라 스프라이트가 없습니다' };
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    const home = { x: sp.x, y: sp.y, sx: sp.scaleX, sy: sp.scaleY };
-
     /*
-     * 예비동작과 내지르기를 **한 번에** 잰다.
+     * 기준점은 **뷰가 실제로 쓰는 값**을 그대로 읽는다.
      *
-     * 한 시점을 찍지 않고 공격이 끝날 때까지 촘촘히 훑으며, 가장 뒤로 간
-     * 값(예비동작)과 가장 앞으로 간 값(내지르기)을 함께 남긴다.
-     *
-     * ── 왜 둘을 갈라 재면 안 되는가 ────────────────────────────────
-     * 처음에는 선딜 구간과 내지르는 구간을 따로 돌았다. 그러면 두 구간의
-     * **경계를 정확히 짚어야** 하는데, 검사용 브라우저는 초당 열 장이라
-     * 그 경계가 샘플 사이에 통째로 들어간다. 경계를 놓치면 앞 구간이 뒷
-     * 구간까지 먹어 치우고, 뒤 구간은 아무것도 못 재서 0.0px 을 적는다 —
-     * 실제로 선딜 검사를 촘촘하게 고쳤더니 이번엔 내지르기가 0.0px 이 됐다.
-     *
-     * 한 줄기로 훑으면 경계를 짚을 필요가 아예 없다. 최솟값과 최댓값은
-     * 어디서 갈리든 같은 값이다.
+     * 지금 그려져 있는 자리를 기준으로 삼으면 안 된다 — 앞 단계의 공격
+     * 트윈이 아직 날고 있으면 시작부터 어긋난 자리에서 재게 되고,
+     * "6px 당김"이 "0px"로 보인다. 모션 코드가 되돌아가는 자리(homeX)를
+     * 그대로 쓰면 그 어긋남이 원천적으로 없다.
      */
-    p.attackPhase = 'none';
-    p.stunUntil = 0;
-    /*
-     * 안 나갔으면 안 나갔다고 말한다.
-     *
-     * 여기서 그냥 넘어가면 아래 측정이 0 을 재고 "예비동작이 없다"고 적는다 —
-     * 예비동작은 멀쩡한데 칠 수 없는 상태였을 뿐인데, 원인과 증상이 안 닮아서
-     * 애먼 곳을 뒤지게 된다.
-     */
-    if (!p.attack('heavy', 'neutral')) {
-      return { why: '강공격이 시작되지 않았습니다 (칠 수 있는 상태가 아님)' };
-    }
-
-    let wind = { dx: 0, sy: 1 };
-    let out = { dx: 0, sx: 1, sy: 1 };
-    let sawAttack = false;
-    let samples = 0;
-    let startupSamples = 0;
-
-    for (let i = 0; i < 140; i++) {
-      await wait(16);
-      const dx = sp.x - home.x;
-      if (dx < wind.dx) wind = { dx, sy: sp.scaleY / home.sy };
-      if (dx > out.dx) {
-        out = { dx, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
-      }
-
-      if (p.attackPhase !== 'none') sawAttack = true;
-      /*
-       * 공격이 끝나면 멈춘다. 다만 **한 번이라도 공격 중인 것을 본 뒤에**
-       * 끝난 것으로 친다 — 첫 샘플이 공격이 시작되기 전에 떨어지면
-       * 시작도 안 한 것을 끝난 것으로 읽고 곧바로 빠져나온다.
-       */
-      else if (sawAttack) break;
-
-      samples++;
-      if (p.attackPhase === 'startup') startupSamples++;
-    }
-
-    /*
-     * 실패했을 때 들여다볼 것들을 함께 남긴다.
-     *
-     * 이 검사는 예비동작이 아주 작게(-0.0px) 잡히며 가끔 실패하는데, 그
-     * 원인을 아직 못 짚었다. 여기까지 좁혀 뒀다 — 내지르기(+22px)는 제대로
-     * 나오므로 트윈 경로 자체는 살아 있고, 예비동작 트윈만 거의 안 움직인
-     * 채 끝난다. 다음에 뜰 때 몇 장을 봤고 그중 몇 장이 선딜이었는지가
-     * 있으면 "샘플이 모자랐나"와 "트윈이 안 돌았나"를 가를 수 있다.
-     */
-    return {
-      wind,
-      out,
-      samples,
-      startupSamples,
-      startup: p.currentAttack?.startup ?? null,
-      move: p.lastMove,
+    const home = {
+      x: p.view.homeX ?? 0,
+      y: p.view.homeY,
+      sx: p.view.homeScaleX,
+      sy: p.view.homeScaleY,
     };
+
+    /*
+     * 공격이 실제로 나갔는지부터 확인한다.
+     * 잡힌 채·회피 중에 들어오면 attack() 이 조용히 거부되고, 그 뒤의
+     * 측정은 "0px 당김"이라는 그럴듯한 거짓을 만든다.
+     */
+    let fired = false;
+    for (let t = 0; t < 3 && !fired; t++) {
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.dodgeUntil = 0;
+      p.breakGrab();
+      fired = p.attack('heavy', 'neutral');
+      if (!fired) await wait(200);
+    }
+    if (!fired) return { why: '공격이 발동하지 않습니다 (상태 격리 실패)' };
+
+    /*
+     * 시간을 재지 않는다 — 트윈을 감아 놓고 잰다.
+     *
+     * 이 검사를 시간 기반으로 세 번 고쳐 썼고 세 번 다 다른 이유로 흔들렸다
+     * (프레임 델타 압축·짧은 창·이벤트 루프 정지). 예비동작 트윈은 attack()
+     * 안에서 **동기적으로** 등록되므로, 그 자리에서 붙잡아 원하는 지점으로
+     * 감으면 기계가 얼마나 느리든 같은 값이 나온다.
+     */
+    const tws = s.tweens.getTweensOf(sp);
+    if (!tws.length) return { why: '예비동작 트윈이 등록되지 않았습니다' };
+    tws.forEach((t) => t.seek(120));
+    const wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
+
+    /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
+    let out = { dx: 0, sx: 1, sy: 1 };
+    for (let i = 0; i < 30; i++) {
+      await wait(25);
+      if (sp.x - home.x > out.dx) {
+        out = { dx: sp.x - home.x, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
+      }
+    }
+    return { wind, out, move: p.lastMove };
   });
 
   if (motion.why) {
     console.log(`  · ${motion.why}`);
   } else {
-    /*
-     * "뒤로 갔는가"만 본다. 얼마나 갔는지는 이 환경에서 잴 수 없다.
-     *
-     * ── 왜 임계값이 0 인가 ─────────────────────────────────────────
-     * 처음에는 -1px 을 요구했는데 셋 중 하나꼴로 실패했다. 원인은 예비동작이
-     * 아니라 프레임 수였다. 헤드리스는 초당 다섯 장이라 선딜 165ms 가 서너
-     * 프레임에 끝나고, 예비동작 트윈이 끝까지 가는 그 프레임과 내지르기가
-     * 시작하는 프레임이 **같은 한 장**이다. 그래서 밖에서 볼 수 있는 최대치가
-     * 프레임 경계가 어디 걸리느냐에 따라 2px 도 되고 0.04px 도 된다.
-     * 실제 화면(60장)에서는 열 프레임에 걸쳐 6.6px 을 전부 지나간다.
-     *
-     * 이 검사가 지키려는 것은 "예비동작 데이터가 또 죽지 않았는가"이지
-     * 몇 px 인가가 아니다. 죽으면 트윈이 아예 안 돌아 정확히 0 이 나오므로,
-     * 0보다 작기만 하면 살아 있는 것이다. 크기는 로그에 남겨 두어
-     * 눈에 띄게 줄어들면 사람이 알아볼 수 있게 한다.
-     */
-    if (!(motion.wind.dx < 0)) {
+    if (!(motion.wind.dx < -1)) {
       errors.push(
-        `[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(2)}px` +
-          ` · ${motion.move} 선딜 ${motion.startup}ms` +
-          ` · 샘플 ${motion.samples}장 중 선딜 ${motion.startupSamples}장)`,
+        `[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(1)}px · ${motion.move})`,
       );
     } else {
-      console.log(
-        `  ✓ 예비동작 — 뒤로 ${(-motion.wind.dx).toFixed(1)}px 당긴다` +
-          ` (느린 화면에서 관측된 값 · 실제로는 더 크다)`,
-      );
+      console.log(`  ✓ 예비동작 — 뒤로 ${(-motion.wind.dx).toFixed(0)}px 당긴다`);
     }
 
     if (motion.out.dx < 8) {
@@ -1695,42 +1668,42 @@ console.log('기술별 이펙트');
     const p = s.player;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     /*
-     * 개수 차이가 아니라 **새로 생긴 것**을 센다.
+     * 만들어지는 순간에 센다 — 나중에 화면을 훑지 않는다.
      *
-     * 화면에는 타격 입자처럼 계속 생겼다 사라지는 도형이 있어서, 앞뒤 개수를
-     * 빼면 음수가 나오기도 한다. 부르기 전의 목록을 기억해 두고 그 뒤에
-     * 새로 들어온 것만 세면 정확하다.
+     * 이펙트는 스스로 사라진다(트윈이 끝나면 destroy). 그래서 표시 목록을
+     * 나중에 훑으면 "만들기 전"이나 "사라진 뒤"를 잡을 수 있고, 둘 다
+     * "안 그려졌다"로 보인다 — 실제로 그 거짓 실패가 여러 번 났다.
+     * 만드는 통로를 잠깐 가로채 세면 타이밍이 아예 변수에서 빠진다.
      */
-    const shapes = () =>
-      s.children.list.filter(
-        (o) => o.depth >= 20 && (o.type === 'Ellipse' || o.type === 'Arc'),
-      );
+    const origEllipse = s.add.ellipse.bind(s.add);
+    const origArc = s.add.arc.bind(s.add);
+    let made = 0;
+    s.add.ellipse = (...args) => {
+      made++;
+      return origEllipse(...args);
+    };
+    s.add.arc = (...args) => {
+      made++;
+      return origArc(...args);
+    };
 
     const out = {};
-    for (const slot of ['light', 'light3', 'heavy2', 'airHeavy']) {
-      const atk = p.cfg.moves[slot];
-      if (!atk) continue;
-      const seen = new Set(shapes());
-      p.attackPhase = 'none';
-      p.stunUntil = 0;
-      p.spawnSwing(atk);
-
-      /*
-       * 그려질 때까지 **기다린다.**
-       *
-       * 20ms 한 번만 보고 넘어갔더니, 느린 기계에서 그 사이 프레임이 한 장도
-       * 안 지나가 앞쪽 두 기술(light, light3)만 0겹으로 잡히곤 했다.
-       * 이펙트가 없는 게 아니라 아직 안 그려진 것이다 — 목록의 앞쪽만
-       * 실패하는 것이 그 증거였다. 생기면 곧바로 넘어가므로 느려지지도 않는다.
-       */
-      let fresh = [];
-      for (let i = 0; i < 25 && fresh.length === 0; i++) {
-        await wait(20);
-        fresh = shapes().filter((o) => !seen.has(o));
+    try {
+      for (const slot of ['light', 'light3', 'heavy2', 'airHeavy']) {
+        const atk = p.cfg.moves[slot];
+        if (!atk) continue;
+        made = 0;
+        p.attackPhase = 'none';
+        p.stunUntil = 0;
+        p.spawnSwing(atk);
+        out[slot] = { fx: atk.fx, shapes: made };
+        await wait(60);
       }
-      out[slot] = { fx: atk.fx, shapes: fresh.length };
-      await wait(420);
+    } finally {
+      s.add.ellipse = origEllipse;
+      s.add.arc = origArc;
     }
+
     return out;
   });
 
@@ -1919,7 +1892,11 @@ console.log('참가자 화면 재현');
     f.playRemoteReaction('launch');
     const lean = f.lean.angle;
 
-    return { meters, fxCount, moveName, want: f.cfg.moves.heavy.name, lean };
+    /* 연타 카운터 — 호스트가 센 수 그대로 뜨는가 */
+    s.combat.playRemoteCombo(f, 5);
+    const combo = s.combat.getCombo(f.fighterId);
+
+    return { meters, fxCount, moveName, want: f.cfg.moves.heavy.name, lean, combo };
   });
   await releasePlayer();
 
@@ -1948,6 +1925,12 @@ console.log('참가자 화면 재현');
       errors.push(`[참가자] 피격 반응이 재생되지 않습니다 (기울기 ${guest.lean})`);
     } else {
       console.log(`  ✓ 피격 반응 — 떠오름 ${guest.lean}°`);
+    }
+
+    if (guest.combo !== 5) {
+      errors.push(`[참가자] 연타 카운터가 회선 값을 안 씁니다 (${guest.combo})`);
+    } else {
+      console.log('  ✓ 연타 카운터 — 호스트가 센 5 HIT 그대로');
     }
   }
   await shot('guest-replay');
@@ -2090,6 +2073,56 @@ console.log('공매도 유령');
   await restartRound();
   await waitGrounded();
 }
+
+/*
+ * 서든데스 — 판이 길어지면 전원의 주가가 흘러내려 마감이 온다.
+ *
+ * 2분 30초를 기다릴 수는 없으므로 시작 시각을 되감아 발동시킨다.
+ * 확인할 것은 (1) 발동 배너·붉은 테 (2) 전원이 똑같이 잃는가 —
+ * 유불리를 바꾸지 않는 것이 이 장치의 조건이다.
+ */
+console.log('서든데스');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const sd = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const before = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+    // 시작 시각을 2분 30초 전으로 되감는다
+    s.battleActiveSince = s.time.now - 151000;
+    for (let i = 0; i < 40 && !s.suddenDeath; i++) await wait(100);
+    if (!s.suddenDeath) return { why: '되감아도 서든데스가 발동하지 않습니다' };
+
+    // 두 틱 이상 지나가길 기다린다 (이 환경은 게임 시간이 1/5 로 흐른다)
+    for (let i = 0; i < 120; i++) {
+      await wait(100);
+      const now = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+      if (now.every((v, k) => v <= before[k] - 2)) {
+        return { drops: before.map((b, k) => b - now[k]), vignette: !!s.sdVignette };
+      }
+    }
+    return { why: '주가가 흘러내리지 않습니다' };
+  });
+  await releasePlayer();
+
+  if (sd.why) {
+    errors.push(`[서든데스] ${sd.why}`);
+  } else if (!sd.vignette) {
+    errors.push('[서든데스] 발동했는데 화면 테두리 연출이 없습니다');
+  } else if (new Set(sd.drops).size > 2) {
+    errors.push(`[서든데스] 하락폭이 사람마다 다릅니다 — ${JSON.stringify(sd.drops)}`);
+  } else {
+    console.log(`  ✓ 발동 + 전원 균등 하락 (${sd.drops.join(', ')})`);
+  }
+  await shot('sudden-death');
+  await restartRound();
+  await waitGrounded();
+}
+
 
 /*
  * 이 판을 바꾼 말.

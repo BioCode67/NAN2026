@@ -69,6 +69,7 @@ import {
 import { BaseCharacter, resetQuoteThrottle } from '../characters/BaseCharacter';
 import { buildPortrait } from '../characters/CharacterArt';
 import { AI_PROMPTS, gimmickById, readPrompt } from '../config/gimmicks';
+import { PromptArtSystem } from '../systems/PromptArtSystem';
 import { AISystem } from '../systems/AISystem';
 import { CombatSystem } from '../systems/CombatSystem';
 import { eventBus } from '../systems/EventBus';
@@ -200,7 +201,8 @@ export class BattleScene extends Phaser.Scene {
   /** 발판의 겉모습 — 판정 사각형과 함께 켜고 끈다 */
   private platformSkins: Phaser.GameObjects.GameObject[] = [];
   /** 생성한 스테이지 그림 레이어 (없으면 보이지 않는다) */
-  private bgArt?: Phaser.GameObjects.Image;
+  /** 지금 깔린 무대 그림 — 검사가 배경이 갈렸는지 읽는다 */
+  bgArt?: Phaser.GameObjects.Image;
   /** 코드로 그린 배경 — 무대 그림이 없을 때 이 위에 무대 색을 입힌다 */
   private bgBase?: Phaser.GameObjects.Image;
   /** 배경 위에 까는 어둠 막 — 밝은 그림 위에서도 캐릭터가 읽히게 한다 */
@@ -217,6 +219,8 @@ export class BattleScene extends Phaser.Scene {
   private items!: ItemSystem;
   private orbs!: PromptOrbSystem;
   private gimmicks!: GimmickSystem;
+  /** 플레이어가 쓴 문장으로 그린 그림 — 이 판의 배경이 된다 */
+  promptArt!: PromptArtSystem;
   private rhythm!: RhythmSystem;
   /** 이 판의 전적 — 결과 화면에서 보여준다 */
   private stats!: MatchStats;
@@ -463,7 +467,10 @@ export class BattleScene extends Phaser.Scene {
     sound.startBgm('battle');
     // 무대마다 조와 템포가 달라진다 — 곡은 하나지만 장소는 넷이다
     sound.setStageTone(this.stage.music.transpose, this.stage.music.bpmMul);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.promptArt?.reset();
+      this.cleanup();
+    });
 
     // 월드가 화면보다 넓다 — 카메라가 월드 밖을 비추지 않도록 경계를 준다
     this.cameras.main.setBounds(0, 0, GAME.WORLD_WIDTH, GAME.HEIGHT);
@@ -1118,6 +1125,18 @@ export class BattleScene extends Phaser.Scene {
         this.logPrompt(text, who, spec);
       });
       if (who) this.announce(`${who}의 명령`, '#f472b6', 900);
+      /*
+       * 참가자도 자기 화면에서 직접 그린다.
+       *
+       * 그림을 회선으로 실어 보내지 않는 이유가 여기 있다 — 문장이 이미
+       * 왔고 씨앗은 문장에서 나오므로, 각자 부르면 같은 그림이 나온다.
+       * 수백 KB 를 데이터 채널에 밀어 넣는 것보다 안전하고, 한 사람이
+       * 늦게 받아도 판이 기다리지 않는다.
+       */
+      this.askForArt(
+        text,
+        ids.map((id) => gimmickById(id)?.art ?? ''),
+      );
     };
 
     /*
@@ -1576,6 +1595,8 @@ export class BattleScene extends Phaser.Scene {
       platforms: () => this.platforms,
       stageArt: (key) => this.pushStageArt(key),
     });
+
+    this.promptArt = new PromptArtSystem(this, (key) => this.pushStageArt(key));
 
     this.orbs = new PromptOrbSystem(this, this.banners);
     this.orbs.setFighters(this.fighters);
@@ -2965,13 +2986,14 @@ export class BattleScene extends Phaser.Scene {
    * 절반을 흘린 것이고, 그러면 다음부터는 짧게만 쓰게 된다 —
    * 길게 쓸 이유가 없어지므로.
    */
-  private applyPrompt(text: string, who: string): void {
+  applyPrompt(text: string, who: string): void {
     const reading = readPrompt(text);
     const note =
       `AI 해석: ${reading.reason} · 확신 ${Math.round(reading.confidence * 100)}%`;
 
     this.gimmicks.activate(reading.primary, text, this.time.now, note);
     this.logPrompt(text, who, reading.primary);
+    this.askForArt(text, [reading.primary.art, reading.secondary?.art ?? '']);
     if (reading.secondary) {
       // 조금 늦춰 건다 — 같은 순간에 두 배너가 겹쳐 뜨면 둘 다 안 읽힌다
       this.time.delayedCall(650, () => {
@@ -2993,6 +3015,16 @@ export class BattleScene extends Phaser.Scene {
       if (reading.secondary) ids.push(reading.secondary.id);
       net.sendGimmick(ids, text, who, note);
     }
+  }
+
+  /**
+   * 이 문장으로 그림을 부른다.
+   *
+   * 부르는 사람 색으로 연출하려고 마지막에 문장을 쓴 사람의 색을 쓴다 —
+   * 없으면 이 무대의 강조색으로 대신한다.
+   */
+  private askForArt(text: string, scenes: string[]): void {
+    this.promptArt?.request(text, scenes, this.stage.accent);
   }
 
   /** 결과 화면에 남길 한 줄 (호스트·1인·참가자 모두 같은 자리로 모은다) */

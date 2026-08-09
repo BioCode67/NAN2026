@@ -27,6 +27,7 @@
     "balance": "node --experimental-transform-types --no-warnings --import ./tools/ts-resolve.mjs tools/balance.mjs",
     "art:check": "node tools/art-check.mjs",
     "smoke:online": "node tools/smoke-online.mjs",
+    "test:image": "node tools/test-image.mjs",
     "test:net": "node --experimental-transform-types --no-warnings --import ./tools/ts-resolve.mjs tools/test-net.mjs",
     "art:jpg": "node tools/jpg-to-png.mjs",
     "art:md": "node tools/gen-prompts.mjs > /dev/null && node tools/prompt-page.mjs",

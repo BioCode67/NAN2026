@@ -42,6 +42,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '아이템', '폭우', '쏟아', '잔뜩', '많이', '드랍', '보급', '퍼부',
       'item', 'rain', 'supply', 'shower',
     ],
+    art: 'a torrential rain of glowing loot crates falling from a burning sky',
   },
   {
     id: 'item_bomb',
@@ -55,6 +56,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '폭탄', '폭발', '터지', '터뜨', '지뢰', '다이너마이트', '펑',
       'bomb', 'explode', 'explosion', 'blast',
     ],
+    art: 'dozens of cartoon bombs raining down, fuses lit, first blast erupting',
   },
   {
     id: 'item_heal',
@@ -68,6 +70,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '회복', '치료', '힐', '수혈', '살려', '체력', '주가 올', '매수',
       'heal', 'health', 'recover', 'potion',
     ],
+    art: 'giant green medical capsules descending on beams of healing light',
   },
   {
     id: 'item_gold',
@@ -81,6 +84,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '배당', '돈', '부자', '보너스', '지급', '뿌려', '용돈', '월급', '상승장',
       'dividend', 'money', 'rich', 'bonus', 'payout',
     ],
+    art: 'a monsoon of gold coins and banknotes bursting upward, everything gilded',
   },
   {
     id: 'item_power',
@@ -94,6 +98,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '무기', '강화', '공격력', '파워', '세게', '버프', '레버리지',
       'weapon', 'power', 'buff', 'attack', 'strong',
     ],
+    art: 'an armory door blasted open, weapons and power-ups spilling out in a shockwave',
   },
 
   /* ================================================================ */
@@ -111,6 +116,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '달', '우주', '무중력', '저중력', '중력', '둥둥', '붕붕', '떠', '가볍',
       'moon', 'space', 'gravity', 'float', 'zero-g',
     ],
+    art: 'the lunar surface, earth huge on the horizon, low gravity dust floating',
   },
   {
     id: 'map_storm',
@@ -124,6 +130,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '바람', '폭풍', '태풍', '강풍', '날려', '휘몰', '허리케인',
       'wind', 'storm', 'typhoon', 'hurricane', 'gale',
     ],
+    art: 'a violent thunderstorm, sideways rain, lightning splitting the trading floor',
   },
   {
     id: 'map_lava',
@@ -138,6 +145,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '용암', '화산', '마그마', '뜨거', '불바다', '지옥', '화염', '질러', '불질',
       'lava', 'fire', 'volcano', 'magma', 'hot', 'burn',
     ],
+    art: 'a volcanic wasteland, rivers of lava, embers and ash in the air',
   },
   {
     id: 'map_narrow',
@@ -151,6 +159,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '붕괴', '무너', '좁', '발판', '없애', '지워', '파괴',
       'collapse', 'narrow', 'destroy', 'remove', 'platform',
     ],
+    art: 'crumbling platforms collapsing into a bottomless void, debris mid-fall',
   },
   {
     id: 'map_bounce',
@@ -164,6 +173,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '튕', '통통', '트램', '점프대', '스프링', '용수철', '탱탱',
       'bounce', 'trampoline', 'spring', 'jumpy',
     ],
+    art: 'a world made of rubber and trampolines, everything stretching and bouncing',
   },
   {
     id: 'map_blackout',
@@ -177,6 +187,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '어둠', '정전', '깜깜', '어둡', '암전', '블랙아웃', '꺼버', '꺼줘', '불꺼',
       'dark', 'blackout', 'night', 'lights out', 'shadow',
     ],
+    art: 'total blackout, only emergency red strips and monitor glow in the dark',
   },
 
   /* ================================================================ */
@@ -194,6 +205,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '리듬', '박자', '비트', '음악', '노래', '댄스', '춤', '장단',
       'rhythm', 'beat', 'music', 'dance', 'song', 'tempo',
     ],
+    art: 'a rhythm game stage, pulsing speaker stacks, beat rings expanding',
   },
   {
     id: 'rule_sudden',
@@ -208,6 +220,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '끝내', '끝나', '한대',
       'sudden', 'death', 'instant', 'lethal', 'oneshot',
     ],
+    art: 'a market crash, every chart bleeding red, sirens and falling arrows',
   },
   {
     id: 'rule_reverse',
@@ -221,6 +234,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '반전', '거꾸로', '뒤집', '반대', '헷갈', '혼란', '역방향',
       'reverse', 'invert', 'flip', 'confuse', 'mirror',
     ],
+    art: 'the whole world flipped upside down, mirrored reflections, vertigo',
   },
   {
     id: 'rule_giant',
@@ -234,6 +248,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '거대', '커', '크게', '巨', '자이언트', '대형', '뚱', '괴수',
       'giant', 'big', 'huge', 'large', 'grow', 'kaiju',
     ],
+    art: 'colossal titans towering over a tiny city, kaiju scale',
   },
   {
     id: 'rule_tiny',
@@ -247,6 +262,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '작', '축소', '미니', '쪼그', '조그', '꼬마', '난쟁이', '줄여', '줄이',
       'tiny', 'small', 'mini', 'shrink', 'little',
     ],
+    art: 'a miniature world seen from above, tiny figures on a huge desk',
   },
   {
     id: 'rule_speed',
@@ -260,6 +276,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '빠르', '빨리', '스피드', '고속', '가속', '광속', '급하', '서둘',
       'fast', 'speed', 'quick', 'rush', 'hyper', 'turbo',
     ],
+    art: 'extreme speed lines, motion blur streaks, everything smeared forward',
   },
   {
     id: 'rule_swap',
@@ -274,6 +291,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '바꿔', '바꾸', '섞', '교체', '자리', '위치', '텔레포트', '순간이동',
       'swap', 'shuffle', 'teleport', 'switch', 'scramble',
     ],
+    art: 'reality glitching and teleporting, portals swapping two places mid-frame',
   },
   {
     id: 'rule_share',
@@ -288,6 +306,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '공산', '사회주의',
       'share', 'equal', 'fair', 'split', 'average', 'reset',
     ],
+    art: 'a perfectly balanced scale, wealth redistributed in equal glowing shares',
   },
   {
     id: 'rule_slow',
@@ -301,6 +320,7 @@ export const GIMMICKS: GimmickSpec[] = [
       '슬로우', '느리', '천천', '저속', '매트릭스', '시간',
       'slow', 'motion', 'matrix', 'time', 'bullet time',
     ],
+    art: 'time frozen mid-explosion, debris hanging still, bullet time',
   },
 ];
 

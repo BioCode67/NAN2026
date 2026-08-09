@@ -723,7 +723,7 @@ export const SPRITE_SHEETS: Partial<Record<CharacterId, SpriteSheetDef>> = {
   ant: { key: 'antinvestor', displayHeight: SD_HEIGHT, frameRate: 11, poses: LAYOUT_V1 },
   bear: { key: 'shortseller', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
   bull: { key: 'chargingbull', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
-  guru: { key: 'chartguru', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
+  lky: { key: 'leekuanyew', displayHeight: SD_HEIGHT, frameRate: 10, poses: LAYOUT_V1 },
   turing: { key: 'alanturing', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },
   chung: { key: 'chungjuyung', displayHeight: SD_HEIGHT, frameRate: 8, poses: LAYOUT_V1 },
   hawking: { key: 'stephenhawking', displayHeight: SD_HEIGHT, frameRate: 9, poses: LAYOUT_V1 },

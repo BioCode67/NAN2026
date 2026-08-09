@@ -20,7 +20,7 @@ export type CharacterId =
   | 'ant'
   | 'bear'
   | 'bull'
-  | 'guru'
+  | 'lky'
   | 'turing'
   | 'chung'
   | 'hawking'

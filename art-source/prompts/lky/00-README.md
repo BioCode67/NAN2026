@@ -1,4 +1,4 @@
-# 차트 도사 — 스프라이트 프롬프트
+# 리콴유 — 스프라이트 프롬프트
 
 총 **72장**을 12개 묶음으로 나눠 뽑는다.
 
@@ -11,16 +11,16 @@
 3. 나온 이미지를 `art-source/` 에 아래 이름으로 저장한다.
 
 ```
-art-source/chartguru_b1.png    (1번 묶음)
-art-source/chartguru_b2.png    (2번 묶음)
+art-source/leekuanyew_b1.png    (1번 묶음)
+art-source/leekuanyew_b2.png    (2번 묶음)
 ...
-art-source/chartguru_b12.png
+art-source/leekuanyew_b12.png
 ```
 
 4. 전처리 + 합치기는 한 줄로 끝난다.
 
 ```bash
-npm run sheet:merge -- chartguru
+npm run sheet:merge -- leekuanyew
 ```
 
 ## 묶음 목록

@@ -413,7 +413,7 @@ function buildHeadgear(
       break;
     }
 
-    // 차트 도사 — 상투
+    // 상투 — 지금은 아무도 안 쓴다. 모양은 남겨 둔다
     case 'topknot': {
       const knot = scene.add.circle(0, top - 14, 12, c);
       knot.setStrokeStyle(2.5, outline, 0.45);

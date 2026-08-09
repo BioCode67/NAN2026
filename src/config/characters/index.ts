@@ -15,7 +15,7 @@ import { son } from './son';
 import { ant } from './ant';
 import { bear } from './bear';
 import { bull } from './bull';
-import { guru } from './guru';
+import { lky } from './lky';
 import { turing } from './turing';
 import { chung } from './chung';
 import { hawking } from './hawking';
@@ -49,7 +49,7 @@ const ROSTER: CharacterConfig[] = [
   buffett, jensen, satoshi, zuck, bezos,
   // 아랫줄 — 성향이 뚜렷한 쪽
   altman, son, ant, bear, bull,
-  guru, turing, chung, hawking, whale,
+  lky, turing, chung, hawking, whale,
 ];
 
 export const CHARACTERS = Object.fromEntries(

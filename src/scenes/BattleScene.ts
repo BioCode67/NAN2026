@@ -41,6 +41,7 @@ import { carryOverStock, streakDifficulty, streakTitle } from '../config/streak'
 import {
   HIT_REACTION_ORDER,
   AI_MEDIUM,
+  CAMERA,
   DEPTH,
   FIGHTER,
   GAME,
@@ -2107,13 +2108,29 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * 카메라 — 살아있는 파이터들의 중앙을 따라간다.
+   * 카메라 — 살아있는 파이터들의 중앙을 따라가고, 뭉치면 파고든다.
    *
-   * 줌은 하지 않는다. 스크롤만 하면 HUD에 scrollFactor(0)만 주면 되지만,
-   * 줌까지 넣으면 HUD가 함께 확대돼 UI 전용 카메라가 필요해진다.
-   * 넓어진 맵을 보여주는 목적에는 스크롤만으로 충분하다.
+   * ── 줌을 어떻게 넣었나 ─────────────────────────────────────────
+   * 오래 줌 없이 스크롤만 했다. HUD 에 scrollFactor(0) 만 주면 됐기 때문이고,
+   * 줌을 넣으면 그 HUD 까지 함께 확대돼 UI 전용 카메라가 필요해 보였다.
+   *
+   * 카메라를 하나 더 두는 대신 **HUD 를 거꾸로 줄인다.** scrollFactor 0 인
+   * 것은 화면 좌표 p 를 (p - c)·z + c 자리에 그리므로(c = 화면 중앙),
+   * 컨테이너를 1/z 로 줄이고 c - c/z 로 옮겨 두면 정확히 상쇄된다.
+   * HUD 가 이미 컨테이너 하나(hudLayer)에 다 들어 있어서 두 줄로 끝난다.
+   *
+   * ── 왜 당기기만 하고 물러나지는 않는가 ─────────────────────────
+   * 월드는 1920×720 이고 화면은 1280×720 이다. 세로가 **정확히 같아서**
+   * 물러나는 순간 무대 위아래로 아무것도 없는 빈 공간이 드러난다.
+   * 가로만 물러나게 하는 것도 안 된다 — 줌은 가로세로가 같이 간다.
+   * 그래서 1.0 이 가장 넓은 상태이고, 뭉쳤을 때만 파고든다.
+   *
+   * 파고드는 정도는 **전원이 여유를 두고 화면에 들어오는 선까지**로만
+   * 잡는다. 그래서 누가 밖으로 밀려나는 일이 구조적으로 없다.
    */
   private updateCamera(delta: number): void {
+    const cam = this.cameras.main;
+
     /*
      * 결과 화면에서는 카메라를 원점에 묶는다.
      *
@@ -2123,7 +2140,8 @@ export class BattleScene extends Phaser.Scene {
      * 판이 끝난 뒤의 카메라 위치는 아무 정보도 아니므로 원점으로 되돌린다.
      */
     if (this.resultShown) {
-      this.cameras.main.setScroll(0, 0);
+      this.applyZoom(1);
+      cam.setScroll(0, 0);
       return;
     }
 
@@ -2132,9 +2150,13 @@ export class BattleScene extends Phaser.Scene {
 
     let minX = Infinity;
     let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
     for (const f of alive) {
       minX = Math.min(minX, f.x);
       maxX = Math.max(maxX, f.x);
+      minY = Math.min(minY, f.y);
+      maxY = Math.max(maxY, f.y);
     }
 
     /*
@@ -2151,12 +2173,47 @@ export class BattleScene extends Phaser.Scene {
       : mid;
     const targetX = humansAlive.length ? (mid + humanMid) / 2 : mid;
 
-    const cam = this.cameras.main;
-    const desired = Phaser.Math.Clamp(
-      targetX - GAME.WIDTH / 2,
-      0,
-      GAME.WORLD_WIDTH - GAME.WIDTH,
-    );
+    /*
+     * 전원이 이만큼 여유를 두고 들어오는 선까지만 당긴다.
+     *
+     * 여유(CAMERA.MARGIN)는 캐릭터 반 몸에 날아갈 자리를 더한 값이다.
+     * 이것을 좁게 잡으면 화면 가장자리에 딱 붙은 채로 싸우게 되고,
+     * 한 대 맞아 밀리는 순간 곧바로 밖으로 나간다.
+     */
+    const needW = maxX - minX + CAMERA.MARGIN * 2;
+    const needH = maxY - minY + CAMERA.MARGIN * 2;
+    const fit = Math.min(GAME.WIDTH / needW, GAME.HEIGHT / needH);
+
+    /*
+     * 판이 멈춰 있는 동안(인트로·프롬프트 입력·일시정지)에는 1 로 돌아간다.
+     * 그 화면들의 글자는 hudLayer 밖에 있어 줌을 되돌려 주는 손이 없다.
+     */
+    const still = !this.battleActive || this.prompting || this.paused;
+    const wantZoom = still ? 1 : Phaser.Math.Clamp(fit, 1, CAMERA.MAX_ZOOM);
+
+    /*
+     * 줌은 스크롤보다 **느리게** 따라간다.
+     *
+     * 넷이 뒤엉킨 판에서는 사람 사이 거리가 매 순간 출렁이는데, 줌이 그걸
+     * 그대로 따라가면 화면이 숨을 쉬듯 울렁거려 눈이 먼저 지친다.
+     * 당기는 것보다 물러나는 것을 조금 더 빠르게 둔다 — 늦게 물러나면
+     * 누군가 화면 밖에 잠깐 머물게 되고, 그 순간은 게임이 아니라 추측이 된다.
+     */
+    const zoomIn = wantZoom > cam.zoom;
+    const zt = 1 - Math.pow(zoomIn ? CAMERA.ZOOM_IN_EASE : CAMERA.ZOOM_OUT_EASE, delta / 1000);
+    const zoom = Phaser.Math.Linear(cam.zoom, wantZoom, zt);
+    this.applyZoom(zoom);
+
+    /*
+     * 좌우 한계는 **보이는 폭**으로 잡는다.
+     *
+     * 줌이 걸리면 화면에 담기는 월드 폭이 1280 이 아니라 1280/줌 이다.
+     * 예전 상수(WORLD_WIDTH - WIDTH)를 그대로 쓰면 당긴 만큼 무대 밖
+     * 검은 여백이 양옆에 드러난다.
+     */
+    const halfView = GAME.WIDTH / 2 / zoom;
+    const midX = Phaser.Math.Clamp(targetX, halfView, GAME.WORLD_WIDTH - halfView);
+    const desired = midX - GAME.WIDTH / 2;
 
     // delta 기반 보간 — 프레임률이 달라도 같은 속도로 따라간다
     const t = 1 - Math.pow(0.0015, delta / 1000);
@@ -2167,6 +2224,29 @@ export class BattleScene extends Phaser.Scene {
      */
     const kick = this.combat.getCameraKick();
     cam.setScroll(Phaser.Math.Linear(cam.scrollX, desired, t) + kick, 0);
+  }
+
+  /**
+   * 줌을 걸고, HUD 를 그만큼 거꾸로 줄여 제자리에 붙여 둔다.
+   *
+   * scrollFactor 0 인 것은 화면 좌표 p 를 (p - c)·z + c 자리에 그린다
+   * (c = 화면 중앙). 그러니 컨테이너를 1/z 로 줄이고 c - c/z 로 옮기면
+   * 자식들이 정확히 원래 자리에 온다 — 카메라를 하나 더 두지 않아도 된다.
+   *
+   * hudLayer 밖에 있는 화면 고정 글자(중앙 안내·격추 도장)는 일부러
+   * 그냥 둔다. 둘 다 화면 한가운데 잠깐 떴다 사라지는 것이라, 당긴 판에서
+   * 조금 크게 뜨는 편이 오히려 그 순간을 강조한다.
+   */
+  private applyZoom(zoom: number): void {
+    const cam = this.cameras.main;
+    if (Math.abs(cam.zoom - zoom) > 0.0005) cam.setZoom(zoom);
+
+    if (!this.hudLayer) return;
+    const inv = 1 / zoom;
+    const cx = GAME.WIDTH / 2;
+    const cy = GAME.HEIGHT / 2;
+    this.hudLayer.setScale(inv);
+    this.hudLayer.setPosition(cx - cx * inv, cy - cy * inv);
   }
 
   /** 스킬 시전 — 시전 시 부가 효과(도박 등)까지 처리한다 */
@@ -3392,9 +3472,18 @@ export class BattleScene extends Phaser.Scene {
   private updateOffscreenMarkers(): void {
     if (!this.offscreenMarks?.length) return;
 
+    /*
+     * "화면 밖"은 줌에 따라 달라진다.
+     *
+     * 당긴 화면에 담기는 월드 폭은 1280 이 아니라 1280/줌 이다. 예전처럼
+     * 1280 으로 재면 당길수록 실제보다 넓게 보고 있다고 착각해서, **정작
+     * 밖으로 밀려난 사람에게 화살표가 안 뜬다** — 화살표가 필요한 바로
+     * 그때만 사라지는 셈이다. 카메라가 실제로 보고 있는 범위로 잰다.
+     */
     const cam = this.cameras.main;
-    const left = cam.scrollX;
-    const right = cam.scrollX + GAME.WIDTH;
+    const halfView = GAME.WIDTH / 2 / cam.zoom;
+    const left = cam.midPoint.x - halfView;
+    const right = cam.midPoint.x + halfView;
     const MARGIN = 44;
 
     for (const m of this.offscreenMarks) {

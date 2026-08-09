@@ -618,6 +618,103 @@ try {
     }
   }
 
+  /*
+   * 10. 카메라 줌 — 뭉치면 파고들고, HUD 는 제자리에 남는가.
+   *
+   * ── 왜 HUD 까지 재는가 ─────────────────────────────────────────
+   * 줌을 안 넣고 버틴 이유가 그것이었다. HUD 는 scrollFactor 0 이라 스크롤은
+   * 안 따라가지만 **줌은 그대로 먹는다** — 카메라를 당기면 주가 막대와 조작
+   * 안내가 같이 커져 화면 밖으로 밀려난다. 카메라를 하나 더 두는 대신
+   * hudLayer 를 1/줌 으로 되돌려 두었는데, 그 상쇄가 실제로 맞는지는
+   * 숫자로만 확인할 수 있다. 화면을 보면 "좀 커진 것 같기도" 하고 만다.
+   */
+  {
+    const camState = () =>
+      page.evaluate(() => {
+        const s = window.game.scene.getScene('Battle');
+        const cam = s.cameras.main;
+        const hud = s.hudLayer;
+        // HUD 자식 하나가 실제로 그려지는 화면 좌표 (상쇄가 맞으면 줌과 무관)
+        const kid = hud.list.find((o) => typeof o.x === 'number');
+        if (!kid) return { zoom: cam.zoom, hudScale: hud.scaleX, kidScreenX: null };
+
+        /*
+         * **화면** 좌표를 구해야 한다.
+         *
+         * 처음에는 월드 좌표(hud.x + kid.x·scale)를 비교했는데, 그건 상쇄가
+         * 제대로 걸릴수록 오히려 달라지는 값이다 — 되돌리기의 원리 자체가
+         * 월드 좌표를 옮겨서 화면 좌표를 붙잡아 두는 것이기 때문이다.
+         * scrollFactor 0 인 것은 월드 w 를 (w - c)·줌 + c 에 그린다.
+         */
+        const c = { x: cam.width / 2, y: cam.height / 2 };
+        const worldX = hud.x + kid.x * hud.scaleX;
+        const worldY = hud.y + kid.y * hud.scaleY;
+        return {
+          zoom: cam.zoom,
+          hudScale: hud.scaleX,
+          kidScreenX: (worldX - c.x) * cam.zoom + c.x,
+          kidScreenY: (worldY - c.y) * cam.zoom + c.y,
+        };
+      });
+
+    // 넷을 한자리에 모은다 — 뭉치면 당기는 것이 규칙이다
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.ais.length = 0;
+      s.fighters.forEach((f, i) => {
+        f.x = 900 + i * 12;
+        f.y = 520;
+        f.body?.setVelocity(0, 0);
+        f.invulnUntil = s.time.now + 600000;
+      });
+    });
+    await page.waitForTimeout(2500);
+    const tight = await camState();
+
+    // 이제 양 끝으로 흩어 놓는다 — 물러나야 한다
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      const live = s.fighters.filter((f) => f.alive);
+      live.forEach((f, i) => {
+        f.x = i % 2 === 0 ? 260 : 1660;
+        f.body?.setVelocity(0, 0);
+      });
+    });
+    await page.waitForTimeout(2500);
+    const wide = await camState();
+
+    if (!(tight.zoom > 1.02)) {
+      bad(`[카메라] 넷이 뭉쳤는데 안 당깁니다 (줌 ${tight.zoom.toFixed(3)})`);
+    } else if (!(wide.zoom < tight.zoom - 0.02)) {
+      bad(
+        `[카메라] 흩어졌는데 안 물러납니다 (${tight.zoom.toFixed(3)} → ${wide.zoom.toFixed(3)})`,
+      );
+    } else {
+      ok(`줌 — 뭉치면 ${tight.zoom.toFixed(2)}배 · 흩어지면 ${wide.zoom.toFixed(2)}배`);
+    }
+
+    /*
+     * 상쇄 확인 — 줌이 달랐던 두 순간에 HUD 자식이 **같은 화면 좌표**에
+     * 있어야 한다. 어긋나면 당길 때마다 계기판이 슬금슬금 움직인다.
+     */
+    if (tight.kidScreenX === null || wide.kidScreenX === null) {
+      bad('[카메라] HUD 자식을 못 찾아 상쇄를 확인하지 못했습니다');
+    } else {
+      const dx = Math.abs(tight.kidScreenX - wide.kidScreenX);
+      const dy = Math.abs(tight.kidScreenY - wide.kidScreenY);
+      const scaleOk = Math.abs(tight.hudScale * tight.zoom - 1) < 0.01;
+      if (!scaleOk) {
+        bad(
+          `[카메라] HUD 되돌리기가 안 맞습니다 (줌 ${tight.zoom.toFixed(3)} × 크기 ${tight.hudScale.toFixed(3)})`,
+        );
+      } else if (dx > 1 || dy > 1) {
+        bad(`[카메라] 줌에 따라 HUD 가 움직입니다 (${dx.toFixed(1)}, ${dy.toFixed(1)}px)`);
+      } else {
+        ok('HUD 는 당겨도 제자리 (되돌리기 상쇄 확인)');
+      }
+    }
+  }
+
   await padRelease();
 } catch (e) {
   bad(`[중단] ${e.message}`);

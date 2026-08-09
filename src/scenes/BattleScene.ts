@@ -374,6 +374,8 @@ export class BattleScene extends Phaser.Scene {
     this.remoteKillers = new Map();
     // 씬 인스턴스는 재사용된다 — 앞 판의 파괴된 표시물을 들고 있으면 안 된다
     this.killFeed = [];
+    this.controlHints = [];
+    this.hintsFolded = false;
     this.netHealthText = undefined;
     this.suddenDeath = false;
     this.sdNextTickAt = 0;
@@ -1848,6 +1850,7 @@ export class BattleScene extends Phaser.Scene {
     kb.on('keydown-SPACE', () => this.startNextRound());
     kb.on('keydown-ESC', () => this.leaveToSelect());
     kb.on('keydown-P', () => this.togglePause());
+    kb.on('keydown-F1', () => this.toggleControlHints());
     kb.on('keydown-M', () => {
       const muted = sound.toggleMute();
       this.muteLabel.setText(muted ? '🔇 M' : '🔊 M');
@@ -2198,6 +2201,43 @@ export class BattleScene extends Phaser.Scene {
    */
   /** 오른쪽 위에 쌓이는 격추 기록 */
   private killFeed: Phaser.GameObjects.Text[] = [];
+  /** 상단 조작 안내 두 줄 — 몇 초 뒤 접힌다 (F1 로 다시 편다) */
+  private controlHints: Phaser.GameObjects.Text[] = [];
+  private hintsFolded = false;
+
+  /** 조작 안내를 접는다 — 지우지 않고 아주 옅게 남긴다 */
+  private fadeControlHints(): void {
+    if (this.hintsFolded || !this.controlHints.length) return;
+    this.hintsFolded = true;
+    this.tweens.add({
+      targets: this.controlHints.filter((h) => h.active),
+      alpha: 0,
+      y: '-=6',
+      duration: 500,
+      ease: 'Quad.easeIn',
+    });
+  }
+
+  /** F1 — 조작 안내를 다시 편다 (한 번 더 누르면 접는다) */
+  private toggleControlHints(): void {
+    const live = this.controlHints.filter((h) => h.active);
+    if (!live.length) return;
+    const show = this.hintsFolded;
+    this.hintsFolded = !show;
+    this.tweens.killTweensOf(live);
+    // 접을 때 위로 6px 올렸으므로 펼 때는 제자리로 되돌린다
+    live.forEach((h, i) => {
+      this.tweens.add({
+        targets: h,
+        alpha: show ? 1 : 0,
+        y: show ? 16 + i * 18 : h.y - 6,
+        duration: 220,
+        ease: 'Quad.easeOut',
+      });
+    });
+    // 다시 편 것은 잠시 뒤 알아서 접힌다 — 끄는 법을 또 외우게 하지 않는다
+    if (show) this.time.delayedCall(6000, () => this.fadeControlHints());
+  }
 
   /**
    * 킬 피드 — 누가 누구를 보냈는지가 화면 구석에 잠깐 남는다.
@@ -2735,6 +2775,20 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setScroll(0, 0);
 
     /*
+     * 킬 피드를 걷는다.
+     *
+     * 판 중에는 "누가 누구를 보냈는지"가 쓸모 있지만, 결과 화면에는 그
+     * 내용이 전적표에 이미 다 있다. 옅게 남은 글자가 오른쪽 위에 겹쳐 있으면
+     * 정보가 아니라 얼룩이다.
+     */
+    this.killFeed.forEach((l) => l.destroy());
+    this.killFeed = [];
+    this.netHealthText?.destroy();
+    this.netHealthText = undefined;
+    // 연타 카운터도 같은 이유로 걷는다 — 결과 위에 떠 있으면 얼룩이다
+    this.combat.clearComboLabels();
+
+    /*
      * 2인 대전에서는 "이겼다/졌다"가 성립하지 않는다.
      *
      * 사람이 둘이면 한 화면을 둘이 같이 본다. 한쪽 기준으로 "패배…"를
@@ -2962,7 +3016,12 @@ export class BattleScene extends Phaser.Scene {
     const top = this.stats.topDealer();
 
     const rowH = 42;
-    const y0 = 332;
+    /*
+     * 표 머리글이 연승 배지(y 288, 26px)와 겹쳐 있었다.
+     * 배지는 화면 가운데, KO 열도 거의 가운데라 글자가 그대로 포개졌다.
+     * 표를 한 줄만큼 내려 사이를 띄운다.
+     */
+    const y0 = 350;
     const left = GAME.WIDTH / 2 - 430;
 
     const header = ['', '준 피해', '맞은 피해', 'KO', '최고 주가', '가장 많이 쓴 기술'];
@@ -3003,10 +3062,18 @@ export class BattleScene extends Phaser.Scene {
        */
       const rowFrom = this.children.list.length;
 
-      // 내 줄만 배경을 깐다 — 넷 중 어느 줄이 나인지 한눈에 찾게
+      /*
+       * 내 줄만 배경을 깐다 — 넷 중 어느 줄이 나인지 한눈에 찾게.
+       *
+       * 화면 가운데 기준으로 깔았더니 이름 앞부분이 배경 밖으로 삐져나와
+       * "빌"만 배경 없이 뜨고 "게이츠맨"부터 배경 위에 놓였다. 글자 하나가
+       * 두 색으로 갈려 보인다. 배경은 **줄의 실제 내용**에 맞춘다.
+       */
       if (isPlayer) {
+        const bgX = left - 52;
         this.add
-          .rectangle(GAME.WIDTH / 2, y, 900, rowH - 6, f.cfg.colors.accent, 0.12)
+          .rectangle(bgX, y, left + colX[5]! + 210 - bgX, rowH - 6, f.cfg.colors.accent, 0.12)
+          .setOrigin(0, 0.5)
           .setDepth(DEPTH.OVERLAY + 1);
       }
 
@@ -3294,9 +3361,21 @@ export class BattleScene extends Phaser.Scene {
     label.setStroke('#0b1020', 9);
     this.announceLabel = label;
 
+    /*
+     * 긴 문장은 화면에 맞춰 줄인다.
+     *
+     * 58px 고정이라 "빌 게이츠맨 — 공매도 유령이 됐다 (← → 이동 · J 투하)"
+     * 같은 긴 안내가 **양쪽으로 잘려 나갔다.** 가운데 토막만 보이니
+     * 무슨 말인지도 모르고, 화면 밖으로 넘친 글자가 무대까지 가린다.
+     * 긴 소식일수록 중요한 소식이라 자르는 대신 줄이는 쪽이 맞다.
+     */
+    const maxW = GAME.WIDTH - 80;
+    const fit = label.width > maxW ? maxW / label.width : 1;
+    label.setScale(fit);
+
     this.tweens.add({
       targets: label,
-      scale: { from: 1.7, to: 1 },
+      scale: { from: fit * 1.7, to: fit },
       duration: 260,
       ease: 'Back.easeOut',
       onComplete: () => {
@@ -3490,7 +3569,23 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * 사람이 잡은 캐릭터의 발밑에 자리 색 고리를 붙인다.
+   *
+   * HUD 를 세우는 자리에서 함께 한다 — 자리 색의 출처가 한 곳이어야
+   * 화면마다 다른 색이 뜨는 일이 없다.
+   */
+  private markHumanSeats(): void {
+    for (const h of this.humans) {
+      const i = seatIndex(h.fighter);
+      if (i < 0) continue;
+      const hex = (SEAT_COLORS[i] ?? '#ffffff').replace('#', '');
+      h.fighter.markSeat(Number.parseInt(hex, 16));
+    }
+  }
+
   private buildHud(): void {
+    this.markHumanSeats();
     /*
      * HUD는 카메라를 따라 움직이면 안 된다.
      * 하나의 레이어 컨테이너에 담고 scrollFactor 0을 주면
@@ -3520,6 +3615,15 @@ export class BattleScene extends Phaser.Scene {
      * 배경이 밝은지 어두운지에 따라 색을 바꾸는 것보다, 글자마다 어두운
      * 테두리를 두르는 쪽이 어떤 그림 위에서도 통한다.
      */
+    /*
+     * 조작 안내는 **처음 몇 초만** 화면에 있는다.
+     *
+     * 두 줄이 상단을 상시 점유하고 있었다. 첫 판에는 꼭 필요한 정보지만,
+     * 아는 사람에게는 그때부터 끝까지 무대와 캐릭터를 가리는 띠일 뿐이다 —
+     * 실제로 화면 위 1/10 을 계속 먹고 있었다. 6초 뒤 옅게 접어 두고,
+     * 필요하면 F1 로 다시 편다.
+     */
+    const hints: Phaser.GameObjects.Text[] = [];
     const hint = (y: number, text: string, color: string) => {
       const label = ui(
         this.add
@@ -3531,6 +3635,7 @@ export class BattleScene extends Phaser.Scene {
           .setOrigin(0.5),
       );
       label.setStroke('#080d1a', 4);
+      hints.push(label);
       return label;
     };
 
@@ -3544,7 +3649,7 @@ export class BattleScene extends Phaser.Scene {
        */
       hint(
         16,
-        '1P   A/D 이동 · SPACE 점프 · S 방어 · J 약 · K 강 · L 스킬 · U 잡기 · AA/DD 대시',
+        '1P   A/D 이동 · SPACE 점프 · S 방어 · J 약 · K 강 · L 스킬 · U 잡기 · AA/DD 대시      (F1 : 이 안내)',
         '#38bdf8',
       );
       hint(
@@ -3555,7 +3660,7 @@ export class BattleScene extends Phaser.Scene {
     } else {
       hint(
         16,
-        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작',
+        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작 · F1 이 안내',
         '#8ea3cc',
       );
       hint(
@@ -3564,6 +3669,9 @@ export class BattleScene extends Phaser.Scene {
         '#a8bce0',
       );
     }
+
+    this.controlHints = hints;
+    this.time.delayedCall(6000, () => this.fadeControlHints());
 
     this.muteLabel = ui(
       this.add
@@ -3714,7 +3822,12 @@ export class BattleScene extends Phaser.Scene {
 
       const tierLabel = ui(
         this.add
-          .text(x + HUD_PANEL_W - 12, y + 30, '보통', {
+          /*
+           * 등급 글자는 주가 숫자 **아래로 확실히 내린다.**
+           * 22px 숫자가 y+5 에서 시작해 y+32 까지 내려오는데 여기가 y+30
+           * 이라 두 글자가 맞닿아 있었다 — "166%떡상 1단계"로 읽힌다.
+           */
+          .text(x + HUD_PANEL_W - 12, y + 34, '보통', {
             fontFamily: GAME.FONT,
             fontSize: '10px',
             color: '#cbd5e1',
@@ -3899,11 +4012,18 @@ export class BattleScene extends Phaser.Scene {
         hud.parts.forEach((o) =>
           (o as unknown as { setAlpha?: (a: number) => void }).setAlpha?.(0.32),
         );
-        const cx = hud.percent.x - HUD_PANEL_W / 2 + 12;
+        /*
+         * 도장은 패널 **아래쪽 절반**에 찍는다.
+         *
+         * 패널 가운데에 찍었더니 주가 숫자와 포개져 둘 다 안 읽혔다.
+         * 이름·숫자는 위쪽에, 바와 자원은 아래쪽에 있으므로 아래에 겹치는
+         * 편이 덜 가린다 — 어차피 죽은 사람의 게이지는 볼 일이 없다.
+         */
+        const cx = hud.percent.x - HUD_PANEL_W / 2 + 30;
         const stamp = this.add
-          .text(cx, hud.percent.y + HUD_PANEL_H / 2 - 4, '상장폐지', {
+          .text(cx, hud.percent.y + HUD_PANEL_H - 22, '상장폐지', {
             fontFamily: GAME.FONT,
-            fontSize: '21px',
+            fontSize: '19px',
             color: '#ef4444',
             fontStyle: 'bold',
           })

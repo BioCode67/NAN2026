@@ -253,6 +253,17 @@ export class CombatSystem {
     });
   }
 
+  /** 판이 끝났다 — 화면에 떠 있던 연타 카운터를 즉시 걷는다 */
+  clearComboLabels(): void {
+    for (const entry of this.comboLabels.values()) {
+      this.scene.tweens.killTweensOf([entry.label, entry.rank]);
+      entry.label.destroy();
+      entry.rank.destroy();
+    }
+    this.comboLabels.clear();
+    this.combos.clear();
+  }
+
   /**
    * 참가자 화면의 연타 카운터 — 호스트가 센 수를 그대로 띄운다.
    *
@@ -281,9 +292,25 @@ export class CombatSystem {
     for (const [id, entry] of this.comboLabels) {
       const owner = this.fighters.find((f) => f.fighterId === id);
       if (!owner) continue;
-      // 말풍선(머리 위 -96 ~ -122)보다 확실히 위에 둔다 — 겹치면 둘 다 안 읽힌다
-      entry.label.setPosition(owner.x, owner.y - 196);
-      entry.rank.setPosition(owner.x, owner.y - 166);
+      /*
+       * 말풍선(머리 위 -96 ~ -122)보다 확실히 위에 둔다 — 겹치면 둘 다 안 읽힌다.
+       *
+       * 다만 화면 가장자리에서는 안쪽으로 물린다. 월드 좌표라 캐릭터가
+       * 화면 끝에 붙어 있으면 라벨이 그대로 밖으로 나가 "3 HI" 처럼 잘렸다 —
+       * 몇 대를 이었는지 알려주는 것이 이 라벨의 전부인데.
+       */
+      const cam = this.scene.cameras.main;
+      const half = Math.max(entry.label.width, entry.rank.width) / 2 + 12;
+      const x = Phaser.Math.Clamp(
+        owner.x,
+        cam.scrollX + half,
+        cam.scrollX + cam.width - half,
+      );
+      // 머리 위가 화면 위로 넘어가면 아래로 내린다
+      const top = cam.scrollY + 34;
+      const y = Math.max(owner.y - 196, top);
+      entry.label.setPosition(x, y);
+      entry.rank.setPosition(x, y + 30);
     }
   }
 

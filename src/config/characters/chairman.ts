@@ -39,7 +39,7 @@ export const chairman: CharacterConfig = {
     id: 'shares',
     name: '지분율',
     desc: '타격에 성공할 때마다 지분이 1씩 쌓인다(최대 4). 스킬이 쌓인 만큼 세진다',
-    how: '조금씩 사 모아 이사회를 장악한다. **다 모으면 아무도 못 막는다**',
+    how: '조금씩 사 모아 이사회를 장악한다. 다 모으면 아무도 못 막는다',
     max: 4,
     icon: '👑',
     color: 0xd4af37,

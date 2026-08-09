@@ -39,7 +39,7 @@ export const pepe: CharacterConfig = {
     id: 'balloon',
     name: '붉은 풍선',
     desc: '타격마다 풍선이 1개 늘어난다(최대 3). 풍선 하나당 공중 점프가 한 번 늘어난다',
-    how: '때려서 기동력을 번다. 대신 **한 대라도 맞으면 전부 터진다**',
+    how: '때려서 기동력을 번다. 대신 한 대라도 맞으면 전부 터진다',
     max: 3,
     icon: '🎈',
     color: 0xef4444,

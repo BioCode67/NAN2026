@@ -549,19 +549,74 @@ const isDetailOpen = () =>
  * 가로챌 수 있어서, 막히면 기능 전체가 사라지지 않도록 I 도 받는다.
  * 검사도 둘 다 눌러 보고 어느 쪽으로 열렸는지 남긴다.
  */
+/*
+ * 한 번 누르고 400ms 뒤에 보던 것을 **열릴 때까지 지켜보는** 것으로 바꿨다.
+ * 이 환경은 초당 열 프레임쯤이라 키 하나가 프레임 사이로 사라지는 일이
+ * 드물지 않다. 그때마다 "상세 보기가 안 열린다"는 실패가 떴는데 기능은
+ * 멀쩡했다 — 검사가 늦게 본 것도 아니고, 키가 아예 안 들어간 것이다.
+ */
 let openedBy = '';
-for (const key of ['Tab', 'i']) {
-  await page.keyboard.press(key);
-  await page.waitForTimeout(400);
-  if (await isDetailOpen()) {
-    openedBy = key;
-    break;
+outer: for (const key of ['Tab', 'i']) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.keyboard.press(key);
+    for (let i = 0; i < 8; i++) {
+      await page.waitForTimeout(120);
+      if (await isDetailOpen()) {
+        openedBy = key;
+        break outer;
+      }
+    }
   }
 }
 
 if (!openedBy) errors.push('[선택] TAB · I 어느 쪽으로도 상세 보기가 열리지 않았습니다');
 else console.log(`  ✓ ${openedBy.toUpperCase()} → 커맨드 상세`);
 await shot('detail');
+
+/*
+ * 설명 패널의 글줄이 겹치지 않는가 — 스무 명 전부.
+ *
+ * ── 왜 재는가 ──────────────────────────────────────────────────────
+ * 이 패널은 줄마다 y 를 고정해 두고 쌓아 왔다. 그런데 설명 길이는
+ * 캐릭터마다 다르다 — 어떤 사람은 패시브가 한 줄, 어떤 사람은 두 줄이다.
+ * 한 줄이 길어지는 순간 그 아래 줄이 **그대로 덮인다**. 실제로 이동 기질
+ * 줄을 넣자 고유 메커니즘 줄 위에 겹쳐 찍혔는데, 코드에는 아무 이상이
+ * 없고 화면에서만 글자가 뭉개졌다.
+ *
+ * 사람이 스무 명을 하나씩 넘겨 보며 확인할 수는 없으니 좌표로 잰다.
+ * 눈으로 봐야만 보이는 종류의 고장이라 더더욱 검사가 맡아야 한다.
+ */
+{
+  const bad = await page.evaluate(() => {
+    const s = window.game.scene.getScene('Select');
+    const names = ['passiveText', 'traitText', 'signatureText', 'skillText', 'movesText'];
+    const out = [];
+    for (let i = 0; i < 20; i++) {
+      s.select(i);
+      const rows = names
+        .map((n) => ({ n, top: s[n].y, bot: s[n].y + s[n].height }))
+        .filter((r) => r.bot > r.top);
+      for (let k = 1; k < rows.length; k++) {
+        if (rows[k].top < rows[k - 1].bot) {
+          out.push(`${s.nameText.text}: ${rows[k - 1].n} 가 ${rows[k].n} 를 덮습니다`);
+        }
+      }
+      // 패널 밖으로 흘러나가면 아래 안내 글자와 겹친다
+      const last = rows[rows.length - 1];
+      if (last && last.bot > 690) {
+        out.push(`${s.nameText.text}: 설명이 패널 밖으로 넘칩니다 (${Math.round(last.bot)})`);
+      }
+    }
+    s.select(0);
+    return out;
+  });
+
+  if (bad.length) {
+    errors.push(`[선택] 설명 패널 글줄이 겹칩니다 — ${bad.slice(0, 3).join(' / ')}`);
+  } else {
+    console.log('  ✓ 스무 명 모두 설명 줄이 안 겹치고 패널 안에 들어온다');
+  }
+}
 
 // 닫기 — 열려 있으면 다음 단계의 방향키가 안 먹는다
 for (let i = 0; i < 3 && (await isDetailOpen()); i++) {

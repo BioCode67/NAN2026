@@ -40,7 +40,7 @@ export const bear: CharacterConfig = {
     id: 'fork',
     name: '대차 거래',
     desc: '방어로 막아낸 기술을 빌려온다. 다음 스킬이 그 기술로 나간다',
-    how: '빌려서 팔고 나중에 갚는다. **막지 못하면 아무것도 못 빌린다**',
+    how: '빌려서 팔고 나중에 갚는다. 막지 못하면 아무것도 못 빌린다',
     max: 1,
     icon: '🐻',
     color: 0x3b82f6,

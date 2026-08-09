@@ -38,7 +38,7 @@ export const son: CharacterConfig = {
     id: 'balloon',
     name: '기업가치',
     desc: '타격마다 밸류에이션이 1 오른다(최대 3). 하나당 공중 점프가 한 번 늘어난다',
-    how: '때려서 몸값을 올린다. **한 대 맞으면 전부 증발한다**',
+    how: '때려서 몸값을 올린다. 한 대 맞으면 전부 증발한다',
     max: 3,
     icon: '📈',
     color: 0xf59e0b,

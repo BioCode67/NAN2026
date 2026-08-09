@@ -38,7 +38,7 @@ export const altman: CharacterConfig = {
     id: 'oneMoreThing',
     name: '닷새 만에 복귀',
     desc: '스킬이 맞으면 짧은 순간 쿨다운 없이 한 번 더 쓸 수 있다',
-    how: '한 번 통하면 곧바로 다시 누른다. **쫓겨나도 돌아온다**',
+    how: '한 번 통하면 곧바로 다시 누른다. 쫓겨나도 돌아온다',
     max: 1,
     icon: '🔁',
     color: 0x10a37f,

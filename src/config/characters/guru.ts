@@ -40,7 +40,7 @@ export const guru: CharacterConfig = {
     id: 'oneMoreThing',
     name: '재매수 추천',
     desc: '스킬이 맞으면 짧은 순간 쿨다운 없이 한 번 더 쓸 수 있다',
-    how: '한 번 맞히면 곧바로 또 지른다. **빗나가면 조용히 사라진다**',
+    how: '한 번 맞히면 곧바로 또 지른다. 빗나가면 조용히 사라진다',
     max: 1,
     icon: '🔮',
     color: 0xfacc15,

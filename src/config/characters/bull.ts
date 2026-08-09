@@ -38,7 +38,7 @@ export const bull: CharacterConfig = {
     id: 'booster',
     name: '스탬피드',
     desc: '대시가 기세를 태운다(최대 3). 남아 있으면 공중에서도 대시할 수 있다',
-    how: '기세로 밀어붙인다. **멈추면 그냥 큰 표적이다**',
+    how: '기세로 밀어붙인다. 멈추면 그냥 큰 표적이다',
     max: 3,
     icon: '🐂',
     color: 0x22c55e,

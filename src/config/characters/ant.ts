@@ -41,7 +41,7 @@ export const ant: CharacterConfig = {
     id: 'balloon',
     name: '수익률',
     desc: '타격마다 수익이 1 쌓인다(최대 3). 하나당 공중 점프가 한 번 늘어난다',
-    how: '벌어서 뛴다. **한 대 맞으면 계좌가 녹는다**',
+    how: '벌어서 뛴다. 한 대 맞으면 계좌가 녹는다',
     max: 3,
     icon: '🐜',
     color: 0xef4444,

@@ -38,7 +38,7 @@ export const doom: CharacterConfig = {
     id: 'shares',
     name: '경고 누적',
     desc: '타격에 성공할 때마다 경고가 1씩 쌓인다(최대 4). 스킬이 쌓인 만큼 세진다',
-    how: '틀려도 계속 경고한다. **네 번째 경고가 진짜다**',
+    how: '틀려도 계속 경고한다. 네 번째 경고가 진짜다',
     max: 4,
     icon: '🐦‍⬛',
     color: 0x64748b,

@@ -39,7 +39,7 @@ export const bezos: CharacterConfig = {
     id: 'booster',
     name: '블루 오리진',
     desc: '대시가 연료를 태운다(최대 3). 남아 있으면 공중에서도 대시할 수 있다',
-    how: '무거운 몸을 연료로 옮긴다. **다 태우면 정말 안 움직인다**',
+    how: '무거운 몸을 연료로 옮긴다. 다 태우면 정말 안 움직인다',
     max: 3,
     icon: '🚀',
     color: 0xff9900,

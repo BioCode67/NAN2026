@@ -39,7 +39,7 @@ export const bot: CharacterConfig = {
     id: 'fork',
     name: '모방 학습',
     desc: '방어로 막아낸 기술을 그대로 학습한다. 다음 스킬이 그 기술로 나간다',
-    how: '맞아 본 것만 따라 한다. **막는 것부터가 공격의 시작이다**',
+    how: '맞아 본 것만 따라 한다. 막는 것부터가 공격의 시작이다',
     max: 1,
     icon: '🤖',
     color: 0x22d3ee,

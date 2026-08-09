@@ -39,7 +39,7 @@ export const whale: CharacterConfig = {
     id: 'balloon',
     name: '부력',
     desc: '타격마다 부력이 1 오른다(최대 3). 하나당 공중 점프가 한 번 늘어난다',
-    how: '무거운 몸을 때려서 띄운다. **맞으면 다시 가라앉는다**',
+    how: '무거운 몸을 때려서 띄운다. 맞으면 다시 가라앉는다',
     max: 3,
     icon: '🐋',
     color: 0x38bdf8,

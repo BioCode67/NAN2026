@@ -42,7 +42,7 @@ export const satoshi: CharacterConfig = {
     id: 'fork',
     name: '하드 포크',
     desc: '방어로 막아낸 기술을 통째로 복사한다. 다음 스킬이 그 기술로 나간다',
-    how: '먼저 막고 나서 돌려준다. **방어가 곧 공격이다**',
+    how: '먼저 막고 나서 돌려준다. 방어가 곧 공격이다',
     max: 1,
     icon: '⛓️',
     color: 0xf7931a,

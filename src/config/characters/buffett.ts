@@ -39,7 +39,7 @@ export const buffett: CharacterConfig = {
     id: 'shares',
     name: '복리',
     desc: '타격에 성공할 때마다 지분이 1씩 쌓인다(최대 4). 스킬이 쌓인 만큼 세진다',
-    how: '오래 버티며 차곡차곡 모은다. **급할 것 없다 — 시간이 편이다**',
+    how: '오래 버티며 차곡차곡 모은다. 급할 것 없다 — 시간이 편이다',
     max: 4,
     icon: '💰',
     color: 0xd4a017,

@@ -38,7 +38,7 @@ export const jensen: CharacterConfig = {
     id: 'booster',
     name: '전력 공급',
     desc: '대시가 전력을 태운다(최대 3). 남아 있으면 공중에서도 대시할 수 있다',
-    how: '전력으로 위치를 산다. **다 태우면 지상에 묶인다**',
+    how: '전력으로 위치를 산다. 다 태우면 지상에 묶인다',
     max: 3,
     icon: '⚡',
     color: 0x76b900,

@@ -38,7 +38,7 @@ export const zuck: CharacterConfig = {
     id: 'oneMoreThing',
     name: '사명 변경',
     desc: '스킬이 맞으면 짧은 순간 쿨다운 없이 한 번 더 쓸 수 있다',
-    how: '맞히면 곧바로 다시 누른다. **빗나가면 그냥 긴 쿨다운이다**',
+    how: '맞히면 곧바로 다시 누른다. 빗나가면 그냥 긴 쿨다운이다',
     max: 1,
     icon: '♾️',
     color: 0x1877f2,

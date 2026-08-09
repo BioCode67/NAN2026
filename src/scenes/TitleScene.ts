@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { addBackdrop, hasArt } from '../config/artAssets';
 import { DEPTH, GAME } from '../config/gameConfig';
 import { CHARACTER_ORDER } from '../config/characters';
-import { MOVE_SLOTS } from '../config/gameConfig';
+import { MOVE_SLOTS, MOVE_TRAITS } from '../config/gameConfig';
 import { STAGES } from '../config/stages';
 import { sound } from '../systems/SoundSystem';
 
@@ -40,6 +40,7 @@ export class TitleScene extends Phaser.Scene {
     this.buildBackground();
     this.buildLogo();
     this.buildPrompt();
+    this.buildTraits();
     this.buildFooter();
     this.bindInput();
 
@@ -191,6 +192,61 @@ export class TitleScene extends Phaser.Scene {
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
+    });
+  }
+
+  /**
+   * 이동 기질 다섯 갈래를 첫 화면에 늘어놓는다.
+   *
+   * ── 왜 여기에 ──────────────────────────────────────────────────────
+   * 로고와 "아무 키나 눌러 시작" 사이가 통째로 비어 있었다. 그 자리에
+   * 채울 것으로 이보다 나은 것이 없다 — 칩 넷("캐릭터 20 · 기술 420")은
+   * **얼마나 많은가**를 말하지만, 많다는 것만으로는 누구를 고를 이유가
+   * 안 된다. 고를 이유는 "저마다 다르게 움직인다"에서 나온다.
+   *
+   * 아이콘 다섯 개면 그 말이 한눈에 성립한다. 아직 아무것도 안 눌러 본
+   * 사람이 "활공? 벽 차기?" 하고 궁금해지는 것이 이 화면이 할 수 있는
+   * 가장 큰 일이다.
+   */
+  private buildTraits(): void {
+    const keys = ['plain', 'glide', 'plunge', 'wallkick', 'drift'] as const;
+
+    this.add
+      .text(GAME.WIDTH / 2, 352, '스무 명이 다섯 갈래로 다르게 움직인다', {
+        fontFamily: GAME.FONT,
+        fontSize: '15px',
+        color: '#6c86c4',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH.HUD);
+
+    keys.forEach((key, i) => {
+      const tr = MOVE_TRAITS[key];
+      const cx = GAME.WIDTH / 2 - 288 + i * 144;
+      const cy = 396;
+
+      const box = this.add
+        .rectangle(cx, cy, 132, 40, 0x121a30, 0.85)
+        .setStrokeStyle(1, 0x2f3f6b)
+        .setDepth(DEPTH.HUD);
+      const label = this.add
+        .text(cx, cy, `${tr.icon} ${tr.name}`, {
+          fontFamily: GAME.FONT,
+          fontSize: '16px',
+          color: '#c3d2f0',
+        })
+        .setOrigin(0.5)
+        .setDepth(DEPTH.HUD);
+
+      // 왼쪽부터 하나씩 켜진다 — 다섯이 한꺼번에 뜨면 그냥 띠로 읽힌다
+      [box, label].forEach((o) => o.setAlpha(0));
+      this.tweens.add({
+        targets: [box, label],
+        alpha: 1,
+        delay: 180 + i * 90,
+        duration: 300,
+        ease: 'Quad.easeOut',
+      });
     });
   }
 

@@ -3115,19 +3115,19 @@ console.log('2인 대전');
   await page.waitForTimeout(300);
 
   const armed = await page.evaluate(
-    () => window.game.scene.getScene('Select')?.twoPlayer === true,
+    () => window.game.scene.getScene('Select')?.localSeats ?? 0,
   );
-  if (!armed) {
-    errors.push('[2인] F2로 2인 대전이 켜지지 않습니다');
+  if (armed !== 2) {
+    errors.push(`[2인] F2로 2인 대전이 켜지지 않습니다 (인원 ${armed})`);
   } else {
     // 1P 고르기 → 2P 고르기 (같은 화면에서 차례만 넘어간다)
     await page.keyboard.press('Enter');
     await page.waitForTimeout(500);
     const midway = await page.evaluate(() => {
       const s = window.game.scene.getScene('Select');
-      return { p1: s?.p1Id ?? null, confirmed: s?.confirmed ?? null };
+      return { picks: s?.localPicks?.length ?? 0, confirmed: s?.confirmed ?? null };
     });
-    if (!midway.p1 || midway.confirmed) {
+    if (midway.picks !== 1 || midway.confirmed) {
       errors.push('[2인] 1P가 고른 뒤 2P 차례로 넘어가지 않습니다');
     }
 
@@ -3189,6 +3189,28 @@ console.log('2인 대전');
       });
       return after.map((x, i) => Math.abs(x - before[i]));
     };
+
+    /*
+     * 재기 전에 둘 다 **칠 수 있는 상태**로 만든다.
+     *
+     * 여기는 봇 둘이 실제로 달려드는 살아 있는 판이다. 재는 그 0.4초 사이에
+     * 2P가 맞아 경직되거나 밀리면 "←를 눌러도 안 움직인다"가 되는데, 키는
+     * 멀쩡하고 그냥 맞고 있었을 뿐이다 — 실제로 그렇게 한 번 걸렸고, 배선을
+     * 따로 들여다보고 나서야 검사가 틀렸다는 것을 알았다.
+     * 재려는 것은 "키가 갈렸는가"이지 "맞고 있는가"가 아니다.
+     */
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.ais.length = 0;
+      for (const f of s.fighters) {
+        f.body?.setVelocity(0, 0);
+        f.stunUntil = 0;
+        f.attackPhase = 'none';
+        // 재는 동안은 아무도 못 때린다 — 넉백이 섞이면 px 이 거짓말을 한다
+        f.invulnUntil = s.time.now + 600000;
+      }
+    });
+    await page.waitForTimeout(400);
 
     const byA = await moved('a');
     const byLeft = await moved('ArrowLeft');

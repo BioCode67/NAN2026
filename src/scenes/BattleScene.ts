@@ -223,6 +223,15 @@ export class BattleScene extends Phaser.Scene {
     remote?: () => InputFrame;
     /** 온라인 자리 번호 — 나간 사람을 찾아내는 데 쓴다 */
     slot?: number;
+    /**
+     * 이 사람이 쓰는 패드 번호 (없으면 키보드만).
+     *
+     * 자리 순서에서 유추하지 않고 **명시한다.** 3·4번 자리는 패드 전용인데,
+     * 키보드를 쓰는 1·2번까지 세어 버리면 세 번째 사람에게 세 번째 패드를
+     * 찾아 주게 된다 — 실제로 꽂힌 것은 첫 번째 패드 하나뿐인데도.
+     * 누가 어느 장치를 쓰는지는 자리를 만들 때 이미 정해지므로 그때 적는다.
+     */
+    padIndex?: number;
   }> = [];
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
@@ -760,8 +769,22 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
-    const p2Id = this.battleData.player2Id;
-    const total = 1 + (p2Id ? 1 : 0) + this.battleData.aiIds.length;
+    /*
+     * 이 기계 앞에 앉은 사람들.
+     *
+     * 1·2번은 키보드를 나눠 쓰고, 3·4번은 패드다 — 한 키보드에 손 셋을
+     * 얹을 수 없어서 지금까지 여기가 둘에서 막혀 있었다. 자리마다 어느
+     * 장치를 쓰는지는 아래 humans 를 세울 때 함께 적는다.
+     *
+     * humanIds 가 있으면 그것이 명단이고, 없으면 옛 방식(playerId +
+     * player2Id)으로 읽는다. 온라인은 이 함수까지 오지 않는다(duel 로 갈린다).
+     */
+    const humanIds =
+      this.battleData.humanIds ??
+      ([this.battleData.playerId, this.battleData.player2Id].filter(
+        Boolean,
+      ) as CharacterId[]);
+    const total = humanIds.length + this.battleData.aiIds.length;
 
     /*
      * 연승이 쌓일수록 봇이 빨라진다.
@@ -779,42 +802,46 @@ export class BattleScene extends Phaser.Scene {
     const gap = total > 1 ? usable / (total - 1) : 0;
     const startX = STAGE.LEFT + 130;
 
-    this.player = new BaseCharacter(
-      this,
-      startX,
-      spawnY,
-      CHARACTERS[this.battleData.playerId],
-      'player',
-      'P1',
-    );
-    this.player.facing = 1;
-    this.fighters.push(this.player);
-
     /*
-     * 2P는 맨 오른쪽에서 시작한다.
+     * 사람을 **바깥쪽부터** 세운다 — 1P 왼쪽 끝, 2P 오른쪽 끝, 3·4P 그 안쪽.
      *
-     * 사람 둘을 양 끝에 세우고 봇을 가운데에 둔다. 사람끼리 붙으려면
-     * 봇을 헤치고 가야 하니, 시작하자마자 둘이 서로만 두들기는 판이 안 된다.
+     * 사람끼리 붙으려면 사이에 있는 봇을 헤치고 가야 하니, 시작하자마자
+     * 둘이 서로만 두들기는 판이 안 된다. 셋·넷이 되면 사람이 사람 옆에
+     * 서게 되는데, 그때는 그게 오히려 낫다 — 시작 신호와 함께 바로 붙는다.
      */
-    if (p2Id) {
-      this.player2 = new BaseCharacter(
-        this,
-        STAGE.RIGHT - 130,
-        spawnY,
-        CHARACTERS[p2Id],
-        'player',
-        'P2',
-      );
-      this.player2.facing = -1;
-      this.fighters.push(this.player2);
-    }
+    const humanSpots = humanIds.map((_, i) =>
+      i % 2 === 0 ? startX + gap * (i / 2) : STAGE.RIGHT - 130 - gap * ((i - 1) / 2),
+    );
 
-    // 봇은 사이를 메운다 (사람이 둘이면 자리가 하나 줄어든다)
-    const botSlots = total - 1 - (p2Id ? 1 : 0);
+    const humans = humanIds.map((id, i) => {
+      const f = new BaseCharacter(
+        this,
+        humanSpots[i]!,
+        spawnY,
+        CHARACTERS[id],
+        'player',
+        `P${i + 1}`,
+      );
+      // 왼쪽에서 시작한 사람은 오른쪽을, 오른쪽에서 시작한 사람은 왼쪽을 본다
+      f.facing = i % 2 === 0 ? 1 : -1;
+      this.fighters.push(f);
+      return f;
+    });
+
+    this.player = humans[0]!;
+    /*
+     * player2 는 "이 판에 나 말고 다른 사람이 있는가"의 표시로도 쓰인다
+     * (연승 도전을 끄고, 결과 화면 문구를 바꾸고, 조작 안내를 나눈다).
+     * 셋·넷일 때도 그 답은 같으므로 두 번째 사람을 그대로 넣는다.
+     */
+    this.player2 = humans[1];
+
+    // 봇은 사이를 메운다 (사람이 늘면 그만큼 자리가 줄어든다)
+    const botSlots = Math.max(0, total - humans.length);
     this.battleData.aiIds.slice(0, botSlots).forEach((id, i) => {
       const bot = new BaseCharacter(
         this,
-        startX + gap * (i + 1),
+        startX + gap * (humans.length + i),
         spawnY,
         CHARACTERS[id],
         'ai',
@@ -824,19 +851,24 @@ export class BattleScene extends Phaser.Scene {
       this.fighters.push(bot);
     });
 
-    /* 사람마다 자기 키와 자기 더블탭 기록을 갖는다 */
+    /*
+     * 사람마다 자기 입력원과 자기 더블탭 기록을 갖는다.
+     *
+     * 1번은 키보드(WASD 계열) + 첫 패드, 2번은 키보드(방향키 계열) + 둘째 패드.
+     * 3번부터는 키보드가 남아 있지 않으므로 패드 전용이다 — 패드 번호를
+     * 자리 순서로 유추하지 않고 여기서 못 박는다.
+     */
     const p1Keys = { ...this.keys };
     // 2P가 있으면 방향키는 2P 것이다 — 1P의 ↑ 점프를 뗀다
     if (this.player2) delete p1Keys.jumpAlt;
+    const keySets = [p1Keys, this.keys2];
 
-    this.humans = [{ fighter: this.player, keys: p1Keys, tap: { dir: 0, at: 0 } }];
-    if (this.player2) {
-      this.humans.push({
-        fighter: this.player2,
-        keys: this.keys2,
-        tap: { dir: 0, at: 0 },
-      });
-    }
+    this.humans = humans.map((f, i) => ({
+      fighter: f,
+      keys: keySets[i] ?? {},
+      tap: { dir: 0 as -1 | 0 | 1, at: 0 },
+      padIndex: this.padSeatIndex(i, humans.length),
+    }));
 
     /* 지면·발판 충돌 + 파이터 간 밀림 */
     this.fighters.forEach((f) => {
@@ -1753,31 +1785,51 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** 지금 꽂혀 있는 패드들 — 순서대로 이 기계의 사람들에게 배정된다 */
+  /**
+   * 이 자리는 몇 번 패드를 쓰는가 (없으면 키보드 전용).
+   *
+   * ── 규칙이 인원수에 따라 갈리는 이유 ───────────────────────────
+   * 키보드는 두 사람까지다. 그래서 셋 이상이면 3·4번은 **패드가 곧 그 사람**
+   * 이고, 첫 패드가 3번 것이 된다.
+   *
+   * 이때 1·2번에서 패드를 떼야 한다. 안 그러면 1번과 3번이 같은 첫 패드를
+   * 함께 보게 되어, 패드 하나로 두 캐릭터가 똑같이 움직인다. 둘이서 할
+   * 때(인원 ≤ 2)는 그 충돌이 없으므로 자리마다 패드를 그대로 붙여
+   * "키보드든 패드든 아무 쪽이나"를 유지한다.
+   */
+  private padSeatIndex(seat: number, humanCount: number): number | undefined {
+    const KEYBOARD_SEATS = 2;
+    if (humanCount <= KEYBOARD_SEATS) return seat;
+    if (seat < KEYBOARD_SEATS) return undefined;
+    return seat - KEYBOARD_SEATS;
+  }
+
+  /** 지금 꽂혀 있는 패드들 (꽂힌 순서) */
   private livePads(): Phaser.Input.Gamepad.Gamepad[] {
     const pads = this.input.gamepad?.gamepads ?? [];
     return pads.filter((p) => p && p.connected);
   }
 
   /**
-   * 이 기계의 `localIdx`번째 사람의 패드 입력.
+   * `padIndex`번째 패드의 이번 프레임 입력.
    *
    * 패드가 없으면 null — 키보드 프레임에 합치기만 하므로 없어도 그만이다.
+   * (다만 패드 전용 자리는 그동안 아무 입력도 못 받는다. 판 도중에 뽑히면
+   *  조용한 자리 회수기가 봇으로 바꿔 준다.)
    */
-  private padFrame(localIdx: number): InputFrame | null {
-    const pad = this.livePads()[localIdx];
+  private padFrame(padIndex: number): InputFrame | null {
+    const pad = this.livePads()[padIndex];
     if (!pad) return null;
-    while (this.padReaders.length <= localIdx) {
+    while (this.padReaders.length <= padIndex) {
       this.padReaders.push(new PadReader());
     }
-    return this.padReaders[localIdx]!.read(pad);
+    return this.padReaders[padIndex]!.read(pad);
   }
 
   /** 사람이 조종하는 파이터 전부 — 각자 자기 입력원에서 한 프레임을 읽는다 */
   private handleAllInput(): void {
-    let localIdx = 0;
     for (const h of this.humans) {
-      const myLocalIdx = h.remote ? -1 : localIdx++;
+      const myLocalIdx = h.remote ? -1 : (h.padIndex ?? -1);
       /*
        * 죽은 사람은 유령을 조종한다.
        *
@@ -3408,6 +3460,16 @@ export class BattleScene extends Phaser.Scene {
       return label;
     };
 
+    /*
+     * 이 기계의 사람이 셋 이상이면 3·4번은 패드다.
+     *
+     * 키보드 두 줄을 그대로 두고 패드 줄을 하나 더 붙인다 — 세 줄이 되면
+     * 빽빽하지만, 패드 배치를 어디에도 안 적으면 패드를 쥔 사람은 아무
+     * 버튼이나 눌러 보는 수밖에 없다. 판이 시작된 뒤에 알아내야 하는 조작은
+     * 없는 조작과 같다.
+     */
+    const localHumans = this.humans.filter((h) => !h.remote).length;
+
     if (this.player2) {
       /*
        * 2인 대전은 안내를 사람별로 나눈다.
@@ -3436,6 +3498,15 @@ export class BattleScene extends Phaser.Scene {
         34,
         'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬 · U 잡기(가드를 뚫는다)  ｜  잡은 뒤 J 툭툭 · K 던지기(W/S/뒤로 방향 지정) · 잡히면 아무 버튼 연타로 탈출',
         '#a8bce0',
+      );
+    }
+
+    if (localHumans > 2) {
+      const who = localHumans === 3 ? '3P' : '3P · 4P';
+      hint(
+        52,
+        `${who} (패드)   스틱·십자키 이동 · A 점프 · X 약 · B 강 · Y 스킬 · LB/RB 잡기 · LT/RT 방어 · 스타트 일시정지`,
+        SEAT_COLORS[2]!,
       );
     }
 

@@ -500,6 +500,124 @@ try {
     }
   }
 
+  /*
+   * 9. 로컬 4인 대전 — 이 기계 앞에 넷이 앉는다.
+   *
+   * ── 왜 검사에 넣는가 ───────────────────────────────────────────
+   * 한 판에 넷이 서는 게임인데 이 기계에서 사람은 오래 둘까지였다. 그 벽을
+   * 없애는 것이 패드를 받은 이유이고, 그렇다면 **넷이 실제로 서는지**가
+   * 이 기능의 전부다. 3·4번 자리는 패드로만 움직이므로 패드 없이는 아예
+   * 확인할 수 없고 — 그래서 여기 있다.
+   *
+   * 셋 이상이 되면 1·2번은 키보드 전용이 되고 첫 패드가 3번 것이 된다.
+   * 그 규칙이 어긋나면 패드 하나로 두 캐릭터가 함께 움직인다. 그것도 본다.
+   */
+  await page.evaluate(() => window.game?.scene?.getScene('Battle')?.scene.start('Select'));
+  if (!(await waitScene('Select'))) {
+    bad('[4인] 선택 화면으로 못 돌아왔습니다');
+  } else {
+    await page.waitForTimeout(900);
+
+    // F2 를 세 번 — 1 → 2 → 3 → 4
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('F2');
+      await page.waitForTimeout(250);
+    }
+    const seats = await page.evaluate(
+      () => window.game?.scene?.getScene('Select')?.localSeats ?? 0,
+    );
+    if (seats !== 4) {
+      bad(`[4인] F2 세 번에 4인이 안 됩니다 (${seats})`);
+    } else {
+      ok('F2 ×3 → 4인 대전');
+
+      // 넷이 차례로 고른다 — 매번 다른 캐릭터를 집도록 커서를 옮긴다
+      for (let i = 0; i < 4; i++) {
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(500);
+        if (i < 3) {
+          for (let k = 0; k < 3; k++) {
+            await page.keyboard.press('ArrowRight');
+            await page.waitForTimeout(140);
+          }
+        }
+      }
+
+      if (!(await waitScene('Battle', 40))) {
+        bad('[4인] 넷을 고르고도 전투에 못 들어갔습니다');
+      } else {
+        await page.waitForTimeout(1200);
+        const crew = await page.evaluate(() => {
+          const s = window.game.scene.getScene('Battle');
+          const humans = s.fighters.filter((f) => f.side === 'player');
+          return {
+            total: s.fighters.length,
+            humans: humans.length,
+            names: humans.map((f) => f.cfg.name),
+            unique: new Set(humans.map((f) => f.cfg.id)).size,
+            // 자리별 입력 장치 — 3·4번만 패드여야 한다
+            pads: s.humans.map((h) => h.padIndex ?? null),
+          };
+        });
+
+        if (crew.humans !== 4) {
+          bad(`[4인] 사람이 넷이어야 하는데 ${crew.humans}명입니다`);
+        } else if (crew.total !== 4) {
+          bad(`[4인] 판에 넷이 서야 하는데 ${crew.total}명입니다 (봇이 안 빠졌다)`);
+        } else if (crew.unique !== 4) {
+          bad(`[4인] 같은 캐릭터가 겹쳤습니다 — ${crew.names.join(', ')}`);
+        } else if (JSON.stringify(crew.pads) !== JSON.stringify([null, null, 0, 1])) {
+          bad(`[4인] 자리별 패드 배정이 틀렸습니다 — ${JSON.stringify(crew.pads)}`);
+        } else {
+          ok(`넷이 판에 섰다 — ${crew.names.join(' · ')} (3P=패드0 · 4P=패드1)`);
+        }
+
+        /*
+         * 첫 패드가 **3번만** 움직이는가.
+         *
+         * 배정이 어긋나면 패드 하나가 두 캐릭터를 함께 끌고 다니는데,
+         * 화면으로는 "왜 쟤가 같이 움직이지" 정도로만 보여서 놓치기 쉽다.
+         */
+        if (crew.humans === 4) {
+          const xs = () =>
+            page.evaluate(() =>
+              window.game.scene
+                .getScene('Battle')
+                .fighters.filter((f) => f.side === 'player')
+                .map((f) => f.x),
+            );
+          // 봇이 없어도 서로 밀칠 수 있으니 멈춰 세우고 잰다
+          await page.evaluate(() => {
+            const s = window.game.scene.getScene('Battle');
+            s.ais.length = 0;
+            for (const f of s.fighters) f.body?.setVelocity(0, 0);
+          });
+          await page.waitForTimeout(300);
+
+          const before = await xs();
+          await padSet(BTN.RIGHT, true, 0);
+          await page.waitForTimeout(800);
+          await padSet(BTN.RIGHT, false, 0);
+          const after = await xs();
+
+          const moved = after.map((x, i) => Math.abs(x - before[i]));
+          const others = [moved[0], moved[1], moved[3]];
+          if (moved[2] < 20) {
+            bad(`[4인] 첫 패드로 3P가 안 움직입니다 (${moved[2].toFixed(0)}px)`);
+          } else if (others.some((m) => m > 12)) {
+            bad(
+              `[4인] 첫 패드가 3P 말고 다른 자리도 움직입니다 — ${moved
+                .map((m) => m.toFixed(0))
+                .join('/')}px`,
+            );
+          } else {
+            ok(`첫 패드는 3P만 움직인다 (${moved[2].toFixed(0)}px)`);
+          }
+        }
+      }
+    }
+  }
+
   await padRelease();
 } catch (e) {
   bad(`[중단] ${e.message}`);

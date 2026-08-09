@@ -3246,9 +3246,11 @@ console.log('격추 연출');
       return { left: Math.round(toScreen(b.left)), right: Math.round(toScreen(b.right)) };
     };
     const before = box();
-    s.punchZoom(1); // 펀치가 가장 깊이 들어간 순간
+    s.zoomPunch = 1; // 펀치가 가장 깊이 들어간 순간
+    s.applyZoom();
     const during = box();
-    s.punchZoom(0);
+    s.zoomPunch = 0;
+    s.applyZoom();
     const after = box();
     return { before, during, after, zoom: s.cameras.main.zoom };
   });

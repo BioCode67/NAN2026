@@ -2831,6 +2831,25 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(DEPTH.OVERLAY)
       .setScrollFactor(0);
 
+    /*
+     * 글이 앉을 자리를 따로 깐다.
+     *
+     * ── 왜 필요한가 ──────────────────────────────────────────────────
+     * 반투명 막 한 겹만으로는 무대가 비쳐 올라온다. 용암 지대처럼 밝고
+     * 복잡한 무대에서는 전적표의 숫자 위로 발판·불꽃·남아 있는 파이터가
+     * 그대로 겹쳐 찍혔다 — 실제로 "빌 게이츠맨" 줄 위에 주가 막대가,
+     * 그 아래 줄에는 캐릭터 하나가 통째로 올라와 있었다.
+     *
+     * 막을 더 어둡게 하는 것으로는 안 된다. 그러면 이긴 사람의 승리 포즈와
+     * 무대까지 같이 죽는다. 읽어야 하는 자리에만 바닥을 깔면, 뒤가 무엇이든
+     * 글자는 항상 읽히고 바깥은 그대로 보인다.
+     */
+    this.add
+      .rectangle(GAME.WIDTH / 2, 404, 1010, 620, 0x070b16, 0.88)
+      .setStrokeStyle(2, 0x2f3f6b, 0.9)
+      .setDepth(DEPTH.OVERLAY)
+      .setScrollFactor(0);
+
     /* 이긴 판이 몇 번째인가 — 이번 판을 포함한 수 */
     const wonSoFar = playerWon ? this.streak + 1 : this.streak;
     // 연승 도전은 혼자 할 때만. 둘이면 다음 상대가 아니라 다시 붙는 것이 맞다

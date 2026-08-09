@@ -157,6 +157,19 @@ export type BgmTrack = 'menu' | 'battle';
 
 class SoundSystem {
   private ctx: AudioContext | null = null;
+  /**
+   * 파일로 받은 소리들.
+   *
+   * 있으면 이쪽을 쓰고, 없으면 지금까지처럼 코드가 만든다. 섞여 있어도
+   * 된다 — 효과음 몇 개만 파일이고 나머지는 합성이어도 같은 버스를 타므로
+   * 음량·음소거가 따로 놀지 않는다.
+   */
+  private readonly sfxBuf = new Map<string, AudioBuffer>();
+  private readonly bgmBuf = new Map<string, AudioBuffer>();
+  /** 지금 흐르는 파일 곡 — [소스, 게인] */
+  private fileBgm: Array<{ src: AudioBufferSourceNode; gain: GainNode; hot: boolean }> = [];
+  /** 파일 곡이 흐르는 동안은 시퀀서를 돌리지 않는다 */
+  private bgmIsFile = false;
   private master: GainNode | null = null;
   private bgmBus: GainNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
@@ -224,12 +237,87 @@ class SoundSystem {
     const data = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
 
+    // 받아 둔 파일을 이제 디코드한다 (끝나면 곡이 파일 판으로 갈아탄다)
+    void this.decodePending();
+
     // 소리를 켤 수 없던 동안 들어온 요청을 이제 처리한다
     if (this.pendingTrack) {
       const t = this.pendingTrack;
       this.pendingTrack = null;
       this.startBgm(t);
     }
+  }
+
+  /**
+   * 소리 파일을 받아 둔다 (BootScene 이 부른다).
+   *
+   * AudioContext 는 첫 입력 뒤에야 생기므로 여기서 만들지 않는다 —
+   * 받아 둔 바이트를 들고 있다가 ctx 가 생기는 순간 디코드한다.
+   * 그래야 제목 화면이 뜨기 전에 미리 받아 둘 수 있고, 첫 입력 직후
+   * 곡이 곧바로 나온다.
+   */
+  async loadFiles(
+    bgm: Array<{ key: string; path: string }>,
+    sfx: Array<{ key: SfxName; path: string }>,
+  ): Promise<void> {
+    const grab = async (path: string): Promise<ArrayBuffer | null> => {
+      try {
+        const res = await fetch(path);
+        return res.ok ? await res.arrayBuffer() : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const jobs = [
+      ...bgm.map(async (b) => ({ kind: 'bgm' as const, key: b.key, data: await grab(b.path) })),
+      ...sfx.map(async (s2) => ({ kind: 'sfx' as const, key: s2.key, data: await grab(s2.path) })),
+    ];
+    this.pendingBytes = (await Promise.all(jobs)).filter((j) => j.data !== null) as Array<{
+      kind: 'bgm' | 'sfx';
+      key: string;
+      data: ArrayBuffer;
+    }>;
+
+    // 이미 소리가 켜져 있으면(두 번째 판 등) 곧바로 디코드한다
+    if (this.ctx) await this.decodePending();
+  }
+
+  /** 받아 둔 바이트를 실제 소리로 바꾼다 — ctx 가 생긴 뒤에만 가능하다 */
+  private async decodePending(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx || !this.pendingBytes.length) return;
+    const jobs = this.pendingBytes;
+    this.pendingBytes = [];
+
+    await Promise.all(
+      jobs.map(async (j) => {
+        try {
+          const buf = await ctx.decodeAudioData(j.data.slice(0));
+          (j.kind === 'bgm' ? this.bgmBuf : this.sfxBuf).set(j.key, buf);
+        } catch {
+          // 못 읽는 파일은 조용히 건너뛴다 — 그 소리만 합성으로 남는다
+        }
+      }),
+    );
+
+    /*
+     * 곡이 이미 합성으로 돌고 있었다면 파일 판으로 갈아탄다.
+     * 제목 화면은 첫 입력보다 먼저 뜨므로 이 경우가 실제로 생긴다.
+     */
+    if (this.bgmTrack && !this.bgmIsFile && this.bgmBuf.has(this.bgmTrack)) {
+      const t = this.bgmTrack;
+      this.stopBgm();
+      this.startBgm(t);
+    }
+  }
+
+  /** 아직 디코드하지 못한 파일 바이트 */
+  private pendingBytes: Array<{ kind: 'bgm' | 'sfx'; key: string; data: ArrayBuffer }> = [];
+
+  /** 파일로 들어온 소리가 하나라도 있는가 (검사·표시용) */
+  get fileAudio(): { bgm: string[]; sfx: string[] } {
+    return { bgm: [...this.bgmBuf.keys()], sfx: [...this.sfxBuf.keys()] };
   }
 
   get isMuted(): boolean {
@@ -256,6 +344,25 @@ class SoundSystem {
   play(name: SfxName, intensity = 0.5): void {
     if (!this.ctx || this.muted) return;
     const i = Math.max(0, Math.min(1, intensity));
+
+    /*
+     * 파일이 있으면 그것을 쓴다.
+     *
+     * 세기(intensity)는 음량으로만 반영한다. 합성 소리는 세기에 따라
+     * 피치까지 바꾸지만, 녹음된 소리의 피치를 건드리면 다른 소리가 된다 —
+     * 만들어 온 사람이 의도한 소리를 그대로 내는 쪽이 맞다.
+     */
+    const buf = this.sfxBuf.get(name);
+    if (buf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.55 + i * 0.45;
+      src.connect(g);
+      g.connect(this.master ?? this.ctx.destination);
+      src.start();
+      return;
+    }
 
     switch (name) {
       /*
@@ -395,7 +502,7 @@ class SoundSystem {
       this.pendingTrack = track;
       return;
     }
-    if (this.bgmTrack === track && this.bgmTimer !== null) return;
+    if (this.bgmTrack === track && (this.bgmTimer !== null || this.bgmIsFile)) return;
 
     this.stopBgm();
     this.bgmTrack = track;
@@ -407,8 +514,75 @@ class SoundSystem {
     this.bgmStep = 0;
     this.bgmNextTime = this.ctx.currentTime + 0.1;
 
+    // 파일로 받은 곡이 있으면 그것을 튼다 (없으면 지금까지처럼 합성)
+    if (this.bgmBuf.has(track)) {
+      this.startFileBgm(track);
+      return;
+    }
+
     // 오디오 스레드보다 앞서 스케줄을 채워 끊김을 막는다
     this.bgmTimer = window.setInterval(() => this.scheduleBgm(), 40);
+  }
+
+  /**
+   * 파일 곡을 튼다.
+   *
+   * 평소 판과 뜨거운 판을 **동시에 틀어 두고 음량만 바꿔** 갈아탄다.
+   * 곡을 끊고 다른 곡을 시작하면 그 순간 흐름이 끊겨서 "긴장이 올랐다"가
+   * 아니라 "노래가 바뀌었다"로 들린다 — 합성 곡에서 층을 얹는 것과 같은
+   * 이유다. 두 파일이 같은 길이·같은 BPM 이라는 전제인데, 한 곡을 두
+   * 버전으로 만드는 것이 원래 그렇다. `_hot` 이 없으면 한 줄만 흐른다.
+   */
+  private startFileBgm(track: BgmTrack): void {
+    const ctx = this.ctx;
+    const bus = this.bgmBus;
+    if (!ctx || !bus) return;
+
+    this.bgmIsFile = true;
+    const at = ctx.currentTime + 0.05;
+
+    for (const hot of [false, true]) {
+      const buf = this.bgmBuf.get(hot ? `${track}_hot` : track);
+      if (!buf) continue;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = ctx.createGain();
+      // 평소 판은 켜고 뜨거운 판은 꺼 둔 채 시작한다
+      g.gain.value = hot ? 0 : 1;
+      src.connect(g);
+      g.connect(bus);
+      src.start(at);
+      this.fileBgm.push({ src, gain: g, hot });
+    }
+
+    this.applyFileHeat();
+    this.applyFileRate();
+  }
+
+  /** 열기에 맞춰 두 줄의 음량을 바꾼다 (파일 곡 전용) */
+  private applyFileHeat(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.fileBgm.length) return;
+    const hot = this.heat >= 1;
+    for (const line of this.fileBgm) {
+      const want = line.hot ? (hot ? 1 : 0) : hot && this.fileBgm.length > 1 ? 0.25 : 1;
+      line.gain.gain.cancelScheduledValues(ctx.currentTime);
+      line.gain.gain.setTargetAtTime(want, ctx.currentTime, 0.6);
+    }
+  }
+
+  /**
+   * 무대 색을 파일 곡에 입힌다.
+   *
+   * 합성 곡은 조를 옮기고 템포를 바꾸지만, 파일은 재생 속도 하나로만
+   * 그렇게 할 수 있다(속도를 바꾸면 음높이도 함께 간다). 달 표면에서
+   * 곡이 느리고 낮아지는 것은 원래 의도한 방향이라 그대로 쓸 만하다.
+   */
+  private applyFileRate(): void {
+    if (!this.fileBgm.length) return;
+    const rate = this.bpmMul * Math.pow(2, this.transpose / 24);
+    for (const line of this.fileBgm) line.src.playbackRate.value = rate;
   }
 
   stopBgm(): void {
@@ -416,6 +590,15 @@ class SoundSystem {
       window.clearInterval(this.bgmTimer);
       this.bgmTimer = null;
     }
+    for (const line of this.fileBgm) {
+      try {
+        line.src.stop();
+      } catch {
+        /* 이미 멎은 소스 */
+      }
+    }
+    this.fileBgm = [];
+    this.bgmIsFile = false;
     this.bgmTrack = null;
   }
 
@@ -429,11 +612,13 @@ class SoundSystem {
    */
   setIntensity(level: 0 | 1 | 2): void {
     this.matchHeat = level;
+    this.applyFileHeat();
   }
 
   /** 기믹처럼 "지금 이 판의 규칙"이 만드는 열기 — 끝나면 0으로 되돌린다 */
   setRuleIntensity(level: 0 | 1 | 2): void {
     this.ruleHeat = level;
+    this.applyFileHeat();
   }
 
   /**
@@ -445,6 +630,7 @@ class SoundSystem {
   setStageTone(transpose = 0, bpmMul = 1): void {
     this.transpose = transpose;
     this.bpmMul = bpmMul;
+    this.applyFileRate();
   }
 
   private get heat(): number {
@@ -463,9 +649,15 @@ class SoundSystem {
     heat: number;
     transpose: number;
     bpmMul: number;
+    /** 파일 곡인가 합성인가 — 파일을 넣었는데 안 쓰이면 여기서 잡힌다 */
+    source: 'file' | 'synth' | null;
+    /** 파일 곡이 몇 줄 흐르는가 (2 면 뜨거운 판 층까지 있다) */
+    lines: number;
   } {
     return {
       track: this.bgmTrack,
+      source: this.bgmTrack ? (this.bgmIsFile ? 'file' : 'synth') : null,
+      lines: this.fileBgm.length,
       step: this.bgmStep,
       heat: this.heat,
       transpose: this.transpose,

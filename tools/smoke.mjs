@@ -891,33 +891,37 @@ console.log('앞뒤 커맨드');
  */
 console.log('대시 공격 두 갈래');
 {
+  /*
+   * 다른 블록과 같은 절차를 밟는다 — 판을 새로 열고, 땅을 딛고, 격리.
+   * 공중에서 재면 같은 입력이 공중기로 해석되어 "팝업 광고"가 나오는데,
+   * 그건 대시 갈래가 고장난 것이 아니라 지금 떠 있는 것이다.
+   */
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
   const dash = await page.evaluate(() => {
     const p = window.game.scene.getScene('Battle').player;
     return { j: p.cfg.moves.dashAttack.name, k: p.cfg.moves.dashSlide.name };
   });
-  const slots = await page.evaluate(async () => {
+  const slots = await page.evaluate(() => {
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    /*
-     * 발이 땅에 닿아 있을 때 재야 한다.
-     * 공중이면 같은 입력이 공중기로 해석된다 — 그건 대시 갈래가 고장난 것이
-     * 아니라 지금 떠 있는 것이다. 실제로 그 순간에 재서 "팝업 광고"가 나왔다.
-     */
-    for (let i = 0; i < 50; i++) {
-      if (p.body.blocked.down || p.body.touching.down) break;
-      p.body.setVelocity(0, 300);
-      await wait(60);
-    }
     // 대시 중 상태를 만들어 두고 무엇으로 해석되는지 물어본다
     p.dashUntil = s.time.now + 60000;
     const out = {
       j: p.resolveMove('light', 'neutral').name,
       k: p.resolveMove('heavy', 'neutral').name,
+      onGround: p.body.blocked.down || p.body.touching.down,
     };
     p.dashUntil = 0;
     return out;
   });
+  await releasePlayer();
+
+  if (!slots.onGround) {
+    errors.push('[대시] 땅을 딛지 못한 채로 쟀습니다 (격리 실패)');
+  }
 
   if (slots.j !== dash.j || slots.k !== dash.k) {
     errors.push(
@@ -1521,7 +1525,20 @@ console.log('공격 모션');
     if (!sp) return { why: '도형 아트라 스프라이트가 없습니다' };
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    const home = { x: sp.x, y: sp.y, sx: sp.scaleX, sy: sp.scaleY };
+    /*
+     * 기준점은 **뷰가 실제로 쓰는 값**을 그대로 읽는다.
+     *
+     * 지금 그려져 있는 자리를 기준으로 삼으면 안 된다 — 앞 단계의 공격
+     * 트윈이 아직 날고 있으면 시작부터 어긋난 자리에서 재게 되고,
+     * "6px 당김"이 "0px"로 보인다. 모션 코드가 되돌아가는 자리(homeX)를
+     * 그대로 쓰면 그 어긋남이 원천적으로 없다.
+     */
+    const home = {
+      x: p.view.homeX ?? 0,
+      y: p.view.homeY,
+      sx: p.view.homeScaleX,
+      sy: p.view.homeScaleY,
+    };
 
     /*
      * 선딜 — 뒤로 당기는가.
@@ -1531,22 +1548,34 @@ console.log('공격 모션');
      * 한 장도 안 지나간 순간일 수 있다 — 당기지 않은 게 아니라 아직 아무것도
      * 그려지지 않은 것이다. 시점 하나에 기대는 검사는 느린 기계에서 거짓말을 한다.
      */
-    p.attackPhase = 'none';
-    p.stunUntil = 0;
-    p.attack('heavy', 'neutral');
     /*
-     * 선딜이 실제로 끝날 때까지 본다.
-     * 이 브라우저에서는 게임 시간이 실제의 1/5 로 흐르므로, 게임 기준
-     * 200ms 선딜이 실제로는 1초쯤 걸린다 — 횟수가 아니라 상태로 멈춘다.
+     * 공격이 실제로 나갔는지부터 확인한다.
+     * 잡힌 채·회피 중에 들어오면 attack() 이 조용히 거부되고, 그 뒤의
+     * 측정은 "0px 당김"이라는 그럴듯한 거짓을 만든다.
      */
-    let wind = { dx: 0, sy: 1 };
-    for (let i = 0; i < 60; i++) {
-      await wait(40);
-      if (sp.x - home.x < wind.dx) {
-        wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
-      }
-      if (p.attackPhase !== 'startup') break;
+    let fired = false;
+    for (let t = 0; t < 3 && !fired; t++) {
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.dodgeUntil = 0;
+      p.breakGrab();
+      fired = p.attack('heavy', 'neutral');
+      if (!fired) await wait(200);
     }
+    if (!fired) return { why: '공격이 발동하지 않습니다 (상태 격리 실패)' };
+
+    /*
+     * 시간을 재지 않는다 — 트윈을 감아 놓고 잰다.
+     *
+     * 이 검사를 시간 기반으로 세 번 고쳐 썼고 세 번 다 다른 이유로 흔들렸다
+     * (프레임 델타 압축·짧은 창·이벤트 루프 정지). 예비동작 트윈은 attack()
+     * 안에서 **동기적으로** 등록되므로, 그 자리에서 붙잡아 원하는 지점으로
+     * 감으면 기계가 얼마나 느리든 같은 값이 나온다.
+     */
+    const tws = s.tweens.getTweensOf(sp);
+    if (!tws.length) return { why: '예비동작 트윈이 등록되지 않았습니다' };
+    tws.forEach((t) => t.seek(120));
+    const wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
 
     /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
     let out = { dx: 0, sx: 1, sy: 1 };
@@ -1606,23 +1635,43 @@ console.log('기술별 이펙트');
      * 빼면 음수가 나오기도 한다. 부르기 전의 목록을 기억해 두고 그 뒤에
      * 새로 들어온 것만 세면 정확하다.
      */
-    const shapes = () =>
-      s.children.list.filter(
-        (o) => o.depth >= 20 && (o.type === 'Ellipse' || o.type === 'Arc'),
-      );
+    /*
+     * 만들어지는 순간에 센다 — 나중에 화면을 훑지 않는다.
+     *
+     * 이펙트는 스스로 사라진다(트윈이 끝나면 destroy). 그래서 표시 목록을
+     * 나중에 훑으면 "만들기 전"이나 "사라진 뒤"를 잡을 수 있고, 둘 다
+     * "안 그려졌다"로 보인다 — 실제로 그 거짓 실패가 여러 번 났다.
+     * 만드는 통로를 잠깐 가로채 세면 타이밍이 아예 변수에서 빠진다.
+     */
+    const origEllipse = s.add.ellipse.bind(s.add);
+    const origArc = s.add.arc.bind(s.add);
+    let made = 0;
+    s.add.ellipse = (...args) => {
+      made++;
+      return origEllipse(...args);
+    };
+    s.add.arc = (...args) => {
+      made++;
+      return origArc(...args);
+    };
 
     const out = {};
-    for (const slot of ['light', 'light3', 'heavy2', 'airHeavy']) {
-      const atk = p.cfg.moves[slot];
-      if (!atk) continue;
-      const seen = new Set(shapes());
-      p.attackPhase = 'none';
-      p.stunUntil = 0;
-      p.spawnSwing(atk);
-      await wait(20);
-      out[slot] = { fx: atk.fx, shapes: shapes().filter((o) => !seen.has(o)).length };
-      await wait(420);
+    try {
+      for (const slot of ['light', 'light3', 'heavy2', 'airHeavy']) {
+        const atk = p.cfg.moves[slot];
+        if (!atk) continue;
+        made = 0;
+        p.attackPhase = 'none';
+        p.stunUntil = 0;
+        p.spawnSwing(atk);
+        out[slot] = { fx: atk.fx, shapes: made };
+        await wait(60);
+      }
+    } finally {
+      s.add.ellipse = origEllipse;
+      s.add.arc = origArc;
     }
+
     return out;
   });
 

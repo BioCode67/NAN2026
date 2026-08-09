@@ -742,6 +742,97 @@ try {
   }
 
   /*
+   * 10.3 이동 기질이 패드로도 되는가 — 활공.
+   *
+   * ── 왜 보는가 ──────────────────────────────────────────────────
+   * 다섯 갈래 기질 중 넷은 저절로 걸린다(떨어지면 빨라진다, 밀려나면 벽을
+   * 찬다…). 딱 하나 **활공만 버튼을 요구한다** — 떨어지는 중에 점프를 누르고
+   * 있어야 한다. 그 말은 패드의 A 가 jumpHeld 로 이어지지 않으면 활공
+   * 캐릭터를 고른 패드 플레이어에게는 그 기질이 통째로 없다는 뜻이다.
+   *
+   * 그리고 그건 화면에 안 보인다. 활공은 "안 떨어지는 것"이라, 안 되면
+   * 그냥 남들처럼 떨어질 뿐이다 — 고장으로 안 보이고 손해로만 남는다.
+   */
+  {
+    /*
+     * **첫 패드가 실제로 조종하는 사람**에게 건다.
+     *
+     * 처음에는 1P 에 걸고 패드 A 를 눌렀는데 안 걸렸다. 당연하다 — 지금은
+     * 4인 판이고, 그 규칙에서 1·2번은 키보드 전용이며 첫 패드는 3P 것이다.
+     * 검사가 남의 버튼을 누르고 "기질이 안 걸린다"고 적은 셈이었다.
+     * 자리 배정을 그대로 따라가면 그런 착각이 안 생긴다.
+     */
+    const padSeat = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      const h = s.humans.find((x) => x.padIndex === 0);
+      if (!h) return null;
+      s.ais.length = 0;
+      /*
+       * trait 은 cfg.move 에서 읽는 **게터**라 직접 대입해도 조용히 무시된다
+       * (실제로 그렇게 해 놓고 "활공이 안 걸린다"고 적었다). 이 파이터의
+       * cfg 만 얕게 복사해 갈아 끼운다 — 원본을 건드리면 같은 캐릭터를 쓰는
+       * 다음 판까지 활공이 된다.
+       */
+      h.fighter.cfg = { ...h.fighter.cfg, move: 'glide' };
+      s.fighters.forEach((f) => (f.invulnUntil = s.time.now + 600000));
+      return s.fighters.indexOf(h.fighter);
+    });
+
+    if (padSeat === null) {
+      bad('[기질] 첫 패드를 쓰는 자리를 못 찾았습니다');
+    } else {
+      /** 그 사람을 떨어뜨리고 낙하 최고 속도를 잰다 */
+      const drop = () =>
+        page.evaluate(async (idx) => {
+          const s = window.game.scene.getScene('Battle');
+          const p = s.fighters[idx];
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          p.attackPhase = 'none';
+          p.stunUntil = 0;
+          /*
+           * 발판이 없는 자리에서 떨어뜨린다.
+           *
+           * 처음에는 무대 한가운데(960) 위에서 떨어뜨렸는데, 하필 거기
+           * 바로 아래(y 215)에 발판이 있어 한 프레임 만에 착지했다.
+           * 낙하를 잰 게 아니라 발판까지의 13px 을 잰 셈이었다.
+           */
+          p.x = 200;
+          p.y = 140;
+          p.body.setVelocity(0, 0);
+          // 떨어지기 시작할 때까지
+          for (let i = 0; i < 40; i++) {
+            await wait(30);
+            if (p.body.velocity.y > 60) break;
+          }
+          let peak = 0;
+          for (let i = 0; i < 25; i++) {
+            await wait(30);
+            peak = Math.max(peak, p.body.velocity.y);
+            if (p.body.blocked.down || p.body.touching.down) break;
+          }
+          return peak;
+        }, padSeat);
+
+      const free = await drop();
+      await padSet(BTN.A, true);
+      await page.waitForTimeout(150);
+      const held = await drop();
+      await padSet(BTN.A, false);
+      await page.waitForTimeout(200);
+
+      if (free < 200) {
+        console.log(`  · 그냥 떨어지는 속도가 ${free.toFixed(0)} 뿐이라 활공 검사는 건너뜁니다`);
+      } else if (!(held < free * 0.6)) {
+        bad(
+          `[기질] 패드 A 를 눌러도 활공이 안 걸립니다 (그냥 ${free.toFixed(0)} → 누른 채 ${held.toFixed(0)})`,
+        );
+      } else {
+        ok(`활공이 패드로도 걸린다 (${free.toFixed(0)} → ${held.toFixed(0)})`);
+      }
+    }
+  }
+
+  /*
    * 10.4 화면 밖 화살표가 자리마다 갈리는가.
    *
    * ── 왜 보는가 ──────────────────────────────────────────────────

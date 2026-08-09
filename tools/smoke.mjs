@@ -486,24 +486,35 @@ await page.waitForSelector('canvas', { timeout: 30000 });
 const sceneAlive = (key) =>
   page.evaluate((k) => !!window.game?.scene?.isActive(k), key).catch(() => false);
 
+/*
+ * Enter 는 **한 번만** 누르고, 그 다음은 기다리기만 한다.
+ *
+ * 전에는 선택 화면이 보일 때까지 700ms 마다 Enter 를 두드렸다. 헤드리스에서
+ * 페이드가 밀리면 그사이 한 번 더 눌리고, 그 한 번이 선택 화면으로 새어
+ * 들어가 캐릭터를 즉시 확정해 버린다 — 그러면 이 뒤의 검사들이 전부
+ * "선택 화면인 줄 알고" 도는데 게임은 이미 전투 중이다. 실제로 그렇게
+ * "메뉴 곡이 아닙니다: battle" 과 "상세 보기가 안 열립니다" 가 한꺼번에
+ * 났고, 둘 다 고장이 아니라 검사가 화면을 잘못 안 것이었다.
+ *
+ * 눌렀으면 결과를 기다린다. 안 넘어가면 그때 다시 누른다.
+ */
 let atSelect = false;
-for (let i = 0; i < 60; i++) {
+for (let attempt = 0; attempt < 4 && !atSelect; attempt++) {
   if (await sceneAlive('Select')) {
     atSelect = true;
     break;
   }
   if (await sceneAlive('Title')) {
-    if (i === 0) await shot('title');
+    if (attempt === 0) await shot('title');
     await page.keyboard.press('Enter');
-    /*
-     * 한 번 누르고 페이드가 끝날 때까지 기다린다.
-     * 짧게 끊어 여러 번 누르면 그중 하나가 선택 화면으로 새어 들어가
-     * 캐릭터를 즉시 확정해 버려, 이후 단계가 통째로 엉뚱해진다.
-     */
-    await page.waitForTimeout(700);
-    continue;
   }
-  await page.waitForTimeout(250);
+  atSelect = await page
+    .waitForFunction(() => !!window.game?.scene?.isActive('Select'), null, {
+      polling: 150,
+      timeout: 12000,
+    })
+    .then(() => true)
+    .catch(() => false);
 }
 if (!atSelect) errors.push('[부팅] 캐릭터 선택 화면까지 넘어가지 못했습니다');
 
@@ -555,9 +566,19 @@ const isDetailOpen = () =>
  * 드물지 않다. 그때마다 "상세 보기가 안 열린다"는 실패가 떴는데 기능은
  * 멀쩡했다 — 검사가 늦게 본 것도 아니고, 키가 아예 안 들어간 것이다.
  */
+/*
+ * I 를 먼저 눌러 본다.
+ *
+ * 순서를 바꾼 데는 이유가 있다. TAB 은 브라우저에게 "다음 요소로 초점을
+ * 옮겨라"라는 뜻이라, 게임이 그것을 받든 못 받든 **초점이 캔버스를 떠난다**.
+ * 떠난 뒤에 누르는 I 는 게임에 아예 도착하지 않는다 — 그래서 "둘 다
+ * 안 열린다"는 실패가 났고, 기능은 멀쩡했다. 매번 캔버스를 다시 눌러
+ * 초점을 돌려놓고, 브라우저가 가로채지 않는 I 를 먼저 시도한다.
+ */
 let openedBy = '';
-outer: for (const key of ['Tab', 'i']) {
+outer: for (const key of ['i', 'Tab']) {
   for (let attempt = 0; attempt < 3; attempt++) {
+    await page.mouse.click(20, 20);
     await page.keyboard.press(key);
     for (let i = 0; i < 8; i++) {
       await page.waitForTimeout(120);
@@ -605,6 +626,32 @@ await shot('detail');
       const last = rows[rows.length - 1];
       if (last && last.bot > 690) {
         out.push(`${s.nameText.text}: 설명이 패널 밖으로 넘칩니다 (${Math.round(last.bot)})`);
+      }
+
+      /*
+       * 이동 두 줄이 같은 말을 하고 있지 않은가.
+       *
+       * [이동] 은 "가만히 있어도 이런 몸이다", [이 캐릭터만] 은 "눌러서
+       * 하는 것"이다. 둘을 따로 쓴 이유가 그것인데, 한쪽을 고치다 보면
+       * 다른 쪽에 같은 문장이 남기 쉽다 — 실제로 벽 차기가 두 줄에 거의
+       * 같은 말을 적고 있었다. 화면에서는 그냥 "두 줄 다 읽을 필요 없는
+       * 설명"으로 보이고, 그러면 아래 줄이 있으나 마나가 된다.
+       */
+      const lines = s.traitText.text.split('\n');
+      if (lines.length === 2) {
+        const strip = (t) => t.replace(/^\[[^\]]*\]\s*/, '').replace(/\s+/g, '');
+        const [a, b] = [strip(lines[0]), strip(lines[1])];
+        let run = 0;
+        for (let x = 0; x < a.length; x++) {
+          for (let y = 0; y < b.length; y++) {
+            let k = 0;
+            while (x + k < a.length && y + k < b.length && a[x + k] === b[y + k]) k++;
+            if (k > run) run = k;
+          }
+        }
+        if (run >= 14) {
+          out.push(`${s.nameText.text}: 이동 두 줄이 같은 말을 합니다 (겹치는 ${run}자)`);
+        }
       }
     }
     s.select(0);

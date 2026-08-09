@@ -773,6 +773,43 @@ try {
 
       if (!restarted) bad('[한 판 더] 결과 화면에서 스타트로 새 판이 안 열립니다');
       else ok('결과 화면 → 스타트로 한 판 더 (연타 잠금도 걸린다)');
+
+      /*
+       * 등수가 실제로 오래 버틴 순서인가.
+       *
+       * 넷이 붙는 판에서 "내가 몇 등이야?"가 결과 화면의 전부다. 준 피해
+       * 순으로 세우면 순위표가 아니라 통계표가 되는데, 화면만 봐서는
+       * 그 둘이 구별이 안 간다 — 어느 쪽이든 줄이 넷 놓여 있을 뿐이다.
+       */
+      const places = await page.evaluate(() => {
+        const s = window.game.scene.getScene('Battle');
+        if (!s.koOrder) return null;
+        return s.fighters.map((f) => ({
+          name: f.cfg.name,
+          alive: f.alive,
+          koAt: s.koOrder.indexOf(f.fighterId),
+          place: s.placementOf(f),
+        }));
+      });
+      if (!places) {
+        bad('[등수] 등수를 읽지 못했습니다');
+      } else {
+        const bad1 = places.filter((p) => p.alive && p.place !== 1);
+        // 먼저 죽은 사람이 더 낮은 등수(숫자가 큼)여야 한다
+        const dead = places.filter((p) => !p.alive).sort((a, b) => a.koAt - b.koAt);
+        const monotonic = dead.every((p, i) => i === 0 || dead[i - 1].place > p.place);
+        if (bad1.length) {
+          bad(`[등수] 살아남았는데 1위가 아닙니다 — ${bad1.map((p) => p.name).join(', ')}`);
+        } else if (!monotonic) {
+          bad(
+            `[등수] 먼저 죽은 사람이 더 높은 등수입니다 — ${dead
+              .map((p) => `${p.name}:${p.place}위`)
+              .join(' ')}`,
+          );
+        } else {
+          ok(`등수는 오래 버틴 순서 (${places.length}명)`);
+        }
+      }
     }
   }
 

@@ -126,6 +126,9 @@ interface FighterHud {
  * 넷이 뒤엉키면 화면에서 자기 캐릭터를 놓친다. 자리마다 색을 고정해 두고
  * HUD부터 결과 화면까지 같은 색을 쓴다.
  */
+/** 등수 색 — 1위 금, 2위 은, 3위 동, 그 밖은 옅게 */
+const PLACE_COLORS = ['#ffd54a', '#cbd5e1', '#d19a66', '#6c86c4'];
+
 const SEAT_COLORS = ['#38bdf8', '#f472b6', '#a78bfa', '#facc15'];
 const BOT_COLOR = '#7f93bd';
 
@@ -3156,21 +3159,29 @@ export class BattleScene extends Phaser.Scene {
       },
     });
 
-    // 플레이어가 몇 등이었는지 알려준다 (KO 순서의 역순 = 등수)
+    /*
+     * 이 줄은 **한 사람**의 이야기다 — 그래서 사람이 여럿이면 쓰지 않는다.
+     *
+     * 전에는 versus 에서도 이 줄이 떴는데, 내용이 1P 기준이라 2·3·4P 에게는
+     * 남의 성적표였다. 심지어 versus 에서는 무조건 "최후의 1인"이라 첫판에
+     * 죽은 사람 화면에도 그렇게 떴다. 여럿일 때 등수는 아래 표가 전원치를
+     * 등수 순으로 보여주므로, 여기서 한 명만 골라 말할 이유가 없다.
+     */
     const total = this.fighters.length;
-    const playerRank = total - this.koOrder.indexOf(this.player.fighterId);
     const rankText = versus
-      ? `${total}명 중 최후의 1인`
+      ? ''
       : playerWon
         ? `${total}명 중 최후의 1인`
-        : `${total}명 중 ${playerRank}위`;
+        : `${total}명 중 ${this.placementOf(this.player)}위`;
 
     this.add
       .text(
         GAME.WIDTH / 2,
         232,
         winner
-          ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%\n${rankText}`
+          ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%${
+              rankText ? `\n${rankText}` : ''
+            }`
           : '전원 상장폐지',
         {
           fontFamily: GAME.FONT,
@@ -3283,6 +3294,21 @@ export class BattleScene extends Phaser.Scene {
    * 둘 다 다음에 누구를 고를지에 영향을 준다. 그 정보가 없으면
    * 스무 명이 그냥 스무 개의 이름으로 남는다.
    */
+  /**
+   * 이 사람이 몇 등인가 (1등이 최고).
+   *
+   * 등수는 **오래 버틴 순서**다. koOrder 는 상장폐지된 차례대로 쌓이므로
+   * 뒤집으면 그대로 등수가 된다 — 제일 먼저 죽은 사람이 꼴찌다.
+   * 살아남은 사람은 1등이고, 전원이 죽은 판에서는 마지막에 죽은 사람이 1등이다.
+   */
+  private placementOf(f: BaseCharacter): number {
+    if (f.alive) return 1;
+    const i = this.koOrder.indexOf(f.fighterId);
+    // 목록에 없으면(있을 수 없지만) 맨 뒤로 보낸다 — 순서가 뒤엉키는 것보다 낫다
+    if (i < 0) return this.fighters.length;
+    return this.fighters.length - i;
+  }
+
   private buildScoreboard(): void {
     const top = this.stats.topDealer();
 
@@ -3314,10 +3340,21 @@ export class BattleScene extends Phaser.Scene {
       .rectangle(GAME.WIDTH / 2, y0 - 10, 900, 2, 0x2f3f6b)
       .setDepth(DEPTH.OVERLAY + 1);
 
-    /* 준 피해 순으로 세운다 — 순위표는 등수가 보여야 순위표다 */
-    const ordered = [...this.fighters].sort(
-      (a, b) => this.stats.get(b.fighterId).dealt - this.stats.get(a.fighterId).dealt,
-    );
+    /*
+     * **등수 순으로** 세운다.
+     *
+     * 오래 준 피해 순으로 세웠는데, 넷이 붙는 판에서 그건 순위표가 아니라
+     * 통계표다. 판이 끝나고 넷이 제일 먼저 찾는 것은 "내가 몇 등이야?"이고,
+     * 그 답은 누가 오래 살아남았는가다 — 피해를 제일 많이 준 사람이 제일
+     * 먼저 죽는 일은 흔하다.
+     *
+     * 준 피해는 여전히 표에 있고, 동점(같은 등수)일 때 순서를 가른다.
+     */
+    const ordered = [...this.fighters].sort((a, b) => {
+      const d = this.placementOf(a) - this.placementOf(b);
+      if (d !== 0) return d;
+      return this.stats.get(b.fighterId).dealt - this.stats.get(a.fighterId).dealt;
+    });
 
     ordered.forEach((f, i) => {
       const r = this.stats.get(f.fighterId);
@@ -3341,15 +3378,34 @@ export class BattleScene extends Phaser.Scene {
        * 두 색으로 갈려 보인다. 배경은 **줄의 실제 내용**에 맞춘다.
        */
       if (isPlayer) {
-        const bgX = left - 52;
+        // 등수 칸까지 덮는다 — 배경이 이름에서만 시작하면 등수가 떠 보인다
+        const bgX = left - 100;
         this.add
           .rectangle(bgX, y, left + colX[5]! + 210 - bgX, rowH - 6, f.cfg.colors.accent, 0.12)
           .setOrigin(0, 0.5)
           .setDepth(DEPTH.OVERLAY + 1);
       }
 
-      const nameColor = `#${f.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+      /*
+       * 등수를 이름 왼쪽에 크게 박는다.
+       *
+       * 표에 줄만 순서대로 놓여 있으면 "위에 있는 게 잘한 건가?"를 한 번
+       * 생각해야 한다. 넷이 동시에 화면을 들여다보는 3초 안에는 그 한 번이
+       * 안 일어난다 — 숫자로 적혀 있어야 바로 읽힌다.
+       */
+      const place = this.placementOf(f);
       this.add
+        .text(left - 92, y, `${place}위`, {
+          fontFamily: GAME.FONT,
+          fontSize: place === 1 ? '22px' : '18px',
+          color: PLACE_COLORS[place - 1] ?? '#6c86c4',
+          fontStyle: place === 1 ? 'bold' : 'normal',
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(DEPTH.OVERLAY + 2);
+
+      const nameColor = `#${f.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+      const nameLabel = this.add
         .text(left - 40, y, `${isTop ? '👑 ' : ''}${f.cfg.name}`, {
           fontFamily: GAME.FONT,
           fontSize: '18px',
@@ -3358,6 +3414,28 @@ export class BattleScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(DEPTH.OVERLAY + 2);
+
+      /*
+       * 자리 이름(1P·2P…)을 이름 뒤에 작게 붙인다.
+       *
+       * 사람이 하나일 때는 "내 줄만 배경을 깐다"로 충분했다. 넷이 붙으면
+       * 네 줄이 전부 사람 줄이라 그 표시가 아무것도 안 가리킨다 — 다 칠하면
+       * 안 칠한 것과 같다. 넷이 동시에 화면을 들여다보며 각자 자기 줄을
+       * 찾아야 하는데, 그때 기준이 되는 것은 캐릭터 이름이 아니라 **자리**다.
+       * 자기가 고른 캐릭터 이름을 판이 끝난 뒤 기억 못 하는 일이 흔하다.
+       */
+      const seat = seatIndex(f);
+      if (seat >= 0) {
+        this.add
+          .text(nameLabel.x + nameLabel.width + 8, y, `${seat + 1}P`, {
+            fontFamily: GAME.FONT,
+            fontSize: '13px',
+            color: SEAT_COLORS[seat] ?? '#6c86c4',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0, 0.5)
+          .setDepth(DEPTH.OVERLAY + 2);
+      }
 
       const cells: Array<[number, string, string]> = [
         [colX[1]!, String(Math.round(r.dealt)), '#e8eeff'],

@@ -2,7 +2,12 @@
   "frameWidth": 299,
   "frameHeight": 256,
   "columns": 6,
-  "rows": 3,
-  "count": 15,
-  "source": "art-source/elonmusk_sheet.png"
+  "rows": 1,
+  "count": 6,
+  "batches": [
+    1
+  ],
+  "batchCounts": {
+    "1": 6
+  }
 }

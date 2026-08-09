@@ -715,6 +715,67 @@ try {
     }
   }
 
+  /*
+   * 11. 판이 끝난 뒤 패드로 다시 붙을 수 있는가.
+   *
+   * ── 왜 이게 중요한가 ───────────────────────────────────────────
+   * 넷이서 하는 게임에서 **제일 자주 하게 될 동작**이 "한 판 더"다. 그런데
+   * 결과 화면의 스타트가 부르던 것은 연승 도전(혼자 이겼을 때만 열린다)
+   * 하나뿐이라, 사람 둘 이상이 붙은 판에서는 눌러도 아무 일이 없었다.
+   * 전원이 패드를 쥐고 있는데 누군가 키보드까지 손을 뻗어 R 을 눌러야 했다.
+   *
+   * 아무 일도 안 일어나는 버튼은 화면에 흔적을 안 남긴다 — 눌러 봐야 안다.
+   */
+  {
+    // 남은 사람을 전부 떨어뜨려 판을 끝낸다
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.ais.length = 0;
+      const live = s.fighters.filter((f) => f.alive);
+      // 하나만 남기고 상장폐지 — 그 하나가 승자가 된다
+      live.slice(1).forEach((f) => s.stock.forceDelist(f.fighterId, null));
+    });
+
+    let ended = false;
+    for (let i = 0; i < 40 && !ended; i++) {
+      await page.waitForTimeout(300);
+      ended = await page.evaluate(
+        () => window.game?.scene?.getScene('Battle')?.resultShown ?? false,
+      );
+    }
+
+    if (!ended) {
+      bad('[한 판 더] 판이 끝나 결과 화면까지 가지 못했습니다');
+    } else {
+      // 전적표를 읽을 시간(1.2초)이 지나야 받는다 — 그 잠금도 함께 본다
+      await padSet(BTN.START, true);
+      await page.waitForTimeout(200);
+      await padSet(BTN.START, false);
+      await page.waitForTimeout(200);
+      const tooEarly = await page.evaluate(
+        () => window.game?.scene?.getScene('Battle')?.resultShown ?? false,
+      );
+      if (!tooEarly) {
+        bad('[한 판 더] 전적표가 뜨자마자 눌린 것이 그대로 먹었습니다');
+      }
+
+      await page.waitForTimeout(1400);
+      await tap(BTN.START, 260);
+
+      let restarted = false;
+      for (let i = 0; i < 40 && !restarted; i++) {
+        await page.waitForTimeout(300);
+        restarted = await page.evaluate(() => {
+          const s = window.game?.scene?.getScene('Battle');
+          return !!s && !s.resultShown && s.fighters.filter((f) => f.alive).length > 1;
+        });
+      }
+
+      if (!restarted) bad('[한 판 더] 결과 화면에서 스타트로 새 판이 안 열립니다');
+      else ok('결과 화면 → 스타트로 한 판 더 (연타 잠금도 걸린다)');
+    }
+  }
+
   await padRelease();
 } catch (e) {
   bad(`[중단] ${e.message}`);

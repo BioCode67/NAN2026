@@ -35,6 +35,13 @@ const QUIET_SEAT_MS = 4000;
 /** 조용한 자리를 얼마나 자주 살피는가 */
 const QUIET_CHECK_MS = 1000;
 /**
+ * 결과 화면이 뜬 뒤 패드 입력을 받기까지 (ms).
+ *
+ * 넷이 붙는 판은 격추 순간에 전원이 버튼을 두드리고 있다. 그 연타를 그대로
+ * 받으면 전적표가 뜨자마자 다음 판이 열려, 누가 몇 등인지 아무도 못 본다.
+ */
+const RESULT_INPUT_DELAY_MS = 1200;
+/**
  * 이만큼 지나면 서든데스 — 전원의 주가가 초당 1%씩 흘러내린다.
  *
  * 2분 30초는 보통 판이 이미 끝나 있는 시간이다. 여기 걸리는 판은
@@ -354,6 +361,13 @@ export class BattleScene extends Phaser.Scene {
 
   /** 결과 화면이 떠 있는가 — 카메라를 원점에 묶는 데 쓴다 */
   private resultShown = false;
+  /**
+   * 결과 화면에서 패드 입력을 받기 시작하는 시각.
+   *
+   * 격추 순간에는 대개 전원이 버튼을 두드리고 있다. 그 연타가 그대로
+   * 다음 판을 열면 누가 몇 등인지 아무도 못 본 채 넘어간다.
+   */
+  private resultReadyAt = 0;
 
   /** 전투 진행 중인가 (인트로/결과 화면에서는 false) */
   private battleActive = false;
@@ -3013,6 +3027,8 @@ export class BattleScene extends Phaser.Scene {
 
   private showResult(winner: BaseCharacter | null): void {
     this.resultShown = true;
+    // 전적표를 한 번은 읽고 넘어가게 — 격추 순간의 연타가 그대로 새지 않는다
+    this.resultReadyAt = this.time.now + RESULT_INPUT_DELAY_MS;
     this.cameras.main.setScroll(0, 0);
 
     /*
@@ -3212,8 +3228,22 @@ export class BattleScene extends Phaser.Scene {
           ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
           : 'R : 다시하기      ESC : 캐릭터 선택';
 
+    /*
+     * 패드를 쥐고 있으면 패드 쪽도 적는다.
+     *
+     * 넷이 소파에 앉아 한 판을 끝내면 전원이 패드를 쥐고 있다. 그때 화면이
+     * "R : 한 판 더" 만 말하면 누군가는 키보드까지 손을 뻗어야 하고,
+     * 나머지 셋은 그 사람을 기다린다 — 제일 자주 하게 될 일이 제일 불편해진다.
+     */
+    const padKeys =
+      this.livePads().length > 0
+        ? this.netRole === 'guest'
+          ? ''
+          : `      (패드 : 스타트 · A 로도 · B 로 나가기)`
+        : '';
+
     const keyLabel = this.add
-      .text(GAME.WIDTH / 2, 690, keys, {
+      .text(GAME.WIDTH / 2, 690, keys + padKeys, {
         fontFamily: GAME.FONT,
         fontSize: '18px',
         color: playerWon ? '#e8eeff' : '#8fa6d8',
@@ -4448,16 +4478,42 @@ export class BattleScene extends Phaser.Scene {
   /* ================================================================ */
 
   /**
-   * 패드의 스타트 버튼 — 키보드에 손을 뻗지 않고도 판을 다룰 수 있어야 한다.
+   * 패드로 판을 다룬다 — 키보드에 손을 뻗지 않고도.
    *
-   * 전투 중에는 일시정지(P와 같다), 결과 화면에서는 다음 상대(SPACE와 같다).
    * 일시정지를 **풀** 수도 있어야 하므로 paused 검사보다 먼저 돈다.
+   *
+   * ── 결과 화면에서 스타트가 하는 일 ─────────────────────────────
+   * 처음에는 startNextRound() 만 불렀다. 그런데 그건 **혼자 이겼을 때만**
+   * 열리는 길이라(canContinue), 사람 둘 이상이 붙은 판에서는 스타트가
+   * 아무 일도 안 했다. 넷이 소파에 앉아 한 판을 끝내고 나면 다시 붙으려고
+   * 전원이 패드를 쥐고 있는데, 그때 키보드까지 손을 뻗어야 R 을 누를 수
+   * 있었다 — 넷이서 하는 게임에서 제일 자주 하게 될 동작이 제일 불편했다.
+   *
+   * 그래서 스타트는 "지금 가장 하고 싶은 것"을 한다. 연승 도전이 열려
+   * 있으면 다음 상대, 아니면 이 판 다시. B 는 캐릭터 선택으로 나간다.
    */
   private pollPadMenu(): void {
-    if (!this.padMenu.poll(this.input.gamepad).start) return;
+    const taps = this.padMenu.poll(this.input.gamepad);
 
-    if (this.resultShown) this.startNextRound();
-    else if (!this.prompting) this.togglePause();
+    if (this.resultShown) {
+      /*
+       * 전적표를 읽을 시간을 준다.
+       *
+       * 격추 순간에는 대개 전원이 버튼을 두드리고 있어서, 결과 화면이 뜨는
+       * 즉시 받으면 그 연타가 그대로 다음 판을 열어 버린다. 누가 몇 등인지
+       * 아무도 못 본 채로 넘어간다.
+       */
+      if (this.time.now < this.resultReadyAt) return;
+      if (taps.ok) {
+        if (this.canContinue) this.startNextRound();
+        else this.onRestartKey();
+      } else if (taps.back) {
+        this.leaveToSelect();
+      }
+      return;
+    }
+
+    if (taps.start && !this.prompting) this.togglePause();
   }
 
   override update(time: number, delta: number): void {

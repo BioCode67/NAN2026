@@ -139,5 +139,9 @@ export const bear: CharacterConfig = {
     surge: ['이럴 리가… 숏 커버링이다!'],
     comeback: ['바닥은 아직 멀었어.'],
     hurt: ['손실이 무제한이라니…'],
+    trait: [
+      '천천히, 확실하게 내린다',
+      '지금부터가 진짜 하락장',
+    ],
   },
 };

@@ -46,7 +46,16 @@ export const MOVE_SLOTS = [
 ];
 
 /** 대사 갈래 — 비어 있으면 그 상황에서 캐릭터가 말을 안 한다 */
-export const QUOTE_KINDS = ['intro', 'skill', 'ko', 'surge', 'comeback', 'hurt'];
+export const QUOTE_KINDS = [
+  'intro',
+  'skill',
+  'ko',
+  'surge',
+  'comeback',
+  'hurt',
+  /** 기질 전용 동작 — 급습·반격·착지 충격·공중 대시·풀차지 */
+  'trait',
+];
 
 const first = (re, text) => re.exec(text)?.[1] ?? null;
 
@@ -76,6 +85,14 @@ function parseCharacter(file) {
     quotes[kind] = m ? m[1].trim().length > 0 : false;
   }
 
+  /*
+   * 기질 대사는 있는지뿐 아니라 **내용까지** 본다.
+   * 스무 명에게 같은 문장을 복사해 넣으면 "전용기"라는 말이 무의미해진다 —
+   * 화면에서는 누가 써도 똑같은 말이 뜨기 때문이다.
+   */
+  const traitBlock = /trait:\s*\[([^\]]*)\]/s.exec(qBlock)?.[1] ?? '';
+  const traitLines = [...traitBlock.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]);
+
   return {
     file,
     /** 아직 채우지 않은 자리 — 뼈대만 만들어 두고 잊은 캐릭터를 잡는다 */
@@ -89,6 +106,7 @@ function parseCharacter(file) {
     passive: first(/passive:\s*\{\s*\n\s*type:\s*'([^']+)'/, src),
     moves,
     quotes,
+    traitLines,
   };
 }
 

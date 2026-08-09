@@ -142,5 +142,9 @@ export const chairman: CharacterConfig = {
     surge: ['역시 내 판단이 옳았어.'],
     comeback: ['이 회사, 내가 세웠어.'],
     hurt: ['이런 무례한…'],
+    trait: [
+      '회장님 나가신다!',
+      '이봐, 해보기는 했어?',
+    ],
   },
 };

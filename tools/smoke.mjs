@@ -2364,12 +2364,55 @@ console.log('기질 전용기');
     const after = await swingUntilActive();
     clearAttack();
 
+    /* --- 4. 표준 — 남보다 빨리 모은다 ----------------------------- */
+    /*
+     * 공중 재주가 없는 대신 땅에서 모으는 시간이 짧다. 이건 시간을 흘려
+     * 재면 프레임이 드문 이 환경에서 한 틱에 다 차 버려 차이가 안 보이므로,
+     * 같은 delta 를 한 번 먹여 **한 틱에 얼마나 차는지**를 비교한다.
+     */
+    p.body.checkCollision.down = true;
+    const chargeIn = (trait) => {
+      p.cfg.move = trait;
+      clearAttack();
+      p.chargeMs = 0;
+      p.holdingHeavy = true;
+      // 차지가 도는 것은 지상 중립 강공격의 선딜 구간뿐이다
+      p.attackPhase = 'startup';
+      p.currentAttack = p.cfg.moves.heavy;
+      p.attackTimer = 9999;
+      /*
+       * 차지는 **땅에 붙어 있을 때만** 돈다. 앞 항목들을 재느라 공중에 떠
+       * 있는 상태라, 발이 닿았다는 표시를 세워 주지 않으면 두 기질 모두
+       * 0 으로 나오고 검사는 아무것도 확인하지 못한 채 실패한다.
+       */
+      p.body.blocked.down = true;
+      p.body.touching.down = true;
+      p.update(p.scene.time.now, 100);
+      const got = Math.round(p.chargeMs);
+      p.holdingHeavy = false;
+      clearAttack();
+      return got;
+    };
+    const chargePlain = chargeIn('plain');
+    const chargeOther = chargeIn('glide');
+
     p.cfg.move = was;
     p.body.checkCollision.down = true;
     p.setJumpHeld(false);
     p.airDashed = false;
     p.dashReadyAt = 0;
-    return { dive, plainAir, drift1, drift2, plainAirDash, kicked, counter, after };
+    return {
+      dive,
+      plainAir,
+      drift1,
+      drift2,
+      plainAirDash,
+      kicked,
+      counter,
+      after,
+      chargePlain,
+      chargeOther,
+    };
   });
   await releasePlayer();
 
@@ -2408,12 +2451,18 @@ console.log('기질 전용기');
     );
   } else if (/반격/.test(only.after.name ?? '')) {
     errors.push('[전용기] 반격 보정이 계속 남습니다 — 한 방만 세져야 합니다');
+  } else if (!(only.chargePlain > only.chargeOther * 1.2)) {
+    errors.push(
+      `[전용기] 표준이 남보다 빨리 안 모읍니다 — ` +
+        `표준 ${only.chargePlain} / 그 외 ${only.chargeOther} (같은 100ms)`,
+    );
   } else {
     console.log(
       `  ✓ 활공 급습 (낙하 ${only.plainAir.vy}→${only.dive.vy}, ` +
         `${only.plainAir.damage}→${only.dive.damage}) · ` +
         `표류 공중 대시 1회 한정 · ` +
-        `벽 차기 반격 ${only.after.damage}→${only.counter.damage}`,
+        `벽 차기 반격 ${only.after.damage}→${only.counter.damage} · ` +
+        `표준 차지 ${only.chargeOther}→${only.chargePlain}`,
     );
   }
   await shot('trait-exclusive');

@@ -133,5 +133,9 @@ export const bot: CharacterConfig = {
     surge: ['확신도가 매우 높습니다.'],
     comeback: ['다시 생성해 보겠습니다.'],
     hurt: ['처리 중 오류가 발생했습니다.'],
+    trait: [
+      '경로를 재계산했습니다',
+      '더 나은 답변을 준비했습니다',
+    ],
   },
 };

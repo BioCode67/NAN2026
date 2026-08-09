@@ -395,6 +395,14 @@ export interface QuoteSet {
   comeback: string[];
   /** 피격 */
   hurt: string[];
+  /**
+   * 기질 전용 동작 (활공 급습·벽 차기 반격·급강하 착지·표류 공중 대시·풀차지).
+   *
+   * 전용기는 그 캐릭터만 되는 것인데, 화면에서는 그냥 "빠르게 떨어졌다"로
+   * 지나간다. 자기 입으로 한마디 하면 그때 비로소 **누구의 기술인지** 읽힌다 —
+   * 같은 급습이라도 베조스는 배송을 하고 둠은 심판을 한다.
+   */
+  trait: string[];
 }
 
 export type QuoteMood = keyof QuoteSet;

@@ -135,5 +135,9 @@ export const doom: CharacterConfig = {
     surge: ['이건… 예외적인 국면입니다.'],
     comeback: ['진짜 위기는 지금부터입니다.'],
     hurt: ['이것도 예측했습니다…'],
+    trait: [
+      '제가 20년 전부터 말했습니다',
+      '심판의 날입니다',
+    ],
   },
 };

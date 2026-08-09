@@ -131,5 +131,9 @@ export const altman: CharacterConfig = {
     surge: ['스케일이 곧 실력이야.'],
     comeback: ['닷새면 돌아옵니다.'],
     hurt: ['컨텍스트가 날아갔어…'],
+    trait: [
+      '해고당해도 돌아옵니다',
+      '닷새면 충분합니다',
+    ],
   },
 };

@@ -130,5 +130,9 @@ export const bull: CharacterConfig = {
     surge: ['불장이다! 불장!'],
     comeback: ['아직 안 끝났어. 더 간다!'],
     hurt: ['크윽… 조정인가.'],
+    trait: [
+      '뒤로 가는 법은 안 배웠다!',
+      '뿔이 먼저 나간다',
+    ],
   },
 };

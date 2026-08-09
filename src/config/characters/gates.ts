@@ -173,5 +173,9 @@ export const gates: CharacterConfig = {
     surge: ['Monopoly mode!'],
     comeback: ["I'll buy your company!"],
     hurt: ['치명적 오류 발생…'],
+    trait: [
+      '업데이트를 설치하는 중…',
+      '재부팅하면 끝납니다',
+    ],
   },
 };

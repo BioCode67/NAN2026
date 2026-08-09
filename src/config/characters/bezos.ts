@@ -144,5 +144,9 @@ export const bezos: CharacterConfig = {
     surge: ['물량이 밀려들어온다.'],
     comeback: ['아직 1일차입니다.'],
     hurt: ['배송 지연이군…'],
+    trait: [
+      '문 앞에 두고 갑니다!',
+      '당일 배송 나갑니다',
+    ],
   },
 };

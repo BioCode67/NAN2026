@@ -139,5 +139,9 @@ export const guru: CharacterConfig = {
     surge: ['제가 뭐랬습니까? 제가 뭐랬어요?'],
     comeback: ['눌림목이었을 뿐입니다.'],
     hurt: ['이건… 예상 범위 안입니다.'],
+    trait: [
+      '여기가 바닥입니다!',
+      '이거 하나만 보세요',
+    ],
   },
 };

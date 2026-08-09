@@ -134,5 +134,9 @@ export const zuck: CharacterConfig = {
     surge: ['참여도가 아주 좋네요.'],
     comeback: ['빠르게 움직이고 부수면 됩니다.'],
     hurt: ['오류가… 아니, 아픕니다.'],
+    trait: [
+      '메타버스를 불러오는 중…',
+      '저도 물을 마십니다',
+    ],
   },
 };

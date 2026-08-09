@@ -133,5 +133,9 @@ export const jensen: CharacterConfig = {
     surge: ['수요가 미쳤어.'],
     comeback: ['다음 세대는 다르다.'],
     hurt: ['전력이 부족해…'],
+    trait: [
+      '많이 살수록 많이 아낍니다',
+      '재고는 이미 다 팔렸습니다',
+    ],
   },
 };

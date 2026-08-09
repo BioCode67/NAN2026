@@ -149,5 +149,9 @@ export const whale: CharacterConfig = {
     surge: ['물량이 다 내 거야.'],
     comeback: ['바닥에서 다 주웠다.'],
     hurt: ['건방진…'],
+    trait: [
+      '고래가 내려간다',
+      '내가 팔면 내린다',
+    ],
   },
 };

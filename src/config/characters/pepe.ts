@@ -186,5 +186,9 @@ export const pepe: CharacterConfig = {
     surge: ['풍선 하나 줄까?'],
     comeback: ['여기선 다들 떠내려가.'],
     hurt: ['아직 안 끝났어…'],
+    trait: [
+      '전부 다 걸었다!',
+      '개구리는 안 판다',
+    ],
   },
 };

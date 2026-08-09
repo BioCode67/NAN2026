@@ -175,5 +175,9 @@ export const jobs: CharacterConfig = {
     surge: ['Reality distortion!'],
     comeback: ["Here's the iPhone."],
     hurt: ['이건… 내 디자인이 아니야.'],
+    trait: [
+      '이건… 그냥 흐르는 겁니다',
+      '한 방이면 충분합니다',
+    ],
   },
 };

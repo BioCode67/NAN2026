@@ -138,5 +138,9 @@ export const ant: CharacterConfig = {
     surge: ['드디어 파란불 탈출!'],
     comeback: ['물린 게 아니라 모으는 중이야.'],
     hurt: ['계좌가… 계좌가…'],
+    trait: [
+      '존버는 승리한다!',
+      '평단가 낮추러 왔다',
+    ],
   },
 };

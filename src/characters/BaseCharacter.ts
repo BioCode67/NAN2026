@@ -288,6 +288,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     sound.play('hitHeavy', 0.7);
     this.scene.cameras.main.shake(140, 0.008);
+    this.say(this.pickQuote('trait'), this.cfg.colors.accent);
     this.onShockwave?.(this, {
       ...this.cfg.moves.heavyDown,
       name: '착지 충격',
@@ -1372,6 +1373,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       if (this.trait === 'drift') {
         if (this.airDashed) return false;
         this.airDashed = true;
+        this.say(this.pickQuote('trait'), this.cfg.colors.accent);
       } else if (!booster || this.sigStacks <= 0) {
         return false;
       }
@@ -1487,6 +1489,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       const dive = this.cfg.moves.airDive;
       this.body.setVelocityY(t.diveSpeed);
       this.jumpHeld = false;
+      this.say(this.pickQuote('trait'), this.cfg.colors.accent);
       this.beginAttack({
         ...dive,
         name: `활공 급습: ${dive.name}`,
@@ -2232,7 +2235,25 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
         this.isChargeable(this.currentAttack) &&
         this.chargeMs < FIGHTER.CHARGE_MAX_MS
       ) {
-        this.chargeMs += delta;
+        /*
+         * 표준 기질은 같은 시간에 더 많이 모은다.
+         *
+         * 나머지 넷은 공중에서 자기만의 수를 갖는데 표준에게만 아무것도
+         * 없으면 "기질이 없는 캐릭터"가 된다. 공중에 답이 없는 대신
+         * 땅에서 버티는 시간이 짧다 — 상대가 "아직 안 찼겠지" 하고
+         * 들어오는 한 박자를 이 기질만 잡는다.
+         */
+        const before = this.chargeMs;
+        this.chargeMs +=
+          delta * (this.trait === 'plain' ? MOVE_TRAITS.plain.chargeMul : 1);
+        // 다 모으는 순간 한 번만 말한다 (계속 모아도 두 번 말하지 않는다)
+        if (
+          this.trait === 'plain' &&
+          before < FIGHTER.CHARGE_MAX_MS &&
+          this.chargeMs >= FIGHTER.CHARGE_MAX_MS
+        ) {
+          this.say(this.pickQuote('trait'), this.cfg.colors.accent);
+        }
         this.tickChargeFx(time);
       } else {
         this.attackTimer -= delta;
@@ -2915,7 +2936,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.wallBoostUntil = 0;
 
     const m = MOVE_TRAITS.wallkick.boostMul;
-    this.say('반격이다!', this.cfg.colors.accent);
+    this.say(this.pickQuote('trait'), this.cfg.colors.accent);
     return {
       ...atk,
       name: `${atk.name} (반격)`,

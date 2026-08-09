@@ -136,5 +136,9 @@ export const buffett: CharacterConfig = {
     surge: ['복리가 일하는 중이야.'],
     comeback: ['남들이 겁낼 때 욕심을 내라.'],
     hurt: ['단기 변동일 뿐이야.'],
+    trait: [
+      '남들이 팔 때 삽니다',
+      '10년 들고 있을 겁니다',
+    ],
   },
 };

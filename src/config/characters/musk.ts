@@ -190,5 +190,9 @@ export const musk: CharacterConfig = {
     surge: ['Dogecoin to the moon!'],
     comeback: ["I'm buying Twitter."],
     hurt: ['재진입 실패…'],
+    trait: [
+      '화성에 착륙한다!',
+      '떡상은 아무도 못 막는다',
+    ],
   },
 };

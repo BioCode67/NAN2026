@@ -133,5 +133,9 @@ export const son: CharacterConfig = {
     surge: ['이번엔 제대로 골랐어!'],
     comeback: ['한 종목만 터지면 돼.'],
     hurt: ['평가손일 뿐이야…'],
+    trait: [
+      '300년 앞을 봅니다',
+      '지금 지릅니다',
+    ],
   },
 };

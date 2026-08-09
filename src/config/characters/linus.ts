@@ -180,5 +180,9 @@ export const linus: CharacterConfig = {
     surge: ['Open source, baby!'],
     comeback: ['포크해서 다시 만들면 되지.'],
     hurt: ['이건 내 커널이 아니야.'],
+    trait: [
+      '패치를 보냈다',
+      '이 코드는 쓰레기다',
+    ],
   },
 };

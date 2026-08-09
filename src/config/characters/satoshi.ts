@@ -137,5 +137,9 @@ export const satoshi: CharacterConfig = {
     surge: ['탈중앙이란 이런 거지.'],
     comeback: ['체인은 끊기지 않아.'],
     hurt: ['지갑이 털렸다…'],
+    trait: [
+      '블록을 캤습니다',
+      '나를 본 사람은 없습니다',
+    ],
   },
 };

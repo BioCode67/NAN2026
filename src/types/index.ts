@@ -21,8 +21,8 @@ export type CharacterId =
   | 'bear'
   | 'bull'
   | 'guru'
-  | 'bot'
-  | 'chairman'
+  | 'turing'
+  | 'chung'
   | 'hawking'
   | 'whale';
 

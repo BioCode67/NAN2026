@@ -1,4 +1,4 @@
-# 챗 도우미 — 스프라이트 프롬프트
+# 앨런 튜링 — 스프라이트 프롬프트
 
 총 **72장**을 12개 묶음으로 나눠 뽑는다.
 
@@ -11,16 +11,16 @@
 3. 나온 이미지를 `art-source/` 에 아래 이름으로 저장한다.
 
 ```
-art-source/chatbot_b1.png    (1번 묶음)
-art-source/chatbot_b2.png    (2번 묶음)
+art-source/alanturing_b1.png    (1번 묶음)
+art-source/alanturing_b2.png    (2번 묶음)
 ...
-art-source/chatbot_b12.png
+art-source/alanturing_b12.png
 ```
 
 4. 전처리 + 합치기는 한 줄로 끝난다.
 
 ```bash
-npm run sheet:merge -- chatbot
+npm run sheet:merge -- alanturing
 ```
 
 ## 묶음 목록

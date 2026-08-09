@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { addBackdrop, hasArt } from '../config/artAssets';
 import { STAGES, STAGE_BY_ID, pickStage } from '../config/stages';
 import {
+  PadMenu,
   PadReader,
   emptyFrame,
   mergeFrames,
@@ -299,8 +300,8 @@ export class BattleScene extends Phaser.Scene {
    * 설정할 것도, 고를 것도 없다.
    */
   private padReaders: PadReader[] = [];
-  /** 스타트 버튼의 앞 프레임 상태 (패드 순서대로) — 일시정지 토글용 */
-  private padStartWas: boolean[] = [];
+  /** 스타트 버튼 — 일시정지·다음 상대. 전투 조작과 갈라 둔다 */
+  private padMenu = new PadMenu();
 
   /** 사람이 나가 봇이 이어받은 자리들 */
   private takenOver = new Set<string>();
@@ -349,6 +350,12 @@ export class BattleScene extends Phaser.Scene {
     this.battleActive = false;
     // 씬 객체는 판마다 새로 만들어지지 않는다 — 앞 판의 값이 남으면 카메라가 묶인 채 시작한다
     this.resultShown = false;
+    /*
+     * 선택 화면에서 **스타트로 확정하고** 들어오면 그 버튼이 아직 눌려 있다.
+     * 지금은 togglePause 가 인트로 중에는 안 멈춰 사고로 안 이어지지만,
+     * 그것은 여기와 상관없는 이유로 있는 자물쇠다. 새는 자리에서 막는다.
+     */
+    this.padMenu.prime();
     this.canContinue = false;
     this.streak = data.streak ?? 0;
     resetQuoteThrottle();
@@ -3912,16 +3919,10 @@ export class BattleScene extends Phaser.Scene {
    * 일시정지를 **풀** 수도 있어야 하므로 paused 검사보다 먼저 돈다.
    */
   private pollPadMenu(): void {
-    const pads = this.livePads();
-    for (let i = 0; i < pads.length; i++) {
-      const now = pads[i]!.buttons[9]?.pressed ?? false;
-      const was = this.padStartWas[i] ?? false;
-      this.padStartWas[i] = now;
-      if (!now || was) continue;
+    if (!this.padMenu.poll(this.input.gamepad).start) return;
 
-      if (this.resultShown) this.startNextRound();
-      else if (!this.prompting) this.togglePause();
-    }
+    if (this.resultShown) this.startNextRound();
+    else if (!this.prompting) this.togglePause();
   }
 
   override update(time: number, delta: number): void {

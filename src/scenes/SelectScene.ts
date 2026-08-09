@@ -147,6 +147,8 @@ export class SelectScene extends Phaser.Scene {
      * 화면이 뜨자마자 0.5초는 아무도 결정을 누르지 않는다.
      */
     this.readyAt = this.time.now + 480;
+    // 패드도 같은 문제를 갖는다 — 넘어올 때 누른 그 버튼이 아직 눌려 있다
+    this.pads.prime();
 
     // 제목 화면과 같은 곡 — 이미 돌고 있으면 그대로 이어진다
     sound.startBgm('menu');

@@ -38,6 +38,7 @@ export class TitleScene extends Phaser.Scene {
 
   create(): void {
     this.leaving = false;
+    this.pads.prime();
 
     this.buildBackground();
     this.buildLogo();

@@ -205,12 +205,14 @@ export interface PadMenuTaps {
   right: boolean;
   up: boolean;
   down: boolean;
-  /** A — 결정 */
+  /** A 또는 스타트 — 결정 */
   ok: boolean;
   /** B — 닫기/뒤로 */
   back: boolean;
   /** Y — 상세 보기 */
   info: boolean;
+  /** 스타트만 — 일시정지처럼 결정과 갈라야 하는 곳에서 쓴다 */
+  start: boolean;
   /** 아무 버튼이든 (타이틀 화면의 "아무 키나 누르세요") */
   any: boolean;
 }
@@ -224,6 +226,31 @@ export interface PadMenuTaps {
  */
 export class PadMenu {
   private prev = new Map<string, boolean>();
+  /**
+   * 이번 화면에서 아직 한 번도 안 읽었는가.
+   *
+   * ── 왜 필요한가 ────────────────────────────────────────────────
+   * 화면을 넘기는 그 버튼은 다음 화면이 처음 읽을 때도 **아직 눌려 있다.**
+   * 사람 손가락은 16ms 안에 안 떨어진다. 앞 화면의 기억이 남아 있는 채로
+   * 읽으면 그 눌림이 다음 화면에서 "방금 눌림"으로 한 번 더 읽힌다.
+   *
+   * 지금은 그것이 사고로 이어지지 않는다. 스타트로 확정하고 들어와도
+   * togglePause 가 인트로 중(battleActive=false)에는 안 멈추고, 선택 화면의
+   * 확정은 readyAt 이 0.48초 막는다. 하지만 그 둘은 **다른 이유로 있는
+   * 자물쇠**다 — 인트로가 짧아지거나 확정 잠금이 없어지면 그때 조용히
+   * 새기 시작하고, 원인은 여기가 아닌 곳에서 찾게 된다.
+   *
+   * 그래서 새는 자리에서 막는다. 화면이 바뀌면 prime() 을 부르고, 다음
+   * 한 번은 **읽되 아무것도 내지 않는다** — 지금 눌려 있는 것은 앞 화면
+   * 것이라고 보는 것이다.
+   */
+  private primed = false;
+
+  /** 화면이 바뀌었다 — 지금 눌려 있는 것은 앞 화면에서 넘어온 것이다 */
+  prime(): void {
+    this.primed = false;
+    this.prev.clear();
+  }
 
   poll(plugin: Phaser.Input.Gamepad.GamepadPlugin | null | undefined): PadMenuTaps {
     const taps: PadMenuTaps = {
@@ -234,29 +261,35 @@ export class PadMenu {
       ok: false,
       back: false,
       info: false,
+      start: false,
       any: false,
     };
     const pads = (plugin?.gamepads ?? []).filter((p) => p && p.connected);
+    const swallow = !this.primed;
 
     for (const pad of pads) {
       const sx = pad.leftStick?.x ?? 0;
       const sy = pad.leftStick?.y ?? 0;
+      const start = pad.buttons[9]?.pressed ?? false;
       const now: Record<keyof PadMenuTaps, boolean> = {
         left: pad.left || sx < -0.5,
         right: pad.right || sx > 0.5,
         up: pad.up || sy < -0.5,
         down: pad.down || sy > 0.5,
-        ok: pad.A || (pad.buttons[9]?.pressed ?? false),
+        ok: pad.A || start,
         back: pad.B,
         info: pad.Y,
+        start,
         any: pad.buttons.some((b) => b?.pressed),
       };
       for (const k of Object.keys(now) as Array<keyof PadMenuTaps>) {
         const key = `${pad.index}:${k}`;
-        if (now[k] && !this.prev.get(key)) taps[k] = true;
+        if (now[k] && !this.prev.get(key) && !swallow) taps[k] = true;
         this.prev.set(key, now[k]);
       }
     }
+
+    this.primed = true;
     return taps;
   }
 }

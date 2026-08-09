@@ -29,7 +29,8 @@
     "smoke:online": "node tools/smoke-online.mjs",
     "test:net": "node --experimental-transform-types --no-warnings --import ./tools/ts-resolve.mjs tools/test-net.mjs",
     "art:jpg": "node tools/jpg-to-png.mjs",
-    "art:md": "node tools/gen-prompts.mjs > /dev/null && node tools/prompt-page.mjs"
+    "art:md": "node tools/gen-prompts.mjs > /dev/null && node tools/prompt-page.mjs",
+    "test:pad": "node tools/test-pad.mjs"
   },
   "keywords": [
     "phaser",

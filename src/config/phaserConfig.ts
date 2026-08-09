@@ -40,6 +40,7 @@ export const PHASER_CONFIG: Phaser.Types.Core.GameConfig = {
   // 브라우저가 스페이스바/방향키로 스크롤하지 않도록
   input: {
     keyboard: true,
-    gamepad: false,
+    // 게임패드 — 꽂으면 그 자리에서 잡힌다. 소파에 넷이 앉는 게임의 조건
+    gamepad: true,
   },
 };

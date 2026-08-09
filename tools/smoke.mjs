@@ -496,7 +496,9 @@ const sceneAlive = (key) =>
  * "메뉴 곡이 아닙니다: battle" 과 "상세 보기가 안 열립니다" 가 한꺼번에
  * 났고, 둘 다 고장이 아니라 검사가 화면을 잘못 안 것이었다.
  *
- * 눌렀으면 결과를 기다린다. 안 넘어가면 그때 다시 누른다.
+ * 700ms 로는 모자란 이유까지 적어 둔다 — 타이틀 페이드는 0.28초인데 이
+ * 브라우저는 게임 시간이 실제의 1/5 로 흘러 벽시계로는 1.5초 가까이 걸린다.
+ * 그래서 "조금 더 기다리기"가 아니라 **결과를 보고 나서** 다시 누른다.
  */
 let atSelect = false;
 for (let attempt = 0; attempt < 4 && !atSelect; attempt++) {
@@ -537,7 +539,21 @@ await shot('select');
   if (!a || !b) {
     errors.push('[BGM] 사운드 시스템을 읽지 못했습니다');
   } else if (a.track !== 'menu') {
-    errors.push(`[BGM] 메뉴 곡이 아닙니다: ${a.track}`);
+    /*
+     * 곡이 틀렸다면 십중팔구 곡의 문제가 아니라 **지금 있는 화면의** 문제다.
+     * 앞 화면에서 누른 Enter 가 새어 들어와 선택 화면이 그대로 확정되면
+     * 전투가 시작되고, 그러면 여기서 전투 곡이 읽힌다 — 이 검사가 가끔
+     * "메뉴 곡이 아닙니다: battle" 을 적던 것이 그것이었다.
+     * 곡 이름만 적으면 사운드를 뒤지게 되므로 어느 화면인지 같이 남긴다.
+     */
+    const where = await page.evaluate(
+      () =>
+        window.game?.scene?.scenes
+          ?.filter((s) => s.scene.isActive())
+          .map((s) => s.scene.key)
+          .join('+') ?? '?',
+    );
+    errors.push(`[BGM] 메뉴 곡이 아닙니다: ${a.track} (지금 화면: ${where})`);
   } else if (b.step <= a.step) {
     errors.push(`[BGM] 시퀀서가 멈춰 있습니다 (${a.step} → ${b.step})`);
   } else {
@@ -1643,14 +1659,6 @@ console.log('공격 모션');
     };
 
     /*
-     * 선딜 — 뒤로 당기는가.
-     *
-     * 한 시점을 찍지 않고 선딜 창 전체에서 **가장 뒤로 간 값**을 잡는다.
-     * 검사용 브라우저는 초당 열 장쯤이라, 고정 시점 하나는 그 사이 프레임이
-     * 한 장도 안 지나간 순간일 수 있다 — 당기지 않은 게 아니라 아직 아무것도
-     * 그려지지 않은 것이다. 시점 하나에 기대는 검사는 느린 기계에서 거짓말을 한다.
-     */
-    /*
      * 공격이 실제로 나갔는지부터 확인한다.
      * 잡힌 채·회피 중에 들어오면 attack() 이 조용히 거부되고, 그 뒤의
      * 측정은 "0px 당김"이라는 그럴듯한 거짓을 만든다.
@@ -1696,14 +1704,16 @@ console.log('공격 모션');
       }
       if (p.attackPhase === 'none') break;
     }
-    return { wind, out };
+    return { wind, out, move: p.lastMove };
   });
 
   if (motion.why) {
     console.log(`  · ${motion.why}`);
   } else {
     if (!(motion.wind.dx < -1)) {
-      errors.push(`[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(1)}px)`);
+      errors.push(
+        `[모션] 선딜에 뒤로 당기지 않습니다 (${motion.wind.dx.toFixed(1)}px · ${motion.move})`,
+      );
     } else {
       console.log(`  ✓ 예비동작 — 뒤로 ${(-motion.wind.dx).toFixed(0)}px 당긴다`);
     }
@@ -1734,18 +1744,21 @@ console.log('공격 모션');
  */
 console.log('기술별 이펙트');
 {
+  /*
+   * 살아 있는지부터 본다.
+   *
+   * 앞 블록이 releasePlayer() 로 봇을 풀어 준 뒤 스크린샷을 한 장 찍는데,
+   * 느린 기계에서는 그 한 장이 몇 초다. 그 사이에 셋에게 둘러싸여 죽으면
+   * 아래 spawnSwing 은 아무것도 못 그리고, 검사는 네 기술 **전부** 이펙트가
+   * 없다고 적는다 — 이펙트가 죽은 게 아니라 사람이 죽은 것이다.
+   * waitGrounded 는 죽어 있으면 판을 새로 연다.
+   */
+  await waitGrounded();
   await isolatePlayer();
   const fx = await page.evaluate(async () => {
     const s = window.game.scene.getScene('Battle');
     const p = s.player;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    /*
-     * 개수 차이가 아니라 **새로 생긴 것**을 센다.
-     *
-     * 화면에는 타격 입자처럼 계속 생겼다 사라지는 도형이 있어서, 앞뒤 개수를
-     * 빼면 음수가 나오기도 한다. 부르기 전의 목록을 기억해 두고 그 뒤에
-     * 새로 들어온 것만 세면 정확하다.
-     */
     /*
      * 만들어지는 순간에 센다 — 나중에 화면을 훑지 않는다.
      *
@@ -1790,9 +1803,10 @@ console.log('기술별 이펙트');
   const drawn = Object.entries(fx).filter(([, v]) => v.shapes > 0);
 
   if (drawn.length < Object.keys(fx).length) {
+    // 어떤 fx 인지 함께 남긴다 — 슬롯 이름만으로는 어느 그리기 경로인지 모른다
     const missing = Object.entries(fx)
       .filter(([, v]) => v.shapes === 0)
-      .map(([k]) => k);
+      .map(([k, v]) => `${k}(${v.fx})`);
     errors.push(`[이펙트] 아무것도 안 그려진 기술이 있습니다 — ${missing.join(', ')}`);
   } else if (kinds.size < 3) {
     errors.push(`[이펙트] 기술이 달라도 같은 모양입니다 — ${[...kinds].join(', ')}`);
@@ -2742,6 +2756,20 @@ console.log('서든데스');
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const before = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+
+    /*
+     * 되감기 전에 **게임이 스스로 찍어 뒀는지**부터 본다.
+     *
+     * 이 검사는 오래 통과했지만 아무것도 안 지키고 있었다. 되감는 그 줄이
+     * battleActiveSince 를 직접 써 넣는데, 정작 그 값을 게임에서 찍는 곳이
+     * 호스트 전용 코드 안이라 **로컬에서는 영영 0** 이었다. 즉 서든데스가
+     * 로컬에서 한 번도 안 걸렸는데, 검사가 그 값을 대신 채워 주는 바람에
+     * 매번 초록불이 떴다. 검사가 고쳐 주면 검사는 아무 말도 안 한다.
+     */
+    if (!s.battleActiveSince) {
+      return { why: '판이 시작됐는데 시작 시각이 안 찍혔습니다 (서든데스가 영영 안 걸린다)' };
+    }
+
     // 시작 시각을 2분 30초 전으로 되감는다
     s.battleActiveSince = s.time.now - 151000;
     for (let i = 0; i < 40 && !s.suddenDeath; i++) await wait(100);
@@ -2991,6 +3019,180 @@ console.log('조작감');
     console.log('  ✓ 회피 — 방어 중 A/D 구르기 + 무적');
   }
   await shot('dodge');
+
+  /* --- 공중 회피 — 날아가는 동안 할 수 있는 유일한 것 ------------- */
+
+  /*
+   * 지상 회피와 같은 조합(`S`+방향)이 공중에서는 공중 회피로 갈린다.
+   * 규칙이 하나라 외울 것이 안 늘어나는 대신, **갈라지는 그 지점**이
+   * 조용히 죽기 쉽다 — 땅에서만 눌러 보면 영영 모른다.
+   *
+   * 한 체공에 한 번이라는 제한도 함께 본다. 그게 없으면 공중에서 무적을
+   * 이어 붙여 내려오지 않는 캐릭터가 생긴다.
+   */
+  await waitGrounded();
+  await isolatePlayer();
+  const air = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const inAir = () => !(p.body.blocked.down || p.body.touching.down);
+
+    /*
+     * 높이 띄운다.
+     *
+     * 처음에는 -900 으로 띄웠는데, 공중 회피가 상승을 끊어(vy=-40) 그대로
+     * 떨어지는 바람에 두 번째 시도 전에 착지해 버렸다. 그러면 그 두 번째는
+     * 공중 회피가 아니라 **지상 구르기**가 나가고, 검사는 "한 체공에 두 번
+     * 나간다"고 적는다 — 제한은 멀쩡한데 검사가 땅에서 재고 있던 것이다.
+     * 넉넉히 띄우고, 두 번째를 누르기 직전에 아직 떠 있는지 다시 본다.
+     */
+    p.attackPhase = 'none';
+    p.stunUntil = 0;
+    p.body.setVelocity(0, -1600);
+    await wait(100);
+
+    const airborne = inAir();
+    const first = p.dodge(1);
+
+    let invuln = false;
+    for (let i = 0; i < 8; i++) {
+      if (p.isInvulnerable()) invuln = true;
+      await wait(16);
+    }
+
+    // 같은 체공에서 한 번 더 — 되면 안 된다 (땅에 닿았으면 잴 수 없다)
+    const stillAir = inAir();
+    const second = stillAir ? p.dodge(-1) : null;
+
+    return { airborne, first, invuln, second, stillAir };
+  });
+
+  if (!air.airborne) {
+    console.log('  · 띄우지 못해 공중 회피는 건너뜁니다');
+  } else if (!air.stillAir && air.first) {
+    console.log('  ✓ 공중 회피 — 무적 (착지가 빨라 재사용 제한은 못 쟀다)');
+  } else if (!air.first) {
+    errors.push('[조작감] 공중에서 회피가 안 나갑니다');
+  } else if (!air.invuln) {
+    errors.push('[조작감] 공중 회피 중인데 무적이 아닙니다');
+  } else if (air.second) {
+    errors.push('[조작감] 공중 회피가 한 체공에 두 번 나갑니다');
+  } else {
+    console.log('  ✓ 공중 회피 — 무적 · 한 체공에 한 번');
+  }
+
+  /* --- 벗어나기(DI) — 누른 방향으로 궤도가 휜다 -------------------- */
+
+  /*
+   * 같은 기술을 같은 자리에서 두 번 맞되, 한 번은 아무 것도 안 누르고
+   * 한 번은 위를 누른 채로 맞는다. 넉백의 **길이는 같고 각도만** 달라져야
+   * 한다 — 길이가 줄면 누르는 것이 언제나 이득이라 판단이 아니게 되고,
+   * 때린 쪽은 왜 안 날아갔는지 알 수가 없다.
+   */
+  const di = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const atk = p.cfg.moves.heavy;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const launch = async (dx, dy) => {
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.invulnUntil = 0;
+      p.body.setVelocity(0, 0);
+      p.setDodgeInfluence(dx, dy);
+      p.receiveHit(atk, p.x - 40);
+      const v = { x: p.body.velocity.x, y: p.body.velocity.y };
+      p.invulnUntil = s.time.now + 600000;
+      await wait(40);
+      return v;
+    };
+
+    const flat = await launch(0, 0);
+    const bent = await launch(0, -1);
+    const len = (v) => Math.hypot(v.x, v.y);
+    const angle = (v) => (Math.atan2(v.y, v.x) * 180) / Math.PI;
+
+    return {
+      flatLen: len(flat),
+      bentLen: len(bent),
+      turned: Math.abs(angle(bent) - angle(flat)),
+    };
+  });
+
+  if (di.flatLen < 1) {
+    errors.push('[조작감] DI 검사 — 넉백이 아예 없습니다');
+  } else if (Math.abs(di.bentLen - di.flatLen) > di.flatLen * 0.05) {
+    errors.push(
+      `[조작감] DI 가 넉백 크기를 바꿉니다 (${di.flatLen.toFixed(0)} → ${di.bentLen.toFixed(0)})`,
+    );
+  } else if (di.turned < 5) {
+    errors.push(`[조작감] DI 로 궤도가 안 휩니다 (${di.turned.toFixed(1)}도)`);
+  } else {
+    console.log(
+      `  ✓ 벗어나기(DI) — 크기는 그대로, 궤도만 ${di.turned.toFixed(0)}도`,
+    );
+  }
+
+  /* --- 거품이 클수록 크게 터진다 — 등급별 넉백 ---------------------- */
+
+  /*
+   * 같은 기술을 같은 사람에게 세 번 맞히되, 주가만 바꾼다.
+   *
+   * ── 왜 이걸 검사에 넣는가 ──────────────────────────────────────
+   * 넷이 붙는 판에서 앞선 사람을 끌어내릴 수단이 이것 하나다. 조용히
+   * 죽어도 화면은 멀쩡하다 — 오라도 불꽃도 그대로 뜨고, 그저 왕관 쓴
+   * 사람이 안 날아갈 뿐이라 "원래 이런 게임"으로 보인다. 그러면 판은
+   * 앞선 사람이 굳은 채로 흘러가고, 아무도 이유를 모른다.
+   */
+  const bubble = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const atk = p.cfg.moves.heavy;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const launchAt = async (stock) => {
+      s.stock.setExact(p.fighterId, stock);
+      await wait(60);
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.invulnUntil = 0;
+      p.setDodgeInfluence(0, 0);
+      p.body.setVelocity(0, 0);
+      p.receiveHit(atk, p.x - 40);
+      const v = Math.hypot(p.body.velocity.x, p.body.velocity.y);
+      p.invulnUntil = s.time.now + 600000;
+      await wait(40);
+      return v;
+    };
+
+    return {
+      crisis: await launchAt(20),
+      normal: await launchAt(100),
+      surge: await launchAt(300),
+    };
+  });
+
+  if (bubble.normal < 1) {
+    errors.push('[거품] 넉백이 아예 없어 등급 차이를 잴 수 없습니다');
+  } else if (!(bubble.surge > bubble.normal * 1.2)) {
+    errors.push(
+      `[거품] 떡상해도 더 멀리 안 날아갑니다 (100% ${bubble.normal.toFixed(0)} → 300% ${bubble.surge.toFixed(0)})`,
+    );
+  } else if (!(bubble.crisis < bubble.normal * 0.95)) {
+    errors.push(
+      `[거품] 바닥인데 덜 밀리지 않습니다 (100% ${bubble.normal.toFixed(0)} → 20% ${bubble.crisis.toFixed(0)})`,
+    );
+  } else {
+    const rel = (v) => (v / bubble.normal).toFixed(2);
+    console.log(
+      `  ✓ 거품 — 위기 ×${rel(bubble.crisis)} · 보통 ×1.00 · 초!떡상 ×${rel(bubble.surge)}`,
+    );
+  }
+
+  await releasePlayer();
 }
 
 /*
@@ -3805,19 +4007,19 @@ console.log('2인 대전');
   await page.waitForTimeout(300);
 
   const armed = await page.evaluate(
-    () => window.game.scene.getScene('Select')?.twoPlayer === true,
+    () => window.game.scene.getScene('Select')?.localSeats ?? 0,
   );
-  if (!armed) {
-    errors.push('[2인] F2로 2인 대전이 켜지지 않습니다');
+  if (armed !== 2) {
+    errors.push(`[2인] F2로 2인 대전이 켜지지 않습니다 (인원 ${armed})`);
   } else {
     // 1P 고르기 → 2P 고르기 (같은 화면에서 차례만 넘어간다)
     await page.keyboard.press('Enter');
     await page.waitForTimeout(500);
     const midway = await page.evaluate(() => {
       const s = window.game.scene.getScene('Select');
-      return { p1: s?.p1Id ?? null, confirmed: s?.confirmed ?? null };
+      return { picks: s?.localPicks?.length ?? 0, confirmed: s?.confirmed ?? null };
     });
-    if (!midway.p1 || midway.confirmed) {
+    if (midway.picks !== 1 || midway.confirmed) {
       errors.push('[2인] 1P가 고른 뒤 2P 차례로 넘어가지 않습니다');
     }
 
@@ -3879,6 +4081,28 @@ console.log('2인 대전');
       });
       return after.map((x, i) => Math.abs(x - before[i]));
     };
+
+    /*
+     * 재기 전에 둘 다 **칠 수 있는 상태**로 만든다.
+     *
+     * 여기는 봇 둘이 실제로 달려드는 살아 있는 판이다. 재는 그 0.4초 사이에
+     * 2P가 맞아 경직되거나 밀리면 "←를 눌러도 안 움직인다"가 되는데, 키는
+     * 멀쩡하고 그냥 맞고 있었을 뿐이다 — 실제로 그렇게 한 번 걸렸고, 배선을
+     * 따로 들여다보고 나서야 검사가 틀렸다는 것을 알았다.
+     * 재려는 것은 "키가 갈렸는가"이지 "맞고 있는가"가 아니다.
+     */
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.ais.length = 0;
+      for (const f of s.fighters) {
+        f.body?.setVelocity(0, 0);
+        f.stunUntil = 0;
+        f.attackPhase = 'none';
+        // 재는 동안은 아무도 못 때린다 — 넉백이 섞이면 px 이 거짓말을 한다
+        f.invulnUntil = s.time.now + 600000;
+      }
+    });
+    await page.waitForTimeout(400);
 
     const byA = await moved('a');
     const byLeft = await moved('ArrowLeft');

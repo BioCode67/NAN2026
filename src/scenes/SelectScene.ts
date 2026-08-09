@@ -11,6 +11,7 @@ import {
   MOVE_SLOTS,
   MOVE_TRAITS,
 } from '../config/gameConfig';
+import { PadMenu } from '../systems/InputFrame';
 import { sound } from '../systems/SoundSystem';
 import { MAX_PLAYERS, net } from '../systems/NetSystem';
 import {
@@ -24,8 +25,6 @@ import {
 import { pickStage } from '../config/stages';
 import type { BattleSceneData, CharacterConfig, CharacterId, MoveSlot } from '../types';
 
-/** AI 봇 수 — 명세의 1P vs 3AI */
-const AI_COUNT = 3;
 
 /** 카드가 놓일 수 있는 영역 — 머리말 아래, 설명 패널 위 */
 const GRID = { top: 158, bottom: 424, width: 1190, gap: 14 };
@@ -100,6 +99,8 @@ export class SelectScene extends Phaser.Scene {
   private readyAt = 0;
   /** 상세 보기 오버레이 (열려 있을 때만 존재한다) */
   private detail?: Phaser.GameObjects.Container;
+  /** 게임패드 메뉴 조작 — 누가 눌러도 움직인다 */
+  private pads = new PadMenu();
 
   private nameText!: Phaser.GameObjects.Text;
   private taglineText!: Phaser.GameObjects.Text;
@@ -118,10 +119,16 @@ export class SelectScene extends Phaser.Scene {
   private prompt!: Phaser.GameObjects.Text;
   private modeLabel!: Phaser.GameObjects.Text;
 
-  /** 2인 대전인가 (F2로 켠다) */
-  private twoPlayer = false;
-  /** 2인 대전에서 1P가 이미 고른 캐릭터 (null이면 아직 1P 차례) */
-  private p1Id: CharacterId | null = null;
+  /**
+   * 이 기계 앞에 앉은 사람 수 (1~4). `F2` 로 돌린다.
+   *
+   * 판에 서는 인원은 언제나 넷이고, 사람이 늘면 봇이 그만큼 줄어든다.
+   * 1·2번은 키보드를 나눠 쓰고 3·4번은 패드다 — 한 키보드에 손 셋을
+   * 얹을 수 없어서 여기가 오래 둘에서 막혀 있었다.
+   */
+  private localSeats = 1;
+  /** 지금까지 확정된 사람들의 캐릭터 (순서대로 1P, 2P, …) */
+  private localPicks: CharacterId[] = [];
 
   /* --- 온라인 1:1 ------------------------------------------------- */
   /** 회선이 연결된 상태인가 */
@@ -138,8 +145,8 @@ export class SelectScene extends Phaser.Scene {
     this.confirmed = false;
     this.cards = [];
     this.detail = undefined;
-    this.twoPlayer = false;
-    this.p1Id = null;
+    this.localSeats = 1;
+    this.localPicks = [];
     this.online = false;
     this.myPick = null;
     closeNetOverlay();
@@ -156,6 +163,8 @@ export class SelectScene extends Phaser.Scene {
      * 화면이 뜨자마자 0.5초는 아무도 결정을 누르지 않는다.
      */
     this.readyAt = this.time.now + 480;
+    // 패드도 같은 문제를 갖는다 — 넘어올 때 누른 그 버튼이 아직 눌려 있다
+    this.pads.prime();
 
     // 제목 화면과 같은 곡 — 이미 돌고 있으면 그대로 이어진다
     sound.startBgm('menu');
@@ -277,15 +286,22 @@ export class SelectScene extends Phaser.Scene {
       this.prompt.setColor(waiting ? '#facc15' : '#4ade80');
       return;
     }
-    this.markClaims([]);
-    if (!this.twoPlayer) {
+    /*
+     * 여럿이면 **이미 고른 사람들도 카드 위에 남겨 둔다.**
+     * 셋째가 고를 차례에 앞의 둘이 뭘 집었는지 안 보이면 겹쳐 고르게 되고,
+     * 그건 판이 시작된 뒤에야 알게 된다.
+     */
+    this.markClaims(this.localSeats > 1 ? this.localPicks : []);
+
+    if (this.localSeats === 1) {
       this.prompt.setText('파이터를 선택하세요');
       this.prompt.setColor('#cbd5e1');
       return;
     }
-    const first = this.p1Id === null;
-    this.prompt.setText(first ? '1P — 파이터를 선택하세요' : '2P — 파이터를 선택하세요');
-    this.prompt.setColor(first ? '#38bdf8' : '#f472b6');
+
+    const turn = this.localPicks.length;
+    this.prompt.setText(`${turn + 1}P — 파이터를 선택하세요   (${turn + 1}/${this.localSeats})`);
+    this.prompt.setColor(SEAT_COLORS[turn] ?? '#cbd5e1');
   }
 
   /**
@@ -328,30 +344,61 @@ export class SelectScene extends Phaser.Scene {
   }
 
   /**
-   * 2인 대전을 켜고 끈다.
+   * 이 기계 앞에 앉은 사람 수를 돌린다 — 1 → 2 → 3 → 4 → 1.
    *
    * 별도 메뉴 화면을 두지 않았다. 선택 화면에 이미 있는 것을 그대로 쓰면
    * 화면 하나와 그 사이 전환을 통째로 안 만들어도 되고, 켜는 순간 눈앞의
    * 카드가 그대로 1P 차례로 바뀌니 설명도 필요 없다.
+   *
+   * ── 왜 "패드를 꽂으면 자동 참가"가 아닌가 ──────────────────────
+   * 그쪽이 파티 게임답다. 다만 그러면 **첫 패드가 누구 것인지**가 인원수에
+   * 따라 달라진다 — 혼자 할 때는 1P 것이고, 셋이면 3P 것이다. 그 애매함이
+   * 판 도중에 "패드 하나로 두 캐릭터가 같이 움직인다"로 나타난다.
+   * 눌러서 정하면 그 애매함이 없고, 아래 안내가 무엇이 필요한지 말해 준다.
    */
-  private toggleTwoPlayer(): void {
+  private cycleLocalSeats(): void {
     if (this.confirmed || this.detail || isNetOverlayOpen()) return;
     // 온라인 중에는 로컬 모드를 못 바꾼다 (상대와 판이 달라진다)
     if (this.online) return;
 
-    this.twoPlayer = !this.twoPlayer;
-    this.p1Id = null;
+    this.localSeats = (this.localSeats % MAX_PLAYERS) + 1;
+    this.localPicks = [];
     sound.play('uiConfirm');
     this.refreshPrompt();
     this.modeLabel.setText(this.modeText());
-    this.modeLabel.setColor(this.twoPlayer ? '#f472b6' : '#6c86c4');
+    this.modeLabel.setColor(
+      this.localSeats > 1 ? (SEAT_COLORS[this.localSeats - 1] ?? '#f472b6') : '#6c86c4',
+    );
+  }
+
+  /** 지금 꽂혀 있는 패드 수 — 안내에 "몇 개가 더 필요한지"를 적는 데 쓴다 */
+  private padCount(): number {
+    return (this.input.gamepad?.gamepads ?? []).filter((p) => p && p.connected).length;
   }
 
   private modeText(): string {
     if (this.online) return `🌐 온라인 대전  ·  연결됨 (빈자리는 봇)`;
-    return this.twoPlayer
-      ? '👥 2인 대전  ·  사람 둘 + 봇 둘   (F2 : 1인으로 · F3 : 온라인)'
-      : '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 2인 대전 · F3 : 온라인 넷이서)';
+    if (this.localSeats === 1) {
+      return '🎮 1인 플레이  ·  나 + 봇 셋   (F2 : 여럿이서 · F3 : 온라인 넷이서)';
+    }
+
+    const bots = MAX_PLAYERS - this.localSeats;
+    const crew = bots > 0 ? `사람 ${this.localSeats} + 봇 ${bots}` : `사람 넷`;
+
+    /*
+     * 3·4번 자리는 패드가 있어야 앉는다. 없는데 고르면 그 자리는 판 내내
+     * 아무 입력도 못 받고 서 있게 되므로, **고르기 전에** 말해 준다.
+     */
+    const needPads = Math.max(0, this.localSeats - 2);
+    const havePads = this.padCount();
+    const gear =
+      needPads === 0
+        ? '키보드 둘'
+        : havePads >= needPads
+          ? `키보드 둘 + 패드 ${needPads}`
+          : `⚠ 패드 ${needPads}개 필요 (지금 ${havePads}개)`;
+
+    return `👥 ${this.localSeats}인 대전  ·  ${crew}  ·  ${gear}   (F2 : 인원 바꾸기 · F3 : 온라인)`;
   }
 
   /* ================================================================ */
@@ -397,8 +444,8 @@ export class SelectScene extends Phaser.Scene {
 
     closeNetOverlay();
     this.online = true;
-    this.twoPlayer = false;
-    this.p1Id = null;
+    this.localSeats = 1;
+    this.localPicks = [];
     sound.play('uiConfirm');
     this.refreshPrompt();
     this.modeLabel.setText(this.modeText());
@@ -814,11 +861,28 @@ export class SelectScene extends Phaser.Scene {
      * 키 하나가 막혀도 기능 전체가 사라지지 않는 편이 낫다.
      */
     kb.addCapture('TAB');
-    kb.on('keydown-F2', () => this.toggleTwoPlayer());
+    kb.on('keydown-F2', () => this.cycleLocalSeats());
     kb.on('keydown-F3', () => void this.startOnline());
     kb.on('keydown-TAB', () => this.toggleDetail());
     kb.on('keydown-I', () => this.toggleDetail());
     kb.on('keydown-ESC', () => this.closeDetail());
+  }
+
+  /**
+   * 게임패드 — 십자키·스틱으로 다니고 A로 고른다.
+   *
+   * 키보드와 같은 함수를 부르므로 잠금(확정됨·상세 열림·로비 열림)도
+   * 똑같이 걸린다. Y는 상세 보기, B는 닫기다.
+   */
+  override update(): void {
+    const taps = this.pads.poll(this.input.gamepad);
+    if (taps.left) this.move(-1);
+    if (taps.right) this.move(1);
+    if (taps.up) this.move(-this.cols);
+    if (taps.down) this.move(this.cols);
+    if (taps.ok) this.confirm();
+    if (taps.info) this.toggleDetail();
+    if (taps.back) this.closeDetail();
   }
 
   /* ================================================================ */
@@ -1214,6 +1278,43 @@ export class SelectScene extends Phaser.Scene {
     if (isNetOverlayOpen()) return;
 
     const picked = CHARACTER_ORDER[this.selectedIndex]!;
+
+    /*
+     * 앞사람이 고른 캐릭터는 못 고른다.
+     *
+     * ── 왜 막는가 ──────────────────────────────────────────────────
+     * 같은 캐릭터 둘이 판에 서면 화면에서 누가 누구인지 구별할 방법이
+     * 사라진다. 이름표도 같고 색도 같고 모션도 같다 — 넷이 뒤엉킨 판에서는
+     * 자기 캐릭터를 놓치는 것이 곧 조작 불능이다. 대난투류가 같은 캐릭터에
+     * 색을 갈아 입히는 이유가 그것인데, 여기는 색이 곧 그 인물이라
+     * (빌 게이츠맨은 파랑이어야 한다) 그 방법을 쓸 수 없다.
+     *
+     * 로스터가 스물이라 막아도 고를 것이 없어지지 않는다. 그리고 카드에
+     * 이미 "1P" 딱지가 붙어 있어 무엇이 나갔는지 보인다 — 막히는 이유가
+     * 화면에 먼저 있는 셈이다.
+     *
+     * 온라인은 막지 않는다. 거기서는 넷이 **동시에** 고르므로, 먼저 도착한
+     * 쪽이 이기는 경주가 되어 "눌렀는데 안 됐다"가 회선 탓처럼 보인다.
+     */
+    if (!this.online && this.localPicks.includes(picked)) {
+      const who = this.localPicks.indexOf(picked) + 1;
+      sound.play('uiMove');
+      this.prompt.setText(`${CHARACTERS[picked].name} — 이미 ${who}P 가 골랐다`);
+      this.prompt.setColor('#ef4444');
+      this.tweens.add({
+        targets: this.cards[this.selectedIndex]!.root,
+        x: { from: this.cards[this.selectedIndex]!.root.x - 6, to: this.cards[this.selectedIndex]!.root.x },
+        duration: 90,
+        yoyo: true,
+        repeat: 1,
+      });
+      // 다음 카드로 옮기면 원래 안내로 돌아온다
+      this.time.delayedCall(1100, () => {
+        if (!this.confirmed) this.refreshPrompt();
+      });
+      return;
+    }
+
     const card = this.cards[this.selectedIndex]!;
     this.tweens.add({
       targets: card.root,
@@ -1238,15 +1339,19 @@ export class SelectScene extends Phaser.Scene {
 
 
     /*
-     * 2인 대전은 한 번 더 고른다.
+     * 여럿이면 사람 수만큼 번갈아 고른다.
      *
-     * 화면을 따로 만들지 않고 같은 화면에서 차례만 넘긴다. 1P가 고른 뒤
-     * 곧바로 2P 차례가 되므로, 두 사람이 같은 자리에서 번갈아 누르면 된다.
+     * 화면을 따로 만들지 않고 같은 화면에서 차례만 넘긴다. 한 사람이 고르면
+     * 곧바로 다음 차례가 되므로, 같은 자리에서 돌아가며 누르면 된다.
      * 다음 입력이 곧장 결정으로 먹지 않도록 여기서도 잠깐 잠근다 —
-     * Enter를 꾹 누르고 있으면 둘 다 같은 캐릭터가 되어 버린다.
+     * Enter를 꾹 누르고 있으면 전원이 같은 캐릭터가 되어 버린다.
+     *
+     * 넷이 각자 커서를 갖고 **동시에** 고르는 편이 빠르겠지만, 커서 넷과
+     * 그 입력 배분을 새로 만들어야 한다. 번갈아 고르는 것은 이미 있는
+     * 화면 그대로이고, 앞사람이 뭘 골랐는지 카드에 남아 겹쳐 고르지도 않는다.
      */
-    if (this.twoPlayer && this.p1Id === null) {
-      this.p1Id = picked;
+    this.localPicks.push(picked);
+    if (this.localPicks.length < this.localSeats) {
       this.readyAt = this.time.now + 320;
       this.refreshPrompt();
       return;
@@ -1254,17 +1359,23 @@ export class SelectScene extends Phaser.Scene {
 
     this.confirmed = true;
 
-    const playerId = this.p1Id ?? picked;
-    const player2Id = this.p1Id ? picked : undefined;
+    const humanIds = [...this.localPicks];
+    const playerId = humanIds[0]!;
 
     /*
      * 사람이 늘면 봇이 줄어든다 — 판에 서는 인원은 넷 그대로다.
      * 다섯이 뒤엉키면 화면에서 자기 캐릭터를 놓친다.
      */
-    const botCount = AI_COUNT - (player2Id ? 1 : 0);
-    const aiIds = pickOpponents(playerId, botCount, [], player2Id ? [player2Id] : []);
+    const botCount = Math.max(0, MAX_PLAYERS - humanIds.length);
+    const aiIds = pickOpponents(playerId, botCount, [], humanIds.slice(1));
 
-    const data: BattleSceneData = { playerId, player2Id, aiIds };
+    const data: BattleSceneData = {
+      playerId,
+      // 둘일 때는 옛 이름도 함께 채운다 — 이 값을 보는 곳이 아직 남아 있다
+      player2Id: humanIds[1],
+      humanIds,
+      aiIds,
+    };
     this.cameras.main.fadeOut(280, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.start('Battle', data);

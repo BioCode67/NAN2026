@@ -380,6 +380,23 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private dashReadyAt = 0;
 
   private jumpsLeft: number = FIGHTER.MAX_JUMPS;
+  /** 이번 체공에 남은 공중 회피 (착지하면 채워진다) */
+  private airDodgesLeft: number = FIGHTER.AIR_DODGE_PER_AIRTIME;
+  /**
+   * 공중 회피 뒤 굳어 있는 시각.
+   *
+   * 무적(짧다)과 따로 둔다 — 무적이 끝나도 잠시 못 움직여야 헛친 회피에
+   * 대가가 생기고, 그래야 지를지 참을지가 판단이 된다.
+   */
+  private airDodgeLagUntil = 0;
+  /**
+   * 맞는 순간 누르고 있던 방향 — 넉백을 이만큼 휘게 한다 (DI).
+   *
+   * receiveHit 은 때린 쪽 정보만 받는데, 맞는 쪽이 어디를 누르고 있었는지는
+   * 입력을 읽는 곳에서만 안다. 그래서 매 프레임 여기 적어 두고 피격 때 읽는다.
+   */
+  private diX = 0;
+  private diY = 0;
   private wasOnGround = true;
   /**
    * 지금 상승 중인 점프가 "버튼을 떼면 잘리는" 점프인가.
@@ -498,6 +515,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /* --- 능력치 배율 (StockSystem이 갱신) --------------------------- */
   private tier: StockTier = StockTier.NORMAL;
+  /**
+   * 맞았을 때 날아가는 거리 배율 — 등급이 정한다.
+   *
+   * 떡상할수록 크다. 거품이 클수록 크게 터진다는 뜻이고, 넷이 붙는 판에서
+   * 앞선 사람을 실제로 끌어내릴 수단이 된다. (TIERS 표에 이유가 적혀 있다)
+   */
+  private kbTakenMul = 1;
   private atkMul = 1;
   private speedMul = 1;
   private cooldownMul = 1;
@@ -760,7 +784,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     if (this.attackPhase !== 'none' || now < this.stunUntil) return false;
 
     const onGround = this.body.blocked.down || this.body.touching.down;
-    if (!onGround) return false;
+    if (!onGround) return this.airDodge(dir);
 
     this.guarding = false;
     this.dodgeUntil = now + FIGHTER.DODGE_MS;
@@ -784,6 +808,66 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.spawnDodgeTrail(dir);
     sound.play('whiff', 0.3);
     return true;
+  }
+
+  /**
+   * 공중 회피 — 날아가는 동안 할 수 있는 유일한 것.
+   *
+   * ── 왜 따로 있는가 ─────────────────────────────────────────────
+   * 지상 회피(구르기·제자리)는 무적이 끝나도 발이 땅에 붙어 있어 곧바로
+   * 다음 행동을 고를 수 있다. 공중은 그럴 수 없다 — 무적이 끝나면 그대로
+   * 떨어진다. 같은 값으로 두면 공중 회피가 훨씬 강한 행동이 되므로,
+   * 무적은 짧게(150ms) 주고 뒤에 굳는 시간(240ms)을 붙였다.
+   *
+   * 방향을 누르면 그쪽으로 뻗는다. 이것이 복귀 수단이 되기도 하는데,
+   * 한 체공에 한 번뿐이라 "지금 쓸 것인가"가 곧 판단이다.
+   *
+   * @param dir 0이면 제자리, ±1이면 그쪽으로 뻗는다
+   */
+  private airDodge(dir: -1 | 0 | 1): boolean {
+    const now = this.scene.time.now;
+    if (this.airDodgesLeft <= 0) return false;
+    if (now < this.airDodgeLagUntil) return false;
+
+    this.airDodgesLeft--;
+    this.guarding = false;
+    this.dodgeUntil = now + FIGHTER.AIR_DODGE_INVULN_MS;
+    this.dodgeReadyAt = now + FIGHTER.DODGE_COOLDOWN;
+    this.invulnUntil = Math.max(
+      this.invulnUntil,
+      now + FIGHTER.AIR_DODGE_INVULN_MS,
+    );
+    this.airDodgeLagUntil = now + FIGHTER.AIR_DODGE_LAG_MS;
+
+    /*
+     * 뻗는 방향으로 속도를 **덮어쓴다** (더하지 않는다).
+     *
+     * 더하면 크게 날아가던 속도에 얹혀 장외로 더 빨리 나간다 — 살려고 누른
+     * 것이 죽는 수가 된다. 덮어써야 "날아가던 것을 끊고 방향을 다시 잡는"
+     * 것이 되고, 그게 이 행동에 기대하는 바다.
+     */
+    if (dir === 0) {
+      this.body.setVelocity(this.body.velocity.x * 0.25, -60);
+      this.pulseSquash(1.2, 0.78, 150);
+    } else {
+      this.body.setVelocity(FIGHTER.AIR_DODGE_SPEED * dir, -40);
+      this.pulseSquash(1.16, 0.86, 180);
+    }
+
+    this.spawnDodgeTrail(dir);
+    sound.play('whiff', 0.24);
+    return true;
+  }
+
+  /**
+   * 맞는 순간 누르고 있는 방향을 적어 둔다 (DI).
+   *
+   * 입력을 읽는 쪽에서 매 프레임 불러 준다. 봇은 안 부르므로 0으로 남고,
+   * 그만큼 사람이 유리하다 — 넷이 붙는 판에서 그 정도 손해는 봇의 몫이다.
+   */
+  setDodgeInfluence(x: -1 | 0 | 1, y: -1 | 0 | 1): void {
+    this.diX = x;
+    this.diY = y;
   }
 
   /** 지금 재생 중인 포즈 (온라인 대전에서 상대 화면에 그대로 보낸다) */
@@ -1819,15 +1903,45 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const dir = this.x >= fromX ? 1 : -1;
     const guarded = this.guarding;
 
-    // 무게가 무거울수록, 방어 중이면 더욱 덜 밀린다
+    /*
+     * 무게가 무거울수록, 방어 중이면 더욱 덜 밀린다.
+     * 그리고 **떡상했을수록 멀리 날아간다** — 거품이 클수록 크게 터진다.
+     * 등급이 곧 배율이라(TIERS.kbTakenMul), 화면의 오라와 불꽃이 그대로
+     * "이 사람은 지금 잘 날아간다"는 표시가 된다.
+     */
     const kbScale =
       (1 / this.cfg.stats.weight) *
+      this.kbTakenMul *
       (guarded ? FIGHTER.GUARD_KNOCKBACK_MUL : 1);
 
-    this.body.setVelocity(
-      atk.knockbackX * dir * kbScale,
-      atk.knockbackY * kbScale,
-    );
+    let kx = atk.knockbackX * dir * kbScale;
+    let ky = atk.knockbackY * kbScale;
+
+    /*
+     * 벗어나기(DI) — 누르고 있던 방향으로 궤도를 조금 튼다.
+     *
+     * ── 왜 크기를 안 바꾸고 방향만 트는가 ─────────────────────────
+     * 눌러서 넉백이 **줄어들면** 누르는 것이 언제나 이득이라 판단이 아니게
+     * 되고, 때린 쪽은 왜 안 날아갔는지 알 수가 없다. 길이는 그대로 두고
+     * 방향만 튼다 — 같은 거리를 날아가되 **어디로** 날아가는지가 달라진다.
+     * 장외 직전에 무대 쪽으로 반 칸 당겨 오는 그 한 번이 DI 의 전부다.
+     *
+     * 누른 방향을 그대로 더한 뒤 원래 길이로 되돌리는 것이라, 뒤집히지도
+     * 않고 공짜 감속도 없다.
+     */
+    if ((this.diX !== 0 || this.diY !== 0) && !guarded) {
+      const len = Math.hypot(kx, ky);
+      if (len > 1) {
+        const bent = new Phaser.Math.Vector2(
+          kx / len + this.diX * FIGHTER.DI_BEND,
+          ky / len + this.diY * FIGHTER.DI_BEND,
+        ).normalize();
+        kx = bent.x * len;
+        ky = bent.y * len;
+      }
+    }
+
+    this.body.setVelocity(kx, ky);
 
     const base =
       atk.effect === 'stun' ? (atk.effectDuration ?? atk.hitstun) : atk.hitstun;
@@ -2011,6 +2125,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.atkMul = effect.atkMul;
     this.speedMul = effect.speedMul;
     this.cooldownMul = effect.cooldownMul;
+    this.kbTakenMul = effect.kbTakenMul;
 
     /* 오라 */
     this.auraTween?.stop();
@@ -2352,6 +2467,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       this.jumpRising = false;
       // 다음 체공에서 공중 히트 보너스를 다시 받을 수 있다
       this.airHitRefunded = false;
+      // 공중 회피도 착지에서 채운다 — 한 체공에 한 번이라는 규칙이 이 줄이다
+      this.airDodgesLeft = FIGHTER.AIR_DODGE_PER_AIRTIME;
+      this.airDodgeLagUntil = 0;
 
       /*
        * 착지 직전에 눌린 점프를 이제 실행한다.

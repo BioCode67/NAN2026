@@ -20,10 +20,10 @@ export type CharacterId =
   | 'ant'
   | 'bear'
   | 'bull'
-  | 'guru'
-  | 'bot'
-  | 'chairman'
-  | 'doom'
+  | 'lky'
+  | 'turing'
+  | 'chung'
+  | 'hawking'
   | 'whale';
 
 /** 진영 구분 (플레이어 / AI 봇) */
@@ -67,6 +67,12 @@ export interface TierEffect {
   speedMul: number;
   /** 스킬 쿨다운 배율 (작을수록 빠름) */
   cooldownMul: number;
+  /**
+   * 이 등급에서 **맞았을 때 날아가는 거리** 배율.
+   *
+   * 떡상할수록 크다 — 거품이 클수록 크게 터진다. 자세한 이유는 TIERS 표에.
+   */
+  kbTakenMul: number;
   /** 오라/게이지 색상 */
   color: number;
   /** 오라 표시 여부 */
@@ -400,7 +406,7 @@ export interface QuoteSet {
    *
    * 전용기는 그 캐릭터만 되는 것인데, 화면에서는 그냥 "빠르게 떨어졌다"로
    * 지나간다. 자기 입으로 한마디 하면 그때 비로소 **누구의 기술인지** 읽힌다 —
-   * 같은 급습이라도 베조스는 배송을 하고 둠은 심판을 한다.
+   * 같은 급습이라도 베조스는 배송을 하고 호킹은 중력을 말한다.
    */
   trait: string[];
 }

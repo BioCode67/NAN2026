@@ -65,10 +65,10 @@ npm run sheet:merge -- <key>
 | 13 | 동학 개미 | `ant` | `antinvestor` |
 | 14 | 공매도 곰 | `bear` | `shortseller` |
 | 15 | 월가 황소 | `bull` | `chargingbull` |
-| 16 | 차트 도사 | `guru` | `chartguru` |
-| 17 | 챗 도우미 | `bot` | `chatbot` |
-| 18 | 왕 회장님 | `chairman` | `chairman` |
-| 19 | 닥터 둠 | `doom` | `drdoom` |
+| 16 | 리콴유 | `lky` | `leekuanyew` |
+| 17 | 앨런 튜링 | `turing` | `alanturing` |
+| 18 | 정주영차 | `chung` | `chungjuyung` |
+| 19 | 스티븐 호킹 | `hawking` | `stephenhawking` |
 | 20 | 큰손 고래 | `whale` | `whaleinvestor` |
 
 스테이지·UI 는 `scenes/` 에 따로 있다 (한 장씩 독립).

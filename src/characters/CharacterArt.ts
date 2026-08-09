@@ -393,7 +393,7 @@ function buildHeadgear(
       break;
     }
 
-    // 왕 회장님 — 왕관
+    // 왕관 — 지금은 아무도 안 쓴다. 모양은 남겨 둔다
     case 'crown': {
       const band = scene.add.rectangle(0, top - 2, 48, 9, c);
       band.setStrokeStyle(2, outline, 0.45);
@@ -404,7 +404,7 @@ function buildHeadgear(
       break;
     }
 
-    // 챗 도우미 — 끝에 구슬이 달린 안테나
+    // 끝에 구슬이 달린 안테나 — 지금은 아무도 안 쓴다. 모양은 남겨 둔다
     case 'antenna': {
       const rod = scene.add.rectangle(2, top - 12, 3.5, 22, shade(c, -0.3));
       const bulb = scene.add.circle(2, top - 24, 7, c);
@@ -413,7 +413,7 @@ function buildHeadgear(
       break;
     }
 
-    // 차트 도사 — 상투
+    // 상투 — 지금은 아무도 안 쓴다. 모양은 남겨 둔다
     case 'topknot': {
       const knot = scene.add.circle(0, top - 14, 12, c);
       knot.setStrokeStyle(2.5, outline, 0.45);
@@ -434,7 +434,7 @@ function buildHeadgear(
       break;
     }
 
-    // 챙 모자
+    // 정주영차 — 챙 모자(작업모)
     case 'cap': {
       const dome = scene.add.ellipse(0, top - 3, 56, 28, c);
       dome.setStrokeStyle(2.5, outline, 0.45);

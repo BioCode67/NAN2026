@@ -2,7 +2,10 @@ import Phaser from 'phaser';
 import { addBackdrop, hasArt } from '../config/artAssets';
 import { STAGES, STAGE_BY_ID, pickStage } from '../config/stages';
 import {
+  PadMenu,
+  PadReader,
   emptyFrame,
+  mergeFrames,
   mergeTaps,
   packFrame,
   readKeyFrame,
@@ -32,6 +35,13 @@ const QUIET_SEAT_MS = 4000;
 /** 조용한 자리를 얼마나 자주 살피는가 */
 const QUIET_CHECK_MS = 1000;
 /**
+ * 결과 화면이 뜬 뒤 패드 입력을 받기까지 (ms).
+ *
+ * 넷이 붙는 판은 격추 순간에 전원이 버튼을 두드리고 있다. 그 연타를 그대로
+ * 받으면 전적표가 뜨자마자 다음 판이 열려, 누가 몇 등인지 아무도 못 본다.
+ */
+const RESULT_INPUT_DELAY_MS = 1200;
+/**
  * 이만큼 지나면 서든데스 — 전원의 주가가 초당 1%씩 흘러내린다.
  *
  * 2분 30초는 보통 판이 이미 끝나 있는 시간이다. 여기 걸리는 판은
@@ -47,6 +57,7 @@ import { carryOverStock, streakDifficulty, streakTitle } from '../config/streak'
 import {
   HIT_REACTION_ORDER,
   AI_MEDIUM,
+  CAMERA,
   DEPTH,
   FIGHTER,
   GAME,
@@ -111,11 +122,14 @@ interface FighterHud {
   parts: Phaser.GameObjects.GameObject[];
 }
 
+/** 등수 색 — 1위 금, 2위 은, 3위 동, 그 밖은 옅게 */
+const PLACE_COLORS = ['#ffd54a', '#cbd5e1', '#d19a66', '#6c86c4'];
+
 /**
  * 자리 색 — 1P 파랑, 2P 분홍, 3P 보라, 4P 노랑.
  *
  * 넷이 뒤엉키면 화면에서 자기 캐릭터를 놓친다. 자리마다 색을 고정해 두고
- * HUD부터 결과 화면까지 같은 색을 쓴다.
+ * HUD부터 결과 화면·화면 밖 화살표까지 같은 색을 쓴다.
  */
 const SEAT_COLORS = ['#38bdf8', '#f472b6', '#a78bfa', '#facc15'];
 const BOT_COLOR = '#7f93bd';
@@ -129,6 +143,11 @@ function seatIndex(f: BaseCharacter): number {
 function seatColor(f: BaseCharacter): string {
   const i = seatIndex(f);
   return i >= 0 ? (SEAT_COLORS[i] ?? SEAT_COLORS[0]!) : BOT_COLOR;
+}
+
+/** 같은 자리 색을 도형용 숫자로 (`#38bdf8` → 0x38bdf8) */
+function seatTint(f: BaseCharacter): number {
+  return Number.parseInt(seatColor(f).slice(1), 16);
 }
 
 /** HUD 패널 규격 — 4명이 한 줄에 들어가야 한다 */
@@ -234,6 +253,15 @@ export class BattleScene extends Phaser.Scene {
     remote?: () => InputFrame;
     /** 온라인 자리 번호 — 나간 사람을 찾아내는 데 쓴다 */
     slot?: number;
+    /**
+     * 이 사람이 쓰는 패드 번호 (없으면 키보드만).
+     *
+     * 자리 순서에서 유추하지 않고 **명시한다.** 3·4번 자리는 패드 전용인데,
+     * 키보드를 쓰는 1·2번까지 세어 버리면 세 번째 사람에게 세 번째 패드를
+     * 찾아 주게 된다 — 실제로 꽂힌 것은 첫 번째 패드 하나뿐인데도.
+     * 누가 어느 장치를 쓰는지는 자리를 만들 때 이미 정해지므로 그때 적는다.
+     */
+    padIndex?: number;
   }> = [];
   private huds: FighterHud[] = [];
   private muteLabel!: Phaser.GameObjects.Text;
@@ -309,6 +337,28 @@ export class BattleScene extends Phaser.Scene {
   private paused = false;
   private pauseOverlay?: Phaser.GameObjects.Container;
 
+  /**
+   * 게임패드 — 이 기계의 n번째 사람에게 n번째 패드가 간다.
+   *
+   * 패드마다 "방금 눌림"을 가려낼 앞 프레임 기억이 필요해서 사람 수만큼
+   * 리더를 둔다. 키보드와 패드는 합집합이다 — 어느 쪽을 눌러도 통하므로
+   * 설정할 것도, 고를 것도 없다.
+   */
+  /**
+   * 인원을 따라가는 줌 (격추 펀치는 빠져 있다).
+   *
+   * cam.zoom 을 그대로 읽으면 안 된다 — 펀치가 얹힌 값이라, 그것을 기준으로
+   * 다시 보간하면 펀치가 따라가는 줌 자체를 끌고 다닌다.
+   */
+  private baseZoom = 1;
+  /** 격추 순간의 카메라 펀치 세기 (0~1) — 따라가는 줌 위에 배수로 얹힌다 */
+  /** 격추 펀치의 세기 0~1 — 검사가 여기에 값을 넣고 화면을 읽는다 */
+  zoomPunch = 0;
+
+  private padReaders: PadReader[] = [];
+  /** 스타트 버튼 — 일시정지·다음 상대. 전투 조작과 갈라 둔다 */
+  private padMenu = new PadMenu();
+
   /** 사람이 나가 봇이 이어받은 자리들 */
   private takenOver = new Set<string>();
 
@@ -326,6 +376,13 @@ export class BattleScene extends Phaser.Scene {
 
   /** 결과 화면이 떠 있는가 — 카메라를 원점에 묶는 데 쓴다 */
   private resultShown = false;
+  /**
+   * 결과 화면에서 패드 입력을 받기 시작하는 시각.
+   *
+   * 격추 순간에는 대개 전원이 버튼을 두드리고 있다. 그 연타가 그대로
+   * 다음 판을 열면 누가 몇 등인지 아무도 못 본 채 넘어간다.
+   */
+  private resultReadyAt = 0;
 
   /** 전투 진행 중인가 (인트로/결과 화면에서는 false) */
   private battleActive = false;
@@ -356,6 +413,12 @@ export class BattleScene extends Phaser.Scene {
     this.battleActive = false;
     // 씬 객체는 판마다 새로 만들어지지 않는다 — 앞 판의 값이 남으면 카메라가 묶인 채 시작한다
     this.resultShown = false;
+    /*
+     * 선택 화면에서 **스타트로 확정하고** 들어오면 그 버튼이 아직 눌려 있다.
+     * 지금은 togglePause 가 인트로 중에는 안 멈춰 사고로 안 이어지지만,
+     * 그것은 여기와 상관없는 이유로 있는 자물쇠다. 새는 자리에서 막는다.
+     */
+    this.padMenu.prime();
     this.canContinue = false;
     this.streak = data.streak ?? 0;
     resetQuoteThrottle();
@@ -771,8 +834,22 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const spawnY = STAGE.GROUND_Y - FIGHTER.BODY_H;
-    const p2Id = this.battleData.player2Id;
-    const total = 1 + (p2Id ? 1 : 0) + this.battleData.aiIds.length;
+    /*
+     * 이 기계 앞에 앉은 사람들.
+     *
+     * 1·2번은 키보드를 나눠 쓰고, 3·4번은 패드다 — 한 키보드에 손 셋을
+     * 얹을 수 없어서 지금까지 여기가 둘에서 막혀 있었다. 자리마다 어느
+     * 장치를 쓰는지는 아래 humans 를 세울 때 함께 적는다.
+     *
+     * humanIds 가 있으면 그것이 명단이고, 없으면 옛 방식(playerId +
+     * player2Id)으로 읽는다. 온라인은 이 함수까지 오지 않는다(duel 로 갈린다).
+     */
+    const humanIds =
+      this.battleData.humanIds ??
+      ([this.battleData.playerId, this.battleData.player2Id].filter(
+        Boolean,
+      ) as CharacterId[]);
+    const total = humanIds.length + this.battleData.aiIds.length;
 
     /*
      * 연승이 쌓일수록 봇이 빨라진다.
@@ -790,42 +867,46 @@ export class BattleScene extends Phaser.Scene {
     const gap = total > 1 ? usable / (total - 1) : 0;
     const startX = STAGE.LEFT + 130;
 
-    this.player = new BaseCharacter(
-      this,
-      startX,
-      spawnY,
-      CHARACTERS[this.battleData.playerId],
-      'player',
-      'P1',
-    );
-    this.player.facing = 1;
-    this.fighters.push(this.player);
-
     /*
-     * 2P는 맨 오른쪽에서 시작한다.
+     * 사람을 **바깥쪽부터** 세운다 — 1P 왼쪽 끝, 2P 오른쪽 끝, 3·4P 그 안쪽.
      *
-     * 사람 둘을 양 끝에 세우고 봇을 가운데에 둔다. 사람끼리 붙으려면
-     * 봇을 헤치고 가야 하니, 시작하자마자 둘이 서로만 두들기는 판이 안 된다.
+     * 사람끼리 붙으려면 사이에 있는 봇을 헤치고 가야 하니, 시작하자마자
+     * 둘이 서로만 두들기는 판이 안 된다. 셋·넷이 되면 사람이 사람 옆에
+     * 서게 되는데, 그때는 그게 오히려 낫다 — 시작 신호와 함께 바로 붙는다.
      */
-    if (p2Id) {
-      this.player2 = new BaseCharacter(
-        this,
-        STAGE.RIGHT - 130,
-        spawnY,
-        CHARACTERS[p2Id],
-        'player',
-        'P2',
-      );
-      this.player2.facing = -1;
-      this.fighters.push(this.player2);
-    }
+    const humanSpots = humanIds.map((_, i) =>
+      i % 2 === 0 ? startX + gap * (i / 2) : STAGE.RIGHT - 130 - gap * ((i - 1) / 2),
+    );
 
-    // 봇은 사이를 메운다 (사람이 둘이면 자리가 하나 줄어든다)
-    const botSlots = total - 1 - (p2Id ? 1 : 0);
+    const humans = humanIds.map((id, i) => {
+      const f = new BaseCharacter(
+        this,
+        humanSpots[i]!,
+        spawnY,
+        CHARACTERS[id],
+        'player',
+        `P${i + 1}`,
+      );
+      // 왼쪽에서 시작한 사람은 오른쪽을, 오른쪽에서 시작한 사람은 왼쪽을 본다
+      f.facing = i % 2 === 0 ? 1 : -1;
+      this.fighters.push(f);
+      return f;
+    });
+
+    this.player = humans[0]!;
+    /*
+     * player2 는 "이 판에 나 말고 다른 사람이 있는가"의 표시로도 쓰인다
+     * (연승 도전을 끄고, 결과 화면 문구를 바꾸고, 조작 안내를 나눈다).
+     * 셋·넷일 때도 그 답은 같으므로 두 번째 사람을 그대로 넣는다.
+     */
+    this.player2 = humans[1];
+
+    // 봇은 사이를 메운다 (사람이 늘면 그만큼 자리가 줄어든다)
+    const botSlots = Math.max(0, total - humans.length);
     this.battleData.aiIds.slice(0, botSlots).forEach((id, i) => {
       const bot = new BaseCharacter(
         this,
-        startX + gap * (i + 1),
+        startX + gap * (humans.length + i),
         spawnY,
         CHARACTERS[id],
         'ai',
@@ -835,19 +916,37 @@ export class BattleScene extends Phaser.Scene {
       this.fighters.push(bot);
     });
 
-    /* 사람마다 자기 키와 자기 더블탭 기록을 갖는다 */
+    /*
+     * 사람마다 자기 입력원과 자기 더블탭 기록을 갖는다.
+     *
+     * 1번은 키보드(WASD 계열) + 첫 패드, 2번은 키보드(방향키 계열) + 둘째 패드.
+     * 3번부터는 키보드가 남아 있지 않으므로 패드 전용이다 — 패드 번호를
+     * 자리 순서로 유추하지 않고 여기서 못 박는다.
+     */
     const p1Keys = { ...this.keys };
     // 2P가 있으면 방향키는 2P 것이다 — 1P의 ↑ 점프를 뗀다
     if (this.player2) delete p1Keys.jumpAlt;
+    const keySets = [p1Keys, this.keys2];
 
-    this.humans = [{ fighter: this.player, keys: p1Keys, tap: { dir: 0, at: 0 } }];
-    if (this.player2) {
-      this.humans.push({
-        fighter: this.player2,
-        keys: this.keys2,
-        tap: { dir: 0, at: 0 },
-      });
-    }
+    this.humans = humans.map((f, i) => ({
+      fighter: f,
+      keys: keySets[i] ?? {},
+      tap: { dir: 0 as -1 | 0 | 1, at: 0 },
+      padIndex: this.padSeatIndex(i, humans.length),
+      /*
+       * 자리 번호는 로컬에서도 적는다.
+       *
+       * 온라인 전용처럼 보이지만 **유령이 이 번호로 갈린다**(ghostOf).
+       * 안 적으면 전부 0번으로 접히고, 로컬에서 둘째가 상장폐지되는 순간
+       * 첫째의 유령을 함께 조종하게 된다 — 유령은 하나만 그려지고 두 사람의
+       * 좌우 입력이 같은 것을 밀고 당긴다. 사람이 둘까지일 때는 둘 다 죽으면
+       * 판이 끝나서 드러나지 않던 것이, 넷이 되면서 실제로 보인다.
+       *
+       * 온라인 자리 관리(handOverToBot·quietSlots)는 remote 인 자리만 보므로
+       * 여기에 번호가 있어도 건드리지 않는다.
+       */
+      slot: i,
+    }));
 
     /* 지면·발판 충돌 + 파이터 간 밀림 */
     this.fighters.forEach((f) => {
@@ -1162,6 +1261,9 @@ export class BattleScene extends Phaser.Scene {
    */
   private sendMyInput(): void {
     const frame = readKeyFrame(this.keys);
+    // 참가자도 패드로 칠 수 있다 — 이 기계의 사람은 나 하나뿐이니 0번 패드다
+    const pad = this.padFrame(0);
+    if (pad) mergeFrames(frame, pad);
     mergeTaps(this.outTaps, frame);
 
     const now = this.time.now;
@@ -1564,7 +1666,8 @@ export class BattleScene extends Phaser.Scene {
      * 있다. 그 몇 초를 침묵으로 세면 첫 판이 시작되자마자 사람이 봇으로
      * 바뀐다 — 실제로 그렇게 됐다.
      */
-    if (this.battleActiveSince === 0) this.battleActiveSince = time;
+    // 판이 시작된 시각은 전투 개시에서 찍는다 (여기서 찍으면 로컬에서 안 찍힌다)
+    if (this.battleActiveSince === 0) return;
     if (time - this.battleActiveSince < QUIET_SEAT_MS) return;
 
     if (time - this.lastReapAt < QUIET_CHECK_MS) return;
@@ -1699,10 +1802,17 @@ export class BattleScene extends Phaser.Scene {
    * 상태로 받아 그린다 — 각자 계산하면 "내가 여기 떨어뜨렸는데 저기 떨어졌다"가
    * 되고, 그건 조작이 고장난 것으로 느껴진다.
    */
-  private updateGhost(h: (typeof this.humans)[number]): void {
+  private updateGhost(
+    h: (typeof this.humans)[number],
+    localIdx: number = -1,
+  ): void {
     if (this.netRole === 'guest') return;
 
     const frame = h.remote ? h.remote() : readKeyFrame(h.keys);
+    if (localIdx >= 0) {
+      const pad = this.padFrame(localIdx);
+      if (pad) mergeFrames(frame, pad);
+    }
     const g = this.ghostOf(h);
     const dt = this.game.loop.delta / 1000;
 
@@ -1880,9 +1990,51 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * 이 자리는 몇 번 패드를 쓰는가 (없으면 키보드 전용).
+   *
+   * ── 규칙이 인원수에 따라 갈리는 이유 ───────────────────────────
+   * 키보드는 두 사람까지다. 그래서 셋 이상이면 3·4번은 **패드가 곧 그 사람**
+   * 이고, 첫 패드가 3번 것이 된다.
+   *
+   * 이때 1·2번에서 패드를 떼야 한다. 안 그러면 1번과 3번이 같은 첫 패드를
+   * 함께 보게 되어, 패드 하나로 두 캐릭터가 똑같이 움직인다. 둘이서 할
+   * 때(인원 ≤ 2)는 그 충돌이 없으므로 자리마다 패드를 그대로 붙여
+   * "키보드든 패드든 아무 쪽이나"를 유지한다.
+   */
+  private padSeatIndex(seat: number, humanCount: number): number | undefined {
+    const KEYBOARD_SEATS = 2;
+    if (humanCount <= KEYBOARD_SEATS) return seat;
+    if (seat < KEYBOARD_SEATS) return undefined;
+    return seat - KEYBOARD_SEATS;
+  }
+
+  /** 지금 꽂혀 있는 패드들 (꽂힌 순서) */
+  private livePads(): Phaser.Input.Gamepad.Gamepad[] {
+    const pads = this.input.gamepad?.gamepads ?? [];
+    return pads.filter((p) => p && p.connected);
+  }
+
+  /**
+   * `padIndex`번째 패드의 이번 프레임 입력.
+   *
+   * 패드가 없으면 null — 키보드 프레임에 합치기만 하므로 없어도 그만이다.
+   * (다만 패드 전용 자리는 그동안 아무 입력도 못 받는다. 판 도중에 뽑히면
+   *  조용한 자리 회수기가 봇으로 바꿔 준다.)
+   */
+  private padFrame(padIndex: number): InputFrame | null {
+    const pad = this.livePads()[padIndex];
+    if (!pad) return null;
+    while (this.padReaders.length <= padIndex) {
+      this.padReaders.push(new PadReader());
+    }
+    return this.padReaders[padIndex]!.read(pad);
+  }
+
   /** 사람이 조종하는 파이터 전부 — 각자 자기 입력원에서 한 프레임을 읽는다 */
   private handleAllInput(): void {
     for (const h of this.humans) {
+      const myLocalIdx = h.remote ? -1 : (h.padIndex ?? -1);
       /*
        * 죽은 사람은 유령을 조종한다.
        *
@@ -1890,7 +2042,7 @@ export class BattleScene extends Phaser.Scene {
        * 캐릭터를, 죽은 뒤에는 유령을 움직인다. 회선 경로도 그대로 쓴다.
        */
       if (!h.fighter.alive) {
-        this.updateGhost(h);
+        this.updateGhost(h, myLocalIdx);
         continue;
       }
       /*
@@ -1900,8 +2052,14 @@ export class BattleScene extends Phaser.Scene {
        * handleInput 이 키 객체를 직접 읽으면 그 경로가 통째로 막히므로,
        * 한 프레임분 입력을 값으로 만들어 넘긴다 — 키보드에서 오든
        * 회선에서 오든 이 아래는 같은 코드를 탄다.
+       *
+       * 이 기계의 사람이면 게임패드도 함께 읽어 합친다.
        */
       const frame = h.remote ? h.remote() : readKeyFrame(h.keys);
+      if (myLocalIdx >= 0) {
+        const pad = this.padFrame(myLocalIdx);
+        if (pad) mergeFrames(frame, pad);
+      }
       this.handleInput(h.fighter, frame, h.tap);
     }
   }
@@ -1994,15 +2152,24 @@ export class BattleScene extends Phaser.Scene {
      * 전부다. 빠져나가는 선택지가 있어야 공격하는 쪽도 읽을 것이 생긴다.
      */
     const wantGuard = down && onGround;
+    /*
+     * 회피 조합키는 지상·공중 모두 `S` 다.
+     *
+     * 공중에는 방어가 없지만 **회피는 있다.** 규칙을 "S를 누르고 방향이면
+     * 회피"로 하나로 두면 외울 것이 안 늘어난다 — 땅에서는 구르기가,
+     * 공중에서는 공중 회피가 나갈 뿐이다. dodge() 가 발이 땅에 있는지 보고
+     * 알아서 갈라 준다.
+     */
+    const dodgeMod = down;
     let dodged = false;
-    if (wantGuard) {
+    if (dodgeMod) {
       if (tapLeft) dodged = p.dodge(reversed ? 1 : -1);
       else if (tapRight) dodged = p.dodge(reversed ? -1 : 1);
       else if (tapJump) dodged = p.dodge(0);
     }
 
     /* A/D 더블탭 → 대시 (방어 중에는 구르기가 먼저다) */
-    if (!wantGuard) {
+    if (!dodgeMod) {
       if (tapLeft && this.checkDoubleTap(tap, -1)) p.dash(-1);
       if (tapRight && this.checkDoubleTap(tap, 1)) p.dash(1);
     }
@@ -2010,8 +2177,8 @@ export class BattleScene extends Phaser.Scene {
     /* 조작 반전 룰이 걸려 있으면 좌우가 뒤집힌다 */
     p.moveHorizontal(heldWorld);
 
-    // 방어 중 점프는 회피로 쓰이므로 여기서는 뛰지 않는다
-    if (tapJump && !wantGuard) p.jump();
+    // S를 누르고 있을 때의 점프는 회피다 — 지상이든 공중이든 여기서는 안 뛴다
+    if (tapJump && !dodgeMod) p.jump();
     /*
      * 점프 버튼을 떼면 상승이 잘린다 (숏홉).
      * 짧게 누르면 낮게, 길게 누르면 높게 — 같은 버튼에 두 선택지가 생긴다.
@@ -2049,6 +2216,17 @@ export class BattleScene extends Phaser.Scene {
 
     p.setGuard(wantGuard && !dodged && !p.isDodging());
     if (down && !onGround) p.fastFall();
+
+    /*
+     * 지금 누르고 있는 방향을 적어 둔다 — 맞는 순간 이것으로 궤도가 휜다(DI).
+     *
+     * 매 프레임 적는 이유는, 맞는 순간이 언제일지 모르기 때문이다. 피격은
+     * 상대의 판정이 정하는 것이라 이쪽에서는 미리 알 수 없다.
+     * 위/아래는 방어·급강하와 같은 키를 쓰지만, 여기서는 "어디로 벗어나려
+     * 하는가"로만 읽는다 — 한 손가락이 두 가지 뜻을 갖는 것이 아니라
+     * 누르고 있는 방향이 곧 벗어나려는 방향이라 자연스럽다.
+     */
+    p.setDodgeInfluence(heldWorld, up ? -1 : down ? 1 : 0);
   }
 
   /**
@@ -2134,13 +2312,29 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * 카메라 — 살아있는 파이터들의 중앙을 따라간다.
+   * 카메라 — 살아있는 파이터들의 중앙을 따라가고, 뭉치면 파고든다.
    *
-   * 줌은 하지 않는다. 스크롤만 하면 HUD에 scrollFactor(0)만 주면 되지만,
-   * 줌까지 넣으면 HUD가 함께 확대돼 UI 전용 카메라가 필요해진다.
-   * 넓어진 맵을 보여주는 목적에는 스크롤만으로 충분하다.
+   * ── 줌을 어떻게 넣었나 ─────────────────────────────────────────
+   * 오래 줌 없이 스크롤만 했다. HUD 에 scrollFactor(0) 만 주면 됐기 때문이고,
+   * 줌을 넣으면 그 HUD 까지 함께 확대돼 UI 전용 카메라가 필요해 보였다.
+   *
+   * 카메라를 하나 더 두는 대신 **HUD 를 거꾸로 줄인다.** scrollFactor 0 인
+   * 것은 화면 좌표 p 를 (p - c)·z + c 자리에 그리므로(c = 화면 중앙),
+   * 컨테이너를 1/z 로 줄이고 c - c/z 로 옮겨 두면 정확히 상쇄된다.
+   * HUD 가 이미 컨테이너 하나(hudLayer)에 다 들어 있어서 두 줄로 끝난다.
+   *
+   * ── 왜 당기기만 하고 물러나지는 않는가 ─────────────────────────
+   * 월드는 1920×720 이고 화면은 1280×720 이다. 세로가 **정확히 같아서**
+   * 물러나는 순간 무대 위아래로 아무것도 없는 빈 공간이 드러난다.
+   * 가로만 물러나게 하는 것도 안 된다 — 줌은 가로세로가 같이 간다.
+   * 그래서 1.0 이 가장 넓은 상태이고, 뭉쳤을 때만 파고든다.
+   *
+   * 파고드는 정도는 **전원이 여유를 두고 화면에 들어오는 선까지**로만
+   * 잡는다. 그래서 누가 밖으로 밀려나는 일이 구조적으로 없다.
    */
   private updateCamera(delta: number): void {
+    const cam = this.cameras.main;
+
     /*
      * 결과 화면에서는 카메라를 원점에 묶는다.
      *
@@ -2150,7 +2344,10 @@ export class BattleScene extends Phaser.Scene {
      * 판이 끝난 뒤의 카메라 위치는 아무 정보도 아니므로 원점으로 되돌린다.
      */
     if (this.resultShown) {
-      this.cameras.main.setScroll(0, 0);
+      this.baseZoom = 1;
+      this.zoomPunch = 0;
+      this.applyZoom();
+      cam.setScroll(0, 0);
       return;
     }
 
@@ -2159,9 +2356,13 @@ export class BattleScene extends Phaser.Scene {
 
     let minX = Infinity;
     let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
     for (const f of alive) {
       minX = Math.min(minX, f.x);
       maxX = Math.max(maxX, f.x);
+      minY = Math.min(minY, f.y);
+      maxY = Math.max(maxY, f.y);
     }
 
     /*
@@ -2178,12 +2379,48 @@ export class BattleScene extends Phaser.Scene {
       : mid;
     const targetX = humansAlive.length ? (mid + humanMid) / 2 : mid;
 
-    const cam = this.cameras.main;
-    const desired = Phaser.Math.Clamp(
-      targetX - GAME.WIDTH / 2,
-      0,
-      GAME.WORLD_WIDTH - GAME.WIDTH,
-    );
+    /*
+     * 전원이 이만큼 여유를 두고 들어오는 선까지만 당긴다.
+     *
+     * 여유(CAMERA.MARGIN)는 캐릭터 반 몸에 날아갈 자리를 더한 값이다.
+     * 이것을 좁게 잡으면 화면 가장자리에 딱 붙은 채로 싸우게 되고,
+     * 한 대 맞아 밀리는 순간 곧바로 밖으로 나간다.
+     */
+    const needW = maxX - minX + CAMERA.MARGIN * 2;
+    const needH = maxY - minY + CAMERA.MARGIN * 2;
+    const fit = Math.min(GAME.WIDTH / needW, GAME.HEIGHT / needH);
+
+    /*
+     * 판이 멈춰 있는 동안(인트로·프롬프트 입력·일시정지)에는 1 로 돌아간다.
+     * 그 화면들의 글자는 hudLayer 밖에 있어 줌을 되돌려 주는 손이 없다.
+     */
+    const still = !this.battleActive || this.prompting || this.paused;
+    const wantZoom = still ? 1 : Phaser.Math.Clamp(fit, 1, CAMERA.MAX_ZOOM);
+
+    /*
+     * 줌은 스크롤보다 **느리게** 따라간다.
+     *
+     * 넷이 뒤엉킨 판에서는 사람 사이 거리가 매 순간 출렁이는데, 줌이 그걸
+     * 그대로 따라가면 화면이 숨을 쉬듯 울렁거려 눈이 먼저 지친다.
+     * 당기는 것보다 물러나는 것을 조금 더 빠르게 둔다 — 늦게 물러나면
+     * 누군가 화면 밖에 잠깐 머물게 되고, 그 순간은 게임이 아니라 추측이 된다.
+     */
+    const zoomIn = wantZoom > this.baseZoom;
+    const zt = 1 - Math.pow(zoomIn ? CAMERA.ZOOM_IN_EASE : CAMERA.ZOOM_OUT_EASE, delta / 1000);
+    const zoom = Phaser.Math.Linear(this.baseZoom, wantZoom, zt);
+    this.baseZoom = zoom;
+    this.applyZoom();
+
+    /*
+     * 좌우 한계는 **보이는 폭**으로 잡는다.
+     *
+     * 줌이 걸리면 화면에 담기는 월드 폭이 1280 이 아니라 1280/줌 이다.
+     * 예전 상수(WORLD_WIDTH - WIDTH)를 그대로 쓰면 당긴 만큼 무대 밖
+     * 검은 여백이 양옆에 드러난다.
+     */
+    const halfView = GAME.WIDTH / 2 / zoom;
+    const midX = Phaser.Math.Clamp(targetX, halfView, GAME.WORLD_WIDTH - halfView);
+    const desired = midX - GAME.WIDTH / 2;
 
     // delta 기반 보간 — 프레임률이 달라도 같은 속도로 따라간다
     const t = 1 - Math.pow(0.0015, delta / 1000);
@@ -2194,6 +2431,34 @@ export class BattleScene extends Phaser.Scene {
      */
     const kick = this.combat.getCameraKick();
     cam.setScroll(Phaser.Math.Linear(cam.scrollX, desired, t) + kick, 0);
+  }
+
+  /**
+   * 지금의 줌(따라가는 줌 × 격추 펀치)을 걸고, HUD 를 그만큼 거꾸로 줄인다.
+   *
+   * scrollFactor 0 인 것은 화면 좌표 p 를 (p - c)·z + c 자리에 그린다
+   * (c = 화면 중앙). 그러니 컨테이너를 1/z 로 줄이고 c - c/z 로 옮기면
+   * 자식들이 정확히 원래 자리에 온다 — 카메라를 하나 더 두지 않아도 된다.
+   *
+   * 두 줌을 **곱해서** 한 군데서 거는 이유가 이 되돌리기다. 두 곳에서 따로
+   * setZoom 을 부르면 나중에 부른 쪽이 앞엣것을 지우고, HUD 되돌리기는
+   * 그중 한쪽 값만 보고 어긋난다.
+   *
+   * hudLayer 밖에 있는 화면 고정 글자(중앙 안내·격추 도장)는 일부러
+   * 그냥 둔다. 둘 다 화면 한가운데 잠깐 떴다 사라지는 것이라, 당긴 판에서
+   * 조금 크게 뜨는 편이 오히려 그 순간을 강조한다.
+   */
+  applyZoom(): void {
+    const zoom = this.baseZoom * (1 + CAMERA.KO_PUNCH * this.zoomPunch);
+    const cam = this.cameras.main;
+    if (Math.abs(cam.zoom - zoom) > 0.0005) cam.setZoom(zoom);
+
+    if (!this.hudLayer) return;
+    const inv = 1 / zoom;
+    const cx = GAME.WIDTH / 2;
+    const cy = GAME.HEIGHT / 2;
+    this.hudLayer.setScale(inv);
+    this.hudLayer.setPosition(cx - cx * inv, cy - cy * inv);
   }
 
   /** 스킬 시전 — 시전 시 부가 효과(도박 등)까지 처리한다 */
@@ -2347,6 +2612,18 @@ export class BattleScene extends Phaser.Scene {
      * 흔들림만으로는 잦은 타격과 구별이 안 된다. 한 호흡 줌이 들어갔다
      * 나오면 "방금 큰 일이 났다"가 몸으로 전달된다.
      */
+    /*
+     * 펀치는 **지금 줌 위에 얹는다** (1 에서 시작하지 않는다).
+     *
+     * 카메라는 인원이 뭉치면 이미 당겨져 있다. 펀치가 절대값으로 1.09 를
+     * 써 버리면 당겨 있던 판에서는 오히려 **확 물러났다 돌아오는** 반대
+     * 연출이 되고, 끝나면서 1 로 스냅해 다음 프레임에 원래 줌으로 튄다.
+     * 배수로 얹고, 되돌리는 것은 세기(zoomPunch)를 0 으로 두는 것으로 한다.
+     *
+     * 트윈이 직접 applyZoom 을 부르는 이유는 히트스탑 때문이다 — 격추 순간엔
+     * 판이 멈춰 있어 updateCamera 가 안 돈다. 그래도 펀치는 보여야 한다.
+     */
+    const cam = this.cameras.main;
     this.tweens.addCounter({
       from: 0,
       to: 1,
@@ -2355,13 +2632,14 @@ export class BattleScene extends Phaser.Scene {
       hold: 90,
       ease: 'Quad.easeOut',
       onUpdate: (t) => {
-        if (!this.resultShown) this.punchZoom(t.getValue() as number);
+        this.zoomPunch = this.resultShown ? 0 : (t.getValue() as number);
+        this.applyZoom();
       },
       onComplete: () => {
-        if (!this.resultShown) this.punchZoom(0);
+        this.zoomPunch = 0;
+        this.applyZoom();
       },
     });
-    const cam = this.cameras.main;
     cam.shake(200, 0.012);
 
     this.pushKillFeed(victim, killer);
@@ -2493,6 +2771,18 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(1200, () => {
       this.announce('FIGHT!', '#ff5a5a');
       this.battleActive = true;
+      /*
+       * 판이 시작된 시각을 여기서 찍는다.
+       *
+       * 전에는 이 값을 **조용한 자리 회수기**가 지나가며 찍었는데, 그 회수기는
+       * 첫 줄에서 호스트가 아니면 곧바로 돌아선다(netRole !== 'host'). 그래서
+       * 이 기계 안에서만 도는 판에서는 시각이 영영 0 으로 남고, 그 값을 함께
+       * 쓰는 **서든데스가 한 번도 안 걸렸다** — 2분 30초가 지나도 아무 일이
+       * 없었다. 판을 닫으라고 넣은 장치가 정작 로컬에서만 죽어 있었다.
+       *
+       * 판이 시작된 시각은 회선과 아무 상관이 없다. 시작하는 자리에서 찍는다.
+       */
+      this.battleActiveSince = this.time.now;
       this.items.start();
       this.orbs.start(this.streak === 0);
       this.player.say(this.player.pickQuote('intro'), this.player.cfg.colors.accent);
@@ -2657,7 +2947,21 @@ export class BattleScene extends Phaser.Scene {
       this.physics.world.pause();
       if (this.input.keyboard) this.input.keyboard.enabled = false;
 
-      const result = await openPromptOverlay(breaker.cfg.name, accent);
+      /*
+       * 누가 치는지 **자리로** 말한다.
+       *
+       * 한 화면 앞에 넷이 앉아 있으면 입력창이 뜨는 순간 제일 먼저 갈리는
+       * 것이 "이거 누구 차례야?"다. 캐릭터 이름만 뜨면 방금 자기가 고른
+       * 것을 기억 못 하는 사람이 손을 뻗고, 정작 깬 사람은 구경한다.
+       * 자리 번호는 HUD·결과 화면과 같은 이름이라 바로 읽힌다.
+       */
+      const seat = seatIndex(breaker);
+      const who =
+        seat >= 0 && this.humans.length > 1
+          ? `${seat + 1}P · ${breaker.cfg.name}`
+          : breaker.cfg.name;
+
+      const result = await openPromptOverlay(who, accent);
       text = result.text;
 
       if (this.input.keyboard) this.input.keyboard.enabled = true;
@@ -2813,6 +3117,8 @@ export class BattleScene extends Phaser.Scene {
 
   private showResult(winner: BaseCharacter | null): void {
     this.resultShown = true;
+    // 전적표를 한 번은 읽고 넘어가게 — 격추 순간의 연타가 그대로 새지 않는다
+    this.resultReadyAt = this.time.now + RESULT_INPUT_DELAY_MS;
     this.cameras.main.setScroll(0, 0);
 
     /*
@@ -2959,21 +3265,29 @@ export class BattleScene extends Phaser.Scene {
       },
     });
 
-    // 플레이어가 몇 등이었는지 알려준다 (KO 순서의 역순 = 등수)
+    /*
+     * 이 줄은 **한 사람**의 이야기다 — 그래서 사람이 여럿이면 쓰지 않는다.
+     *
+     * 전에는 versus 에서도 이 줄이 떴는데, 내용이 1P 기준이라 2·3·4P 에게는
+     * 남의 성적표였다. 심지어 versus 에서는 무조건 "최후의 1인"이라 첫판에
+     * 죽은 사람 화면에도 그렇게 떴다. 여럿일 때 등수는 아래 표가 전원치를
+     * 등수 순으로 보여주므로, 여기서 한 명만 골라 말할 이유가 없다.
+     */
     const total = this.fighters.length;
-    const playerRank = total - this.koOrder.indexOf(this.player.fighterId);
     const rankText = versus
-      ? `${total}명 중 최후의 1인`
+      ? ''
       : playerWon
         ? `${total}명 중 최후의 1인`
-        : `${total}명 중 ${playerRank}위`;
+        : `${total}명 중 ${this.placementOf(this.player)}위`;
 
     this.add
       .text(
         GAME.WIDTH / 2,
         232,
         winner
-          ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%\n${rankText}`
+          ? `${winner.cfg.name} 생존 · 주가 ${this.stock.get(winner.fighterId)}%${
+              rankText ? `\n${rankText}` : ''
+            }`
           : '전원 상장폐지',
         {
           fontFamily: GAME.FONT,
@@ -3031,8 +3345,22 @@ export class BattleScene extends Phaser.Scene {
           ? 'SPACE : 다음 상대      R : 이 판 다시      ESC : 캐릭터 선택'
           : 'R : 다시하기      ESC : 캐릭터 선택';
 
+    /*
+     * 패드를 쥐고 있으면 패드 쪽도 적는다.
+     *
+     * 넷이 소파에 앉아 한 판을 끝내면 전원이 패드를 쥐고 있다. 그때 화면이
+     * "R : 한 판 더" 만 말하면 누군가는 키보드까지 손을 뻗어야 하고,
+     * 나머지 셋은 그 사람을 기다린다 — 제일 자주 하게 될 일이 제일 불편해진다.
+     */
+    const padKeys =
+      this.livePads().length > 0
+        ? this.netRole === 'guest'
+          ? ''
+          : `      (패드 : 스타트 · A 로도 · B 로 나가기)`
+        : '';
+
     const keyLabel = this.add
-      .text(GAME.WIDTH / 2, 690, keys, {
+      .text(GAME.WIDTH / 2, 690, keys + padKeys, {
         fontFamily: GAME.FONT,
         fontSize: '18px',
         color: playerWon ? '#e8eeff' : '#8fa6d8',
@@ -3072,6 +3400,21 @@ export class BattleScene extends Phaser.Scene {
    * 둘 다 다음에 누구를 고를지에 영향을 준다. 그 정보가 없으면
    * 스무 명이 그냥 스무 개의 이름으로 남는다.
    */
+  /**
+   * 이 사람이 몇 등인가 (1등이 최고).
+   *
+   * 등수는 **오래 버틴 순서**다. koOrder 는 상장폐지된 차례대로 쌓이므로
+   * 뒤집으면 그대로 등수가 된다 — 제일 먼저 죽은 사람이 꼴찌다.
+   * 살아남은 사람은 1등이고, 전원이 죽은 판에서는 마지막에 죽은 사람이 1등이다.
+   */
+  private placementOf(f: BaseCharacter): number {
+    if (f.alive) return 1;
+    const i = this.koOrder.indexOf(f.fighterId);
+    // 목록에 없으면(있을 수 없지만) 맨 뒤로 보낸다 — 순서가 뒤엉키는 것보다 낫다
+    if (i < 0) return this.fighters.length;
+    return this.fighters.length - i;
+  }
+
   private buildScoreboard(): void {
     const top = this.stats.topDealer();
 
@@ -3103,10 +3446,21 @@ export class BattleScene extends Phaser.Scene {
       .rectangle(GAME.WIDTH / 2, y0 - 10, 900, 2, 0x2f3f6b)
       .setDepth(DEPTH.OVERLAY + 1);
 
-    /* 준 피해 순으로 세운다 — 순위표는 등수가 보여야 순위표다 */
-    const ordered = [...this.fighters].sort(
-      (a, b) => this.stats.get(b.fighterId).dealt - this.stats.get(a.fighterId).dealt,
-    );
+    /*
+     * **등수 순으로** 세운다.
+     *
+     * 오래 준 피해 순으로 세웠는데, 넷이 붙는 판에서 그건 순위표가 아니라
+     * 통계표다. 판이 끝나고 넷이 제일 먼저 찾는 것은 "내가 몇 등이야?"이고,
+     * 그 답은 누가 오래 살아남았는가다 — 피해를 제일 많이 준 사람이 제일
+     * 먼저 죽는 일은 흔하다.
+     *
+     * 준 피해는 여전히 표에 있고, 동점(같은 등수)일 때 순서를 가른다.
+     */
+    const ordered = [...this.fighters].sort((a, b) => {
+      const d = this.placementOf(a) - this.placementOf(b);
+      if (d !== 0) return d;
+      return this.stats.get(b.fighterId).dealt - this.stats.get(a.fighterId).dealt;
+    });
 
     ordered.forEach((f, i) => {
       const r = this.stats.get(f.fighterId);
@@ -3130,15 +3484,34 @@ export class BattleScene extends Phaser.Scene {
        * 두 색으로 갈려 보인다. 배경은 **줄의 실제 내용**에 맞춘다.
        */
       if (isPlayer) {
-        const bgX = left - 52;
+        // 등수 칸까지 덮는다 — 배경이 이름에서만 시작하면 등수가 떠 보인다
+        const bgX = left - 100;
         this.add
           .rectangle(bgX, y, left + colX[5]! + 210 - bgX, rowH - 6, f.cfg.colors.accent, 0.12)
           .setOrigin(0, 0.5)
           .setDepth(DEPTH.OVERLAY + 1);
       }
 
-      const nameColor = `#${f.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+      /*
+       * 등수를 이름 왼쪽에 크게 박는다.
+       *
+       * 표에 줄만 순서대로 놓여 있으면 "위에 있는 게 잘한 건가?"를 한 번
+       * 생각해야 한다. 넷이 동시에 화면을 들여다보는 3초 안에는 그 한 번이
+       * 안 일어난다 — 숫자로 적혀 있어야 바로 읽힌다.
+       */
+      const place = this.placementOf(f);
       this.add
+        .text(left - 92, y, `${place}위`, {
+          fontFamily: GAME.FONT,
+          fontSize: place === 1 ? '22px' : '18px',
+          color: PLACE_COLORS[place - 1] ?? '#6c86c4',
+          fontStyle: place === 1 ? 'bold' : 'normal',
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(DEPTH.OVERLAY + 2);
+
+      const nameColor = `#${f.cfg.colors.accent.toString(16).padStart(6, '0')}`;
+      const nameLabel = this.add
         .text(left - 40, y, `${isTop ? '👑 ' : ''}${f.cfg.name}`, {
           fontFamily: GAME.FONT,
           fontSize: '18px',
@@ -3147,6 +3520,28 @@ export class BattleScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(DEPTH.OVERLAY + 2);
+
+      /*
+       * 자리 이름(1P·2P…)을 이름 뒤에 작게 붙인다.
+       *
+       * 사람이 하나일 때는 "내 줄만 배경을 깐다"로 충분했다. 넷이 붙으면
+       * 네 줄이 전부 사람 줄이라 그 표시가 아무것도 안 가리킨다 — 다 칠하면
+       * 안 칠한 것과 같다. 넷이 동시에 화면을 들여다보며 각자 자기 줄을
+       * 찾아야 하는데, 그때 기준이 되는 것은 캐릭터 이름이 아니라 **자리**다.
+       * 자기가 고른 캐릭터 이름을 판이 끝난 뒤 기억 못 하는 일이 흔하다.
+       */
+      const seat = seatIndex(f);
+      if (seat >= 0) {
+        this.add
+          .text(nameLabel.x + nameLabel.width + 8, y, `${seat + 1}P`, {
+            fontFamily: GAME.FONT,
+            fontSize: '13px',
+            color: SEAT_COLORS[seat] ?? '#6c86c4',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0, 0.5)
+          .setDepth(DEPTH.OVERLAY + 2);
+      }
 
       const cells: Array<[number, string, string]> = [
         [colX[1]!, String(Math.round(r.dealt)), '#e8eeff'],
@@ -3576,10 +3971,17 @@ export class BattleScene extends Phaser.Scene {
     ui: <T extends Phaser.GameObjects.GameObject>(obj: T) => T,
   ): void {
     this.offscreenMarks = this.humans.map((h) => {
-      // HUD 패널과 같은 색을 쓴다 — 1P는 파랑, 2P는 분홍으로 고정
-      const first = h.fighter === this.player;
-      const accent = first ? 0x38bdf8 : 0xf472b6;
-      const label = first ? '1P' : '2P';
+      /*
+       * HUD 패널·결과 화면과 같은 자리 색을 쓴다.
+       *
+       * 전에는 "내 것이면 1P 파랑, 아니면 전부 2P 분홍"이었다. 사람이 둘일
+       * 때는 맞는 말이지만 넷이 붙으면 **3P·4P 화살표가 둘 다 "2P" 라고**
+       * 뜬다. 화면 밖으로 밀려난 사람을 찾으라고 만든 표시가, 정작 셋이
+       * 밀려난 순간 같은 이름 셋을 같은 색으로 내놓는다 — 없느니만 못하다.
+       */
+      const seat = seatIndex(h.fighter);
+      const accent = seatTint(h.fighter);
+      const label = seat >= 0 ? `${seat + 1}P` : '';
 
       const arrow = ui(
         this.add.triangle(0, 0, 0, 0, 22, 11, 0, 22, accent, 0.92).setVisible(false),
@@ -3605,27 +4007,64 @@ export class BattleScene extends Phaser.Scene {
   private updateOffscreenMarkers(): void {
     if (!this.offscreenMarks?.length) return;
 
+    /*
+     * "화면 밖"은 줌에 따라 달라진다.
+     *
+     * 당긴 화면에 담기는 월드 폭은 1280 이 아니라 1280/줌 이다. 예전처럼
+     * 1280 으로 재면 당길수록 실제보다 넓게 보고 있다고 착각해서, **정작
+     * 밖으로 밀려난 사람에게 화살표가 안 뜬다** — 화살표가 필요한 바로
+     * 그때만 사라지는 셈이다. 카메라가 실제로 보고 있는 범위로 잰다.
+     */
     const cam = this.cameras.main;
-    const left = cam.scrollX;
-    const right = cam.scrollX + GAME.WIDTH;
+    const halfView = GAME.WIDTH / 2 / cam.zoom;
+    const left = cam.midPoint.x - halfView;
+    const right = cam.midPoint.x + halfView;
     const MARGIN = 44;
+
+    /*
+     * 같은 쪽으로 나간 사람들을 **세로로 벌린다.**
+     *
+     * 세로 위치는 그 사람의 실제 높이를 따라간다 — 위아래 어디쯤인지도
+     * 정보다. 그런데 넷이 붙는 판에서는 둘이 나란히 밀려나는 일이 흔하고,
+     * 그러면 화살표 두 개가 같은 자리에 겹쳐 하나로 보인다. 뒤엣것은 통째로
+     * 가려져서 자기 화살표를 찾던 사람은 "나는 표시가 안 뜨네" 가 된다.
+     *
+     * 한 번에 한 개씩 아래로 밀어내는 방식은 안 된다 — 아래 끝에 닿으면
+     * 도로 같은 자리로 잘려 원점이다(실제로 그렇게 겹쳤다). 그 쪽으로 나간
+     * 사람을 다 모아 놓고, 높이 순서는 지킨 채 **덩어리째** 화면 안에 앉힌다.
+     */
+    const MIN_GAP = 54;
+    const TOP = 90;
+    const BOTTOM = GAME.HEIGHT - 150;
+
+    type Mark = BattleScene['offscreenMarks'][number];
+    const sides: Record<'L' | 'R', Array<{ m: Mark; y: number }>> = { L: [], R: [] };
 
     for (const m of this.offscreenMarks) {
       const f = m.fighter;
       const out = !f.alive ? 0 : f.x < left + MARGIN ? -1 : f.x > right - MARGIN ? 1 : 0;
-
       if (!out) {
         m.arrow.setVisible(false);
         m.text.setVisible(false);
         continue;
       }
+      sides[out < 0 ? 'L' : 'R'].push({ m, y: Phaser.Math.Clamp(f.y, TOP, BOTTOM) });
+    }
 
-      // 화면 안에서의 세로 위치는 그대로 따라간다 — 위아래 어디쯤인지도 정보다
-      const y = Phaser.Math.Clamp(f.y, 90, GAME.HEIGHT - 150);
-      const x = out < 0 ? 26 : GAME.WIDTH - 26;
+    for (const key of ['L', 'R'] as const) {
+      const list = sides[key].sort((a, b) => a.y - b.y);
+      if (!list.length) continue;
 
-      m.arrow.setPosition(x, y).setAngle(out < 0 ? 180 : 0).setVisible(true);
-      m.text.setPosition(x, y - 26).setVisible(true);
+      // 덩어리 전체 높이를 먼저 재고, 아래로 넘치면 위로 당겨 앉힌다
+      const span = MIN_GAP * (list.length - 1);
+      const first = Phaser.Math.Clamp(list[0]!.y, TOP, Math.max(TOP, BOTTOM - span));
+      const x = key === 'L' ? 26 : GAME.WIDTH - 26;
+
+      list.forEach((e, i) => {
+        const y = first + i * MIN_GAP;
+        e.m.arrow.setPosition(x, y).setAngle(key === 'L' ? 180 : 0).setVisible(true);
+        e.m.text.setPosition(x, y - 26).setVisible(true);
+      });
     }
   }
 
@@ -3700,16 +4139,22 @@ export class BattleScene extends Phaser.Scene {
     };
 
     /*
-     * **한 키보드로 둘이** 할 때만 안내를 나눈다.
+     * 이 기계의 사람이 셋 이상이면 3·4번은 패드다.
      *
-     * player2 는 "나 말고 다른 사람 자리"라서 온라인에서도 채워진다. 그걸
-     * 그대로 조건으로 쓰는 바람에, 온라인에서 각자 자기 기계로 붙어 있는데
-     * 화면에는 "2P ← → 이동 · 숫자패드 0 점프"가 떴다 — 있지도 않은 사람의
-     * 있지도 않은 키를 안내한 것이고, 처음 붙은 사람은 자기 키를 의심하게 된다.
+     * 키보드 두 줄을 그대로 두고 패드 줄을 하나 더 붙인다 — 세 줄이 되면
+     * 빽빽하지만, 패드 배치를 어디에도 안 적으면 패드를 쥔 사람은 아무
+     * 버튼이나 눌러 보는 수밖에 없다. 판이 시작된 뒤에 알아내야 하는 조작은
+     * 없는 조작과 같다.
+     *
+     * 세는 것은 **이 기계 앞에 앉은 사람**이다. player2 는 "나 말고 다른
+     * 사람 자리"라서 온라인에서도 채워지는데, 그걸 조건으로 쓰면 각자 자기
+     * 기계로 붙어 있는 판에서 "2P ← → 이동 · 숫자패드 0 점프"가 뜬다 —
+     * 있지도 않은 사람의 있지도 않은 키를 안내하는 것이고, 처음 붙은 사람은
+     * 자기 키가 고장 난 줄 안다.
      */
-    const localVs = !!this.player2 && !this.netRole;
+    const localHumans = this.humans.filter((h) => !h.remote).length;
 
-    if (localVs) {
+    if (localHumans >= 2) {
       /*
        * 2인 대전은 안내를 사람별로 나눈다.
        *
@@ -3752,13 +4197,37 @@ export class BattleScene extends Phaser.Scene {
      * 색을 그 캐릭터의 강조색으로 칠하는 것도 같은 이유다 — 공용 안내와
      * 내 것을 색으로 갈라 놔야 "이건 나한테만 해당한다"가 읽힌다.
      */
+    const traitOf = (f: BaseCharacter) => MOVE_TRAITS[f.cfg.move ?? 'plain'];
     const onlyLine = (f: BaseCharacter) => {
-      const tr = MOVE_TRAITS[f.cfg.move ?? 'plain'];
+      const tr = traitOf(f);
       const only = 'only' in tr ? tr.only : null;
       return only ? `${tr.icon} ${tr.name} — ${only}` : null;
     };
 
-    if (localVs && this.player2) {
+    if (localHumans > 2) {
+      /*
+       * 셋 이상이면 **줄여서 한 줄**에 몰아 넣는다.
+       *
+       * 사람마다 한 줄씩 주면 공용 두 줄에 넉 줄이 더 붙어 화면 위쪽 140px 이
+       * 글자로 덮인다. 판이 시작되는 그 순간에 제일 보고 싶은 것은 무대와
+       * 내 캐릭터이지 설명이 아니다. 자세한 설명은 선택 화면이 이미 맡고
+       * 있으므로, 여기서는 **누가 어떤 기질인지**만 남긴다.
+       */
+      const line = this.humans
+        .filter((h) => !h.remote)
+        .map((h) => {
+          const seat = seatIndex(h.fighter);
+          const tr = traitOf(h.fighter);
+          return `${seat + 1}P ${tr.icon} ${tr.name}`;
+        })
+        .join('   ·   ');
+      hint(52, `각자 되는 것    ${line}`, '#c3d2f0');
+      hint(
+        70,
+        `3P·4P (패드)   스틱·십자키 이동 · A 점프 · X 약 · B 강 · Y 스킬 · LB/RB 잡기 · LT/RT 방어 · 스타트 일시정지`,
+        SEAT_COLORS[2]!,
+      );
+    } else if (localHumans === 2 && this.player2) {
       const a = onlyLine(this.player);
       const b = onlyLine(this.player2);
       if (a) hint(52, `1P만 되는 것    ${a}`, '#38bdf8');
@@ -4239,30 +4708,6 @@ export class BattleScene extends Phaser.Scene {
     return `${sig.icon} ${'◆'.repeat(n)}${'◇'.repeat(Math.max(0, sig.max - n))}`;
   }
 
-  /**
-   * 카메라 펀치 — 줌을 넣되 **화면에 붙은 것들은 제자리에 둔다**.
-   *
-   * ── 왜 이 계산이 필요한가 ──────────────────────────────────────────
-   * 카메라 줌은 화면에 고정한 것(scrollFactor 0)까지 화면 가운데를 기준으로
-   * 확대한다. 그래서 줌이 들어가는 0.35초 동안 화면 가장자리에 붙은 것들이
-   * 통째로 밖으로 밀려났다 — 네 사람 주가 패널의 양 끝이 잘리고, 오른쪽 위
-   * 격추 기록이 화면 밖으로 나갔다. 상장폐지는 판에서 가장 중요한 순간인데,
-   * 하필 그때 "누가 몇 %인가"가 안 보인 것이다.
-   *
-   * 줌 z 에서 가운데 c 를 기준으로 그려지므로, 레이어를 1/z 로 줄이고
-   * c·(1 − 1/z) 만큼 밀어 두면 정확히 상쇄된다. 세계는 확 다가오고
-   * 계기판은 가만히 있는다.
-   */
-  punchZoom(v: number): void {
-    const z = 1 + 0.09 * v;
-    this.cameras.main.setZoom(z);
-
-    if (!this.hudLayer?.scene) return;
-    const k = 1 / z;
-    this.hudLayer.setScale(k);
-    this.hudLayer.setPosition((GAME.WIDTH / 2) * (1 - k), (GAME.HEIGHT / 2) * (1 - k));
-  }
-
   /** 진행 중인 기믹과 남은 시간을 상단에 띄운다 */
   private updateGimmickHud(): void {
     const active = this.gimmicks.getActive();
@@ -4306,7 +4751,47 @@ export class BattleScene extends Phaser.Scene {
   /* 메인 루프                                                        */
   /* ================================================================ */
 
+  /**
+   * 패드로 판을 다룬다 — 키보드에 손을 뻗지 않고도.
+   *
+   * 일시정지를 **풀** 수도 있어야 하므로 paused 검사보다 먼저 돈다.
+   *
+   * ── 결과 화면에서 스타트가 하는 일 ─────────────────────────────
+   * 처음에는 startNextRound() 만 불렀다. 그런데 그건 **혼자 이겼을 때만**
+   * 열리는 길이라(canContinue), 사람 둘 이상이 붙은 판에서는 스타트가
+   * 아무 일도 안 했다. 넷이 소파에 앉아 한 판을 끝내고 나면 다시 붙으려고
+   * 전원이 패드를 쥐고 있는데, 그때 키보드까지 손을 뻗어야 R 을 누를 수
+   * 있었다 — 넷이서 하는 게임에서 제일 자주 하게 될 동작이 제일 불편했다.
+   *
+   * 그래서 스타트는 "지금 가장 하고 싶은 것"을 한다. 연승 도전이 열려
+   * 있으면 다음 상대, 아니면 이 판 다시. B 는 캐릭터 선택으로 나간다.
+   */
+  private pollPadMenu(): void {
+    const taps = this.padMenu.poll(this.input.gamepad);
+
+    if (this.resultShown) {
+      /*
+       * 전적표를 읽을 시간을 준다.
+       *
+       * 격추 순간에는 대개 전원이 버튼을 두드리고 있어서, 결과 화면이 뜨는
+       * 즉시 받으면 그 연타가 그대로 다음 판을 열어 버린다. 누가 몇 등인지
+       * 아무도 못 본 채로 넘어간다.
+       */
+      if (this.time.now < this.resultReadyAt) return;
+      if (taps.ok) {
+        if (this.canContinue) this.startNextRound();
+        else this.onRestartKey();
+      } else if (taps.back) {
+        this.leaveToSelect();
+      }
+      return;
+    }
+
+    if (taps.start && !this.prompting) this.togglePause();
+  }
+
   override update(time: number, delta: number): void {
+    this.pollPadMenu();
     if (this.paused) return;
 
     // 프롬프트 입력 중에는 판이 멈춘다 (물리는 이미 pause 상태)

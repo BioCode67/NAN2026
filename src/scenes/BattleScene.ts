@@ -50,6 +50,7 @@ import {
   DEPTH,
   FIGHTER,
   GAME,
+  MOVE_TRAITS,
   STAGE,
   STOCK,
   TIERS,
@@ -3668,6 +3669,40 @@ export class BattleScene extends Phaser.Scene {
         'J 약공격(JJJ 연속기) · K 강공격(KK, 꾹 누르면 차지) · L 스킬 · U 잡기(가드를 뚫는다)  ｜  잡은 뒤 J 툭툭 · K 던지기(W/S/뒤로 방향 지정) · 잡히면 아무 버튼 연타로 탈출',
         '#a8bce0',
       );
+    }
+
+    /*
+     * 마지막 줄은 **지금 고른 이 사람만 되는 것**이다.
+     *
+     * 위 두 줄은 스무 명에게 똑같이 적용되는 공용 조작이다. 그것만 보여 주면
+     * "누굴 골라도 같은 게임"으로 읽히고, 실제로 기질 전용기는 조건이 붙어
+     * 있어서(떨어지는 중에, 벽에 밀렸을 때, 공중에서) 우연히 눌러서는 평생
+     * 안 나온다. 선택 화면에서 한 번 읽은 설명은 판이 시작하면 잊히므로,
+     * 시작하는 자리에서 자기 것 한 줄을 다시 띄운다.
+     *
+     * 색을 그 캐릭터의 강조색으로 칠하는 것도 같은 이유다 — 공용 안내와
+     * 내 것을 색으로 갈라 놔야 "이건 나한테만 해당한다"가 읽힌다.
+     */
+    const onlyLine = (f: BaseCharacter) => {
+      const tr = MOVE_TRAITS[f.cfg.move ?? 'plain'];
+      const only = 'only' in tr ? tr.only : null;
+      return only ? `${tr.icon} ${tr.name} — ${only}` : null;
+    };
+
+    if (this.player2) {
+      const a = onlyLine(this.player);
+      const b = onlyLine(this.player2);
+      if (a) hint(52, `1P만 되는 것    ${a}`, '#38bdf8');
+      if (b) hint(70, `2P만 되는 것    ${b}`, '#f472b6');
+    } else {
+      const a = onlyLine(this.player);
+      if (a) {
+        hint(
+          52,
+          `${this.player.cfg.name}만 되는 것    ${a}`,
+          `#${this.player.cfg.colors.accent.toString(16).padStart(6, '0')}`,
+        );
+      }
     }
 
     this.controlHints = hints;

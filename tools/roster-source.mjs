@@ -104,6 +104,20 @@ function parseCharacter(file) {
     /** 이동 기질 — 이 사람이 어떻게 움직이는가 */
     move: first(/^\s*move:\s*'([^']+)'/m, src),
     passive: first(/passive:\s*\{\s*\n\s*type:\s*'([^']+)'/, src),
+    /*
+     * 코드로 그리는 SD 외형 — 그림 시트가 없는 캐릭터가 화면에서 갖는 몸이다.
+     * 스무 명 중 대부분이 당분간 이 모습으로 나오므로, 조합이 겹치면
+     * 그 둘은 색만 다른 같은 사람으로 보인다.
+     */
+    art: {
+      hair: first(/\bhair:\s*'([^']+)'/, src),
+      headgear: first(/headgear:\s*'([^']+)'/, src) ?? 'none',
+      prop: first(/\bprop:\s*'([^']+)'/, src) ?? 'none',
+      glasses: first(/glasses:\s*'([^']+)'/, src),
+      beard: first(/beard:\s*(true|false)/, src),
+      mouth: first(/mouth:\s*'([^']+)'/, src),
+      eyes: first(/\beyes:\s*'([^']+)'/, src),
+    },
     moves,
     quotes,
     traitLines,

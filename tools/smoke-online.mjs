@@ -390,11 +390,31 @@ try {
   }
 
   /* --- 참가자마다 자기 캐릭터만 움직이는가 --------------------------- */
-  await host.waitForFunction(
-    () => window.game.scene.getScene('Battle').battleActive === true,
-    null,
-    { timeout: 20000, polling: 200 },
-  );
+  /*
+   * 호스트 창을 앞으로 꺼내고 기다린다.
+   *
+   * 바로 앞에서 참가자 창들을 앞에 세워 사진을 찍었다. 브라우저는 뒤에 있는
+   * 창을 초당 한두 프레임으로 떨어뜨리므로, 그 상태의 호스트에서는 개시
+   * 연출(READY? / FIGHT!)이 20초 안에 안 끝난다 — 그러면 이 기다림이
+   * 예외를 던지고 검사가 통째로 중단됐다. 회선은 멀쩡한데.
+   *
+   * 그리고 못 기다렸을 때 던지지 않는다. 여기서 죽으면 뒤에 있는 오브·
+   * 프롬프트·재시작 검사가 한 줄도 안 돌아, 무엇이 괜찮고 무엇이 안 괜찮은지
+   * 아무것도 남지 않는다.
+   */
+  await host.bringToFront();
+  const started = await host
+    .waitForFunction(
+      () => window.game.scene.getScene('Battle').battleActive === true,
+      null,
+      { timeout: 40000, polling: 200 },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!started) {
+    errors.push('[온라인] 호스트 화면에서 개시 연출이 끝나지 않습니다 (battleActive)');
+  }
 
   /*
    * 인트로가 끝나기를 기다린다.

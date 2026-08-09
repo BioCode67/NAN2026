@@ -10,6 +10,9 @@ export const zuck: CharacterConfig = {
   colors: { body: 0x9ca3af, head: 0xf6ddc9, accent: 0x1877f2 },
   stats: { speed: 265, jump: -720, doubleJump: -640, weight: 1.0 },
 
+  /* 이동 기질 — 공중에서 관성이 오래 남아 미끄러지듯 흐른다 */
+  move: 'drift',
+
   art: {
     hair: 'short',
     hairColor: 0x8b5a3c,

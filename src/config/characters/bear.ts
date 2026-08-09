@@ -10,6 +10,9 @@ export const bear: CharacterConfig = {
   colors: { body: 0x1e1b1b, head: 0x5b4636, accent: 0x3b82f6 },
   stats: { speed: 240, jump: -690, doubleJump: -600, weight: 1.35 },
 
+  /* 이동 기질 — 특별한 기질 없이 정직하게 움직인다 */
+  move: 'plain',
+
   art: {
     hair: 'messy',
     hairColor: 0x2b211a,

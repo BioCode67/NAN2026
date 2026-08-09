@@ -11,6 +11,9 @@ export const ant: CharacterConfig = {
   // 가장 가볍고 가장 잘 뜬다. 대신 한 방이 로스터 최약체
   stats: { speed: 320, jump: -820, doubleJump: -760, weight: 0.72 },
 
+  /* 이동 기질 — 무대 밖으로 밀려도 벽을 한 번 차고 돌아온다 */
+  move: 'wallkick',
+
   art: {
     hair: 'messy',
     hairColor: 0x1f2937,

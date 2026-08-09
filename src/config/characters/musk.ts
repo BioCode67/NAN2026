@@ -10,6 +10,9 @@ export const musk: CharacterConfig = {
   colors: { body: 0xdc2626, head: 0xf1c9a5, accent: 0xfbbf24 },
   stats: { speed: 285, jump: -760, doubleJump: -690, weight: 0.9 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'swept',
     hairColor: 0x3f2d20,

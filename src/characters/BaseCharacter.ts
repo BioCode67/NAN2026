@@ -6,6 +6,7 @@ import {
   GAME,
   HIT_REACTIONS,
   MOVE_SLOTS,
+  MOVE_TRAITS,
   STAGE,
   STOCK,
   THROW,
@@ -27,6 +28,7 @@ import type {
   AttackPhase,
   CharacterConfig,
   MoveSlot,
+  MoveTrait,
   Side,
 } from '../types';
 
@@ -177,6 +179,144 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   private puppet = false;
   /** 발밑 자리 고리 (사람이 잡은 캐릭터에만) */
   private readonly seatRing: Phaser.GameObjects.Ellipse;
+  /** 이번 체공에서 벽을 이미 찼는가 (벽 차기 기질) */
+  private wallKicked = false;
+
+  /** 이 캐릭터의 이동 기질 */
+  get trait(): MoveTrait {
+    return this.cfg.move ?? 'plain';
+  }
+
+  /**
+   * 공중에 있는 동안 기질이 하는 일.
+   *
+   * 지상은 speed 로 이미 갈려 있고, 난투에서 판이 뒤집히는 순간은 거의
+   * 공중에 있다 — 띄우고 쫓아가고 떨어뜨리는 그 몇 초가 이 게임에서
+   * 가장 재미있는 구간이다. 그러니 개성도 거기서 갈리는 것이 맞다.
+   */
+  tickMoveTrait(delta: number): void {
+    const v = this.body.velocity;
+
+    switch (this.trait) {
+      case 'glide': {
+        /*
+         * 떨어지는 중에 점프를 누르고 있으면 낙하 속도에 뚜껑을 씌운다.
+         * 상승 중에는 아무것도 하지 않는다 — 점프를 오래 누르는 것과
+         * 활공을 켜는 것이 같은 버튼이라, 올라가는 동안 걸리면
+         * 숏홉(짧게 누르면 낮게)이 통째로 죽는다.
+         */
+        if (v.y > 0 && this.jumpHeld) {
+          const cap = MOVE_TRAITS.glide.fallCap;
+          if (v.y > cap) this.body.setVelocityY(cap);
+          this.spawnGlideWisp();
+        }
+        break;
+      }
+      case 'plunge':
+        // 떨어질수록 더 빨리 떨어진다 — 무게가 손에 남는다
+        if (v.y > 0) {
+          this.body.setVelocityY(
+            v.y + (GAME.GRAVITY * (MOVE_TRAITS.plunge.fallMul - 1) * delta) / 1000,
+          );
+        }
+        break;
+      case 'drift':
+        /*
+         * 관성이 오래 남는다. 공중에서 방향을 바꿔도 곧바로 안 꺾이고
+         * 흐르던 쪽으로 미끄러진다 — 궤적이 길고 부드러워진다.
+         */
+        this.body.setVelocityX(v.x * MOVE_TRAITS.drift.keep);
+        break;
+      case 'wallkick':
+        this.tryWallKick();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * 벽 차기 — 무대 밖으로 밀려나면 벽을 차고 되돌아온다.
+   *
+   * 한 체공에 한 번뿐이라 "밀려나도 무조건 산다"가 되지 않는다.
+   * 크게 날아가면 벽에 닿기 전에 이미 장외 아래로 지나간다 — 살아 돌아오는
+   * 것은 **아슬아슬하게 밀려났을 때**뿐이고, 그 순간이 가장 짜릿하다.
+   */
+  private tryWallKick(): void {
+    if (this.wallKicked) return;
+    const out =
+      this.x < STAGE.LEFT - 20 ? 1 : this.x > STAGE.RIGHT + 20 ? -1 : 0;
+    if (!out) return;
+    // 아래로 지나가 버린 뒤에는 벽이 없다
+    if (this.y > STAGE.GROUND_Y + 40) return;
+
+    this.wallKicked = true;
+    this.body.setVelocity(
+      MOVE_TRAITS.wallkick.kickX * out,
+      MOVE_TRAITS.wallkick.kickY,
+    );
+    this.setFacing(out === 1 ? 1 : -1);
+    this.pulseSquash(0.78, 1.28, 220);
+    sound.play('doubleJump');
+    this.say('아직이다!', this.cfg.colors.accent);
+  }
+
+  /** 급강하 착지 — 발밑에 충격이 퍼진다 */
+  private landSlam(): void {
+    if (this.trait !== 'plunge') return;
+    const t = MOVE_TRAITS.plunge;
+    if (this.fallSpeed < t.slamAt) return;
+
+    sound.play('hitHeavy', 0.7);
+    this.scene.cameras.main.shake(140, 0.008);
+    this.onShockwave?.(this, {
+      ...this.cfg.moves.heavyDown,
+      name: '착지 충격',
+      damage: t.slamDamage,
+      range: t.slamRange,
+    });
+
+    const ring = this.scene.add
+      .ellipse(this.x, STAGE.GROUND_Y + 4, t.slamRange, 26)
+      .setStrokeStyle(4, this.cfg.colors.accent, 0.9)
+      .setDepth(DEPTH.IMPACT);
+    this.scene.tweens.add({
+      targets: ring,
+      scaleX: 1.8,
+      scaleY: 1.6,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  /** 활공 중 흘러나오는 자국 — 지금 천천히 내려오는 중이라는 신호 */
+  private spawnGlideWisp(): void {
+    const now = this.scene.time.now;
+    if (now - this.lastWispAt < 90) return;
+    this.lastWispAt = now;
+
+    const wisp = this.scene.add
+      .ellipse(
+        this.x + Phaser.Math.Between(-16, 16),
+        this.y + 24,
+        14,
+        6,
+        this.cfg.colors.accent,
+        0.5,
+      )
+      .setDepth(DEPTH.IMPACT - 1);
+    this.scene.tweens.add({
+      targets: wisp,
+      y: wisp.y + 34,
+      alpha: 0,
+      scaleX: 1.8,
+      duration: 420,
+      onComplete: () => wisp.destroy(),
+    });
+  }
+
+  private lastWispAt = 0;
 
   /**
    * 이 캐릭터가 몇 번 자리의 사람인지 발밑에 표시한다.
@@ -488,7 +628,27 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
     const onGround = this.body.blocked.down || this.body.touching.down;
     const speed = this.cfg.stats.speed * this.speedMul * (this.mods.speedMul ?? 1);
-    this.body.setVelocityX(speed * dir * (onGround ? 1 : FIGHTER.AIR_CONTROL));
+
+    if (onGround) {
+      this.body.setVelocityX(speed * dir);
+      this.setFacing(dir);
+      return;
+    }
+
+    /*
+     * 공중 조작 — 표류 기질은 방향을 곧바로 못 꺾는다.
+     *
+     * 원하는 속도로 바로 갈아치우지 않고 조금씩 끌어당긴다. 그래서
+     * 흐르던 쪽으로 미끄러지며 크게 도는 궤적이 나온다 — 잡스맨이
+     * 미끄러지는 인터페이스처럼 움직이는 것이 이 한 줄에서 나온다.
+     */
+    const want = speed * dir * FIGHTER.AIR_CONTROL;
+    if (this.trait === 'drift') {
+      const k = MOVE_TRAITS.drift.control;
+      this.body.setVelocityX(this.body.velocity.x * (1 - k) + want * k);
+    } else {
+      this.body.setVelocityX(want);
+    }
     this.setFacing(dir);
   }
 
@@ -2108,6 +2268,9 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
         sound.play('land', Phaser.Math.Clamp(this.fallSpeed / 1200, 0, 1));
         this.landUntil = time + 120;
       }
+      // 급강하 기질 — 세게 떨어져 닿으면 발밑이 터진다
+      if (!this.wasOnGround) this.landSlam();
+      this.wallKicked = false;
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
       this.jumpRising = false;
@@ -2124,6 +2287,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       }
     } else {
       this.fallSpeed = Math.max(this.fallSpeed, this.body.velocity.y);
+      this.tickMoveTrait(delta);
 
       if (this.body.velocity.y >= 0) {
         this.jumpRising = false;

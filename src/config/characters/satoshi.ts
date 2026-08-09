@@ -10,6 +10,9 @@ export const satoshi: CharacterConfig = {
   colors: { body: 0x27272a, head: 0x3f3f46, accent: 0xf7931a },
   stats: { speed: 310, jump: -790, doubleJump: -730, weight: 0.82 },
 
+  /* 이동 기질 — 무대 밖으로 밀려도 벽을 한 번 차고 돌아온다 */
+  move: 'wallkick',
+
   art: {
     // 후드에 가려 얼굴이 없다 — 눈만 두 점으로 빛난다
     hair: 'none',

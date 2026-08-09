@@ -10,6 +10,9 @@ export const bull: CharacterConfig = {
   colors: { body: 0x8a6a3c, head: 0xb08d57, accent: 0x22c55e },
   stats: { speed: 295, jump: -700, doubleJump: -590, weight: 1.4 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,

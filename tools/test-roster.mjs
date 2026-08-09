@@ -16,6 +16,7 @@
 
 import {
   MOVE_SLOTS,
+  MOVE_TRAITS,
   QUOTE_KINDS,
   readArtIds,
   readCharacterIds,
@@ -98,6 +99,43 @@ console.log('\n슬롯 목록');
     }
   } else {
     pass(`MoveSlot ${declared.length}개 — 타입과 검사 도구가 같은 목록을 봅니다`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 1.7 이동 기질이 고르게 퍼져 있는가                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 기질은 "이 사람이 어떻게 움직이는가"다. 한 갈래에 몰리면 스무 명이
+ * 다시 비슷해지고, 빠뜨린 사람이 있으면 그 캐릭터만 조용히 밋밋해진다 —
+ * 화면에는 아무 표시도 안 나므로 사람은 끝까지 모른다.
+ */
+console.log('\n이동 기질');
+{
+  const before = failed;
+  const count = new Map(MOVE_TRAITS.map((t) => [t, 0]));
+
+  for (const c of roster) {
+    if (!c.move) {
+      fail(`${c.id}: 이동 기질(move)이 없습니다`);
+    } else if (!count.has(c.move)) {
+      fail(`${c.id}: 모르는 기질 '${c.move}' (${MOVE_TRAITS.join(', ')} 중 하나여야 합니다)`);
+    } else {
+      count.set(c.move, count.get(c.move) + 1);
+    }
+  }
+
+  const empty = [...count].filter(([, n]) => n === 0).map(([t]) => t);
+  if (empty.length) {
+    fail(`아무도 안 쓰는 기질: ${empty.join(', ')} — 만들어 두고 안 쓰면 없는 것과 같습니다`);
+  }
+
+  if (failed === before) {
+    pass(
+      `${roster.length}명이 기질 ${count.size}갈래로 갈렸습니다 — ` +
+        [...count].map(([t, n]) => `${t} ${n}`).join(' · '),
+    );
   }
 }
 

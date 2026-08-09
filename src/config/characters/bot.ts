@@ -10,6 +10,9 @@ export const bot: CharacterConfig = {
   colors: { body: 0xe5e7eb, head: 0xf8fafc, accent: 0x22d3ee },
   stats: { speed: 268, jump: -730, doubleJump: -670, weight: 1.0 },
 
+  /* 이동 기질 — 공중에서 관성이 오래 남아 미끄러지듯 흐른다 */
+  move: 'drift',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,

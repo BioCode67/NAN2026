@@ -10,6 +10,9 @@ export const son: CharacterConfig = {
   colors: { body: 0x3f3f46, head: 0xf5d9bd, accent: 0xf59e0b },
   stats: { speed: 270, jump: -730, doubleJump: -650, weight: 0.95 },
 
+  /* 이동 기질 — 공중에서 관성이 오래 남아 미끄러지듯 흐른다 */
+  move: 'drift',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,

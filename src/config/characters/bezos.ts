@@ -10,6 +10,9 @@ export const bezos: CharacterConfig = {
   colors: { body: 0x1f2937, head: 0xf0cfae, accent: 0xff9900 },
   stats: { speed: 245, jump: -700, doubleJump: -600, weight: 1.3 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     // 반들반들한 민머리 + 지나치게 커진 어깨
     hair: 'none',

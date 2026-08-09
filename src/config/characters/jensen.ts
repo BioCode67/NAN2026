@@ -10,6 +10,9 @@ export const jensen: CharacterConfig = {
   colors: { body: 0x1c1917, head: 0xe8c9a0, accent: 0x76b900 },
   stats: { speed: 285, jump: -740, doubleJump: -660, weight: 1.05 },
 
+  /* 이동 기질 — 특별한 기질 없이 정직하게 움직인다 */
+  move: 'plain',
+
   art: {
     hair: 'short',
     hairColor: 0x111827,

@@ -3,7 +3,14 @@ import { addBackdrop } from '../config/artAssets';
 import { buildCardArt } from '../characters/CharacterArt';
 import { CHARACTERS, CHARACTER_ORDER } from '../config/characters';
 import { pickOpponents } from '../config/matchup';
-import { CHAIN_STRINGS, DEPTH, GAME, MOVE_COMMANDS, MOVE_SLOTS } from '../config/gameConfig';
+import {
+  CHAIN_STRINGS,
+  DEPTH,
+  GAME,
+  MOVE_COMMANDS,
+  MOVE_SLOTS,
+  MOVE_TRAITS,
+} from '../config/gameConfig';
 import { sound } from '../systems/SoundSystem';
 import { MAX_PLAYERS, net } from '../systems/NetSystem';
 import {
@@ -1023,7 +1030,18 @@ export class SelectScene extends Phaser.Scene {
     );
     this.nameText.setText(cfg.name);
     this.taglineText.setText(`"${cfg.tagline}"`);
-    this.passiveText.setText(`[패시브] ${cfg.passive.name} — ${cfg.passive.desc}`);
+    /*
+     * 이동 기질을 패시브 줄에 함께 얹는다.
+     *
+     * 이 사람이 **어떻게 움직이는가**는 고르기 전에 가장 궁금한 것인데,
+     * 지금까지는 게임에 들어가 직접 뛰어 봐야만 알 수 있었다. 한 명을
+     * 파고들 이유는 대부분 여기서 생긴다.
+     */
+    const tr = MOVE_TRAITS[cfg.move ?? 'plain'];
+    this.passiveText.setText(
+      `[패시브] ${cfg.passive.name} — ${cfg.passive.desc}\n` +
+        `[이동] ${tr.icon} ${tr.name} — ${tr.desc}`,
+    );
     const sig = cfg.signature;
     this.signatureText.setText(
       `[고유] ${sig.icon} ${sig.name} — ${sig.desc}\n         ${sig.how}`,

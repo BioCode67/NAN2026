@@ -1577,13 +1577,22 @@ console.log('공격 모션');
     tws.forEach((t) => t.seek(120));
     const wind = { dx: sp.x - home.x, sy: sp.scaleY / home.sy };
 
-    /* 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가 */
+    /*
+     * 내지르는 동안 — 앞으로 나가며 모양이 바뀌는가.
+     *
+     * 선딜을 트윈으로 감아 건너뛰었으므로, 여기서는 **판정이 켜질 때까지**
+     * 기다렸다 재야 한다. 고정 횟수만 돌면 아직 선딜인 채로 끝나고
+     * "공격해도 앞으로 안 나간다"는 거짓이 나온다.
+     */
+    for (let i = 0; i < 60 && p.attackPhase === 'startup'; i++) await wait(40);
+
     let out = { dx: 0, sx: 1, sy: 1 };
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       await wait(25);
       if (sp.x - home.x > out.dx) {
         out = { dx: sp.x - home.x, sx: sp.scaleX / home.sx, sy: sp.scaleY / home.sy };
       }
+      if (p.attackPhase === 'none') break;
     }
     return { wind, out };
   });
@@ -2042,6 +2051,141 @@ console.log('공매도 유령');
 }
 
 /*
+ * 이동 기질 — 스무 명이 저마다 다르게 움직이는가.
+ *
+ * 이름과 숫자만 다르고 똑같이 뛰고 똑같이 떨어지면, 한 명을 골라 익숙해질
+ * 이유가 없다. 기질은 **공중에서** 갈리므로 전부 공중에서 잰다.
+ * 캐릭터를 바꿔 가며 확인하는 대신 지금 캐릭터의 기질만 갈아 끼운다 —
+ * 재려는 것은 "그 사람"이 아니라 "그 기질이 실제로 도는가"다.
+ */
+console.log('이동 기질');
+{
+  await restartRound();
+  await waitGrounded();
+  await isolatePlayer();
+
+  const traits = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const was = p.cfg.move;
+
+    /*
+     * 낙하 기질은 두 가지 방식으로 확인한다.
+     *
+     * 1) 급강하 vs 표준 — **실제 시간을 흘려** 잰다. 이건 tickMoveTrait 가
+     *    update 루프에 실제로 물려 있는지까지 확인하는 검사다.
+     * 2) 활공 — 한 틱만 직접 돌려 잰다. 활공은 "점프를 누르고 있는가"를
+     *    보는데, 사람 입력 루프가 매 프레임 그 값을 키보드 상태(안 누름)로
+     *    덮어쓴다. 시간을 흘리면 검사가 게임의 입력 처리와 싸우게 되고,
+     *    지는 쪽은 늘 검사다.
+     */
+    /*
+     * 떨어지는 동안 **아무 데도 안 걸리게** 하고 잰다.
+     *
+     * 처음에는 "발판 없는 자리"를 골라 떨어뜨렸는데, 무대마다 발판 배치가
+     * 달라서(무대는 판마다 무작위로 정해진다) 어느 판에서는 그 자리에
+     * 발판이 있었다. 착지해 버리니 낙하 속도가 0 이 되고, 그러면 모든 기질이
+     * 같은 값으로 보인다 — 기질이 죽은 게 아니라 떨어질 곳이 없던 것이다.
+     * 아래쪽 충돌을 잠깐 꺼 두면 무대가 무엇이든 같은 조건이 된다.
+     */
+    const fallOver = async (trait) => {
+      p.cfg.move = trait;
+      p.body.checkCollision.down = false;
+      p.setPosition(1420, 120);
+      p.body.setVelocity(0, 400);
+      p.stunUntil = 0;
+      await wait(320);
+      const out = {
+        vy: Math.round(p.body.velocity.y),
+        y: Math.round(p.y),
+        down: p.body.blocked.down || p.body.touching.down,
+        trait: p.trait,
+      };
+      p.body.checkCollision.down = true;
+      return out;
+    };
+
+    const plainFall = await fallOver('plain');
+    const plungeFall = await fallOver('plunge');
+    const plain = plainFall.vy;
+    const plunge = plungeFall.vy;
+
+    /* 활공 — 한 틱만 직접 돌려 뚜껑이 씌워지는지 본다 */
+    p.cfg.move = 'glide';
+    p.setPosition(1420, 150);
+    p.body.setVelocity(0, 900);
+    p.jumpHeld = true;
+    p.tickMoveTrait(16);
+    const glide = Math.round(p.body.velocity.y);
+    p.jumpHeld = false;
+
+    /* 표류 — 공중에서 반대로 눌러도 속도가 곧바로 안 바뀐다 */
+    p.cfg.move = 'drift';
+    p.setPosition(1420, 220);
+    p.body.setVelocity(600, 0);
+    p.moveHorizontal(-1);
+    const driftV = Math.round(p.body.velocity.x);
+    p.cfg.move = 'plain';
+    p.setPosition(1420, 220);
+    p.body.setVelocity(600, 0);
+    p.moveHorizontal(-1);
+    const plainV = Math.round(p.body.velocity.x);
+
+    /* 벽 차기 — 무대 밖으로 내보내면 안쪽으로 튕겨 돌아온다 */
+    /*
+     * 벽 차기 — **찬 직후에** 잰다.
+     *
+     * 고정 시간 뒤에 재면 그 사이 중력이 위로 솟는 속도를 다 먹어 버려
+     * (-620 → -188) "안 튕겼다"로 보인다. 튕긴 것은 맞고 잰 때가 늦은 것이다.
+     * 기질이 스스로 켜는 깃발(wallKicked)이 서는 순간을 잡는다.
+     */
+    p.cfg.move = 'wallkick';
+    p.wallKicked = false;
+    p.setPosition(40, 420);
+    p.body.setVelocity(-300, 0);
+    let kick = { vx: 0, vy: 0 };
+    for (let i = 0; i < 40; i++) {
+      if (p.wallKicked) {
+        kick = { vx: Math.round(p.body.velocity.x), vy: Math.round(p.body.velocity.y) };
+        break;
+      }
+      await wait(30);
+    }
+
+    p.cfg.move = was;
+    p.setJumpHeld(false);
+    return { glide, plain, plunge, driftV, plainV, kick, plainFall, plungeFall };
+  });
+  await releasePlayer();
+
+  if (!(traits.glide <= 200)) {
+    errors.push(`[기질] 활공이 낙하에 뚜껑을 안 씌웁니다 — 900 을 넣었는데 ${traits.glide}`);
+  } else if (!(traits.plunge > traits.plain * 1.15)) {
+    errors.push(
+      `[기질] 급강하가 더 안 빠릅니다 — ` +
+        `표준 ${JSON.stringify(traits.plainFall)} / 급강하 ${JSON.stringify(traits.plungeFall)}`,
+    );
+  } else if (!(traits.driftV > traits.plainV + 100)) {
+    errors.push(
+      `[기질] 표류가 관성을 안 남깁니다 — 표류 ${traits.driftV} / 표준 ${traits.plainV}`,
+    );
+  } else if (!(traits.kick.vx > 100 && traits.kick.vy < -100)) {
+    errors.push(`[기질] 벽 차기가 안 튕깁니다 — ${JSON.stringify(traits.kick)}`);
+  } else {
+    console.log(
+      `  ✓ 넷이 다르게 움직인다 — 활공 900→${traits.glide} · ` +
+        `급강하 ${traits.plunge} vs 표준 ${traits.plain} (낙하) · ` +
+        `표류 ${traits.driftV} vs 표준 ${traits.plainV} (관성) · 벽 차기 ↗${traits.kick.vx}`,
+    );
+  }
+  await shot('move-traits');
+  await restartRound();
+  await waitGrounded();
+}
+
+
+/*
  * 서든데스 — 판이 길어지면 전원의 주가가 흘러내려 마감이 온다.
  *
  * 2분 30초를 기다릴 수는 없으므로 시작 시각을 되감아 발동시킨다.
@@ -2363,11 +2507,24 @@ console.log('새 기믹');
     const s = window.game.scene.getScene('Battle');
     s.fighters.forEach((f, i) => s.stock.setExact(f.fighterId, 60 + i * 70));
   });
-  const share = await tryGimmick('다 같이 똑같이 나눠', () => {
+  /*
+   * 이것만 **한 번의 왕복 안에서** 잰다.
+   *
+   * 앞·뒤 값을 따로 물어보면 그 사이에 프레임이 지나가고, 날아가던 탄이나
+   * 터지는 폭탄이 누군가의 주가를 건드린다 — 기믹은 제대로 돌았는데
+   * "격차가 남아 있다"고 나온다. 실제로 두 번 그랬다. 재는 것은 기믹이지
+   * 그 순간의 전투가 아니므로, 걸고 재는 것을 한 호흡에 끝낸다.
+   */
+  const share = await page.evaluate(() => {
     const s = window.game.scene.getScene('Battle');
-    const v = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
-    return Math.max(...v) - Math.min(...v);
-  }, 0);
+    const spread = () => {
+      const v = s.fighters.filter((f) => f.alive).map((f) => s.stock.get(f.fighterId));
+      return Math.max(...v) - Math.min(...v);
+    };
+    const before = spread();
+    s.applyPrompt('다 같이 똑같이 나눠', '검사');
+    return { before, after: spread(), got: s.gimmicks.getActive().map((a) => a.spec.name) };
+  });
   if (share.after >= share.before || share.after > 2) {
     errors.push(`[기믹] 균등 분배 뒤에도 주가가 벌어져 있습니다 (${share.before}→${share.after})`);
   } else {

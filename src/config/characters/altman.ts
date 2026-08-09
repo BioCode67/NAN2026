@@ -10,6 +10,9 @@ export const altman: CharacterConfig = {
   colors: { body: 0x374151, head: 0xf2d3bb, accent: 0x10a37f },
   stats: { speed: 275, jump: -750, doubleJump: -680, weight: 0.95 },
 
+  /* 이동 기질 — 무대 밖으로 밀려도 벽을 한 번 차고 돌아온다 */
+  move: 'wallkick',
+
   art: {
     hair: 'swept',
     hairColor: 0x6b4a2f,

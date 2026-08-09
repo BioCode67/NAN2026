@@ -10,6 +10,9 @@ export const chairman: CharacterConfig = {
   colors: { body: 0x111827, head: 0xf0d0ae, accent: 0xd4af37 },
   stats: { speed: 215, jump: -670, doubleJump: -560, weight: 1.5 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'side-part',
     hairColor: 0xd1d5db,

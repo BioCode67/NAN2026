@@ -11,6 +11,9 @@ export const whale: CharacterConfig = {
   // 로스터 최중량 · 최저 점프. 대신 한 방이 가장 무겁다
   stats: { speed: 200, jump: -650, doubleJump: -520, weight: 1.45 },
 
+  /* 이동 기질 — 무겁게 떨어지고 착지 순간 발밑에 충격이 퍼진다 */
+  move: 'plunge',
+
   art: {
     hair: 'none',
     hairColor: 0x000000,

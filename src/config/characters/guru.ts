@@ -10,6 +10,9 @@ export const guru: CharacterConfig = {
   colors: { body: 0x6d28d9, head: 0xf5d5b5, accent: 0xfacc15 },
   stats: { speed: 280, jump: -760, doubleJump: -690, weight: 0.9 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     hair: 'swept',
     hairColor: 0x111827,

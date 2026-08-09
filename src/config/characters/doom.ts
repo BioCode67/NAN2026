@@ -10,6 +10,9 @@ export const doom: CharacterConfig = {
   colors: { body: 0x232936, head: 0xe6c8a8, accent: 0x64748b },
   stats: { speed: 235, jump: -700, doubleJump: -620, weight: 1.2 },
 
+  /* 이동 기질 — 떨어질 때 점프를 누르고 있으면 천천히 내려온다 */
+  move: 'glide',
+
   art: {
     hair: 'messy',
     hairColor: 0x4b5563,

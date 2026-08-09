@@ -50,6 +50,9 @@ export const QUOTE_KINDS = ['intro', 'skill', 'ko', 'surge', 'comeback', 'hurt']
 
 const first = (re, text) => re.exec(text)?.[1] ?? null;
 
+/** 이동 기질 다섯 갈래 — src/types 의 MoveTrait 와 같아야 한다 */
+export const MOVE_TRAITS = ['plain', 'glide', 'plunge', 'wallkick', 'drift'];
+
 /** 캐릭터 파일 하나를 읽어 검사에 필요한 것만 뽑는다 */
 function parseCharacter(file) {
   const src = readFileSync(`${DIR}/${file}`, 'utf8');
@@ -81,6 +84,8 @@ function parseCharacter(file) {
     name: first(/\bname:\s*'([^']+)'/, src),
     realName: first(/realName:\s*'([^']+)'/, src),
     signature: first(/signature:\s*\{\s*\n\s*id:\s*'([^']+)'/, src),
+    /** 이동 기질 — 이 사람이 어떻게 움직이는가 */
+    move: first(/^\s*move:\s*'([^']+)'/m, src),
     passive: first(/passive:\s*\{\s*\n\s*type:\s*'([^']+)'/, src),
     moves,
     quotes,

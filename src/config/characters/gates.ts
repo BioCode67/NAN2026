@@ -10,6 +10,9 @@ export const gates: CharacterConfig = {
   colors: { body: 0x2f6fd0, head: 0xf1c9a5, accent: 0x7dd3fc },
   stats: { speed: 245, jump: -690, doubleJump: -620, weight: 1.05 },
 
+  /* 이동 기질 — 특별한 기질 없이 정직하게 움직인다 */
+  move: 'plain',
+
   art: {
     hair: 'side-part',
     hairColor: 0x8b6b4a,

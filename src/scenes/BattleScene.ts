@@ -3680,7 +3680,7 @@ export class BattleScene extends Phaser.Scene {
     } else {
       hint(
         16,
-        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시 · T 도발 · P 일시정지 · R 재시작 · F1 이 안내',
+        'A/D 이동 · SPACE(↑) 점프(2단, 짧게 누르면 낮게) · S 방어 · S+A/D 구르기 · S+SPACE 제자리 회피 · AA/DD 대시(공중에서도 한 번) · T 도발 · P 일시정지 · R 재시작 · F1 이 안내',
         '#8ea3cc',
       );
       hint(

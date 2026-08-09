@@ -182,7 +182,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /** 이번 체공에서 벽을 이미 찼는가 (벽 차기 기질) */
   private wallKicked = false;
   /** 이번 체공에서 공중 대시를 이미 썼는가 (표류 기질) */
-  private airDashed = false;
+  private airDashes = 0;
   /** 벽을 찬 뒤 이 시각까지의 첫 공격이 세진다 (벽 차기 기질) */
   private wallBoostUntil = 0;
 
@@ -1349,8 +1349,17 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
   /**
    * 대시 — 짧게 치고 나간다.
    *
-   * 기본은 지상 전용이다. 머스크맨만 부스터를 태워 공중에서도 대시하며,
-   * 그게 이 캐릭터가 유일하게 가진 복귀·이탈 수단이 된다.
+   * ── 공중 대시는 이제 모두의 것이다 ────────────────────────────────
+   * 전에는 부스터(머스크맨 쪽)와 표류 기질만 공중에서 대시할 수 있었다.
+   * 그러자 나머지 열여섯은 한번 뜨면 착지할 때까지 방향을 못 바꿨고,
+   * 그게 "답답하다"의 가장 큰 몫이었다 — 공중은 이 게임에서 싸움이
+   * 일어나는 곳인데 거기서 할 수 있는 게 없었다.
+   *
+   * 그래서 **한 체공에 한 번**은 누구나 쓴다. 개성은 그 위에 얹는다.
+   *
+   *   기본   한 번. 뜨면 한 번은 궤도를 바꿀 수 있다
+   *   표류   두 번. 관성이 남는 몸이라 대시가 끝나도 그 방향으로 흐른다
+   *   부스터 자원을 태우는 만큼 계속. 대신 자원이 없으면 지상 대시도 없다
    */
   dash(dir: -1 | 1): boolean {
     if (!this.canAct()) return false;
@@ -1362,20 +1371,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const booster = this.cfg.signature.id === 'booster';
 
     if (!onGround) {
-      /*
-       * 공중 대시로 가는 길이 둘이다 — 서로 다른 대가를 치른다.
-       *
-       *  부스터: 자원을 태운다. 남아 있는 만큼 몇 번이고 쓸 수 있다
-       *  표류  : 자원이 없는 대신 **한 체공에 한 번**뿐이다. 대신
-       *          관성이 남는 기질이라 대시가 끝나도 그 방향으로 계속 흐른다 —
-       *          같은 공중 대시인데 손에 남는 것이 전혀 다르다
-       */
+      // 표류는 관성이 남는 몸이라 한 번 더 이어 갈 수 있다
+      const allowance = this.trait === 'drift' ? MOVE_TRAITS.drift.airDashes : 1;
+      const spare = booster && this.sigStacks > 0;
+      if (this.airDashes >= allowance && !spare) return false;
+      this.airDashes++;
       if (this.trait === 'drift') {
-        if (this.airDashed) return false;
-        this.airDashed = true;
         this.say(this.pickQuote('trait'), this.cfg.colors.accent);
-      } else if (!booster || this.sigStacks <= 0) {
-        return false;
       }
     }
     if (booster) {
@@ -2344,7 +2346,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
       // 급강하 기질 — 세게 떨어져 닿으면 발밑이 터진다
       if (!this.wasOnGround) this.landSlam();
       this.wallKicked = false;
-      this.airDashed = false;
+      this.airDashes = 0;
       this.jumpsLeft = FIGHTER.MAX_JUMPS;
       this.fallSpeed = 0;
       this.jumpRising = false;

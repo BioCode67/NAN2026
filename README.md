@@ -921,6 +921,7 @@ npm run typecheck  # 타입 검사
 npm run build      # 프로덕션 빌드
 npm run smoke      # 스모크 테스트 (dev 서버 실행 중이어야 함)
 npm run test:pad   # 게임패드 — 가짜 패드를 심어 타이틀부터 전투까지 (dev 서버 필요)
+npm run pace       # 판의 리듬 — 봇끼리 여러 판 붙여 길이와 죽는 길을 잰다 (dev 서버 필요)
 npm run test:prompt # 프롬프트 해석기 테스트 (브라우저 불필요)
 npm run test:sheet  # 스프라이트 시트 파이프라인 테스트 (묶음 합치기 → 규격 판별)
 npm run test:ai     # 봇 성격 테스트 (캐릭터별 스킬 판단)

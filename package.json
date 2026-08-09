@@ -31,7 +31,8 @@
     "art:jpg": "node tools/jpg-to-png.mjs",
     "art:md": "node tools/gen-prompts.mjs > /dev/null && node tools/prompt-page.mjs",
     "test:pad": "node tools/test-pad.mjs",
-    "test:audio": "node tools/test-audio.mjs"
+    "test:audio": "node tools/test-audio.mjs",
+    "pace": "node tools/pace.mjs"
   },
   "keywords": [
     "phaser",

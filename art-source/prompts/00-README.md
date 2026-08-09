@@ -68,7 +68,7 @@ npm run sheet:merge -- <key>
 | 16 | 차트 도사 | `guru` | `chartguru` |
 | 17 | 챗 도우미 | `bot` | `chatbot` |
 | 18 | 왕 회장님 | `chairman` | `chairman` |
-| 19 | 닥터 둠 | `doom` | `drdoom` |
+| 19 | 스티븐 호킹 | `hawking` | `stephenhawking` |
 | 20 | 큰손 고래 | `whale` | `whaleinvestor` |
 
 스테이지·UI 는 `scenes/` 에 따로 있다 (한 장씩 독립).

@@ -18,7 +18,7 @@ import { bull } from './bull';
 import { guru } from './guru';
 import { bot } from './bot';
 import { chairman } from './chairman';
-import { doom } from './doom';
+import { hawking } from './hawking';
 import { whale } from './whale';
 
 /**
@@ -49,7 +49,7 @@ const ROSTER: CharacterConfig[] = [
   buffett, jensen, satoshi, zuck, bezos,
   // 아랫줄 — 성향이 뚜렷한 쪽
   altman, son, ant, bear, bull,
-  guru, bot, chairman, doom, whale,
+  guru, bot, chairman, hawking, whale,
 ];
 
 export const CHARACTERS = Object.fromEntries(

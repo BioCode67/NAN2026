@@ -23,7 +23,7 @@ export type CharacterId =
   | 'guru'
   | 'bot'
   | 'chairman'
-  | 'doom'
+  | 'hawking'
   | 'whale';
 
 /** 진영 구분 (플레이어 / AI 봇) */
@@ -406,7 +406,7 @@ export interface QuoteSet {
    *
    * 전용기는 그 캐릭터만 되는 것인데, 화면에서는 그냥 "빠르게 떨어졌다"로
    * 지나간다. 자기 입으로 한마디 하면 그때 비로소 **누구의 기술인지** 읽힌다 —
-   * 같은 급습이라도 베조스는 배송을 하고 둠은 심판을 한다.
+   * 같은 급습이라도 베조스는 배송을 하고 호킹은 중력을 말한다.
    */
   trait: string[];
 }

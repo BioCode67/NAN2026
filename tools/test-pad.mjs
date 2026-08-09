@@ -740,6 +740,45 @@ try {
   }
 
   /*
+   * 10.5 상장폐지된 사람이 둘이면 유령도 둘인가.
+   *
+   * ── 왜 보는가 ──────────────────────────────────────────────────
+   * 유령(공매도)은 자리 번호로 갈린다. 로컬 자리에 번호를 안 적으면 전부
+   * 0번으로 접혀서, 둘째가 죽는 순간 **첫째의 유령을 함께 조종한다** —
+   * 유령은 하나만 그려지고 두 사람의 좌우 입력이 같은 것을 밀고 당긴다.
+   * 사람이 둘까지일 때는 둘 다 죽으면 판이 끝나 드러나지 않던 것이,
+   * 넷이 되면서 실제로 보인다.
+   */
+  {
+    await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      s.ais.length = 0;
+      // 앞의 둘만 떨어뜨린다 — 나머지 둘이 남아야 판이 안 끝난다
+      s.fighters.slice(0, 2).forEach((f) => s.stock.forceDelist(f.fighterId, null));
+    });
+    await page.waitForTimeout(2500);
+
+    const ghosts = await page.evaluate(() => {
+      const s = window.game.scene.getScene('Battle');
+      return {
+        dead: s.fighters.filter((f) => !f.alive).length,
+        ghosts: s.ghosts.size,
+        slots: [...s.ghosts.keys()],
+      };
+    });
+
+    if (ghosts.dead < 2) {
+      console.log(`  · 죽은 사람이 ${ghosts.dead}명뿐이라 유령 검사는 건너뜁니다`);
+    } else if (ghosts.ghosts < 2) {
+      bad(
+        `[유령] 둘이 죽었는데 유령이 ${ghosts.ghosts}개입니다 (자리 ${JSON.stringify(ghosts.slots)})`,
+      );
+    } else {
+      ok(`유령도 사람마다 하나 (자리 ${JSON.stringify(ghosts.slots)})`);
+    }
+  }
+
+  /*
    * 11. 판이 끝난 뒤 패드로 다시 붙을 수 있는가.
    *
    * ── 왜 이게 중요한가 ───────────────────────────────────────────

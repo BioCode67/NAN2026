@@ -918,6 +918,19 @@ export class BattleScene extends Phaser.Scene {
       keys: keySets[i] ?? {},
       tap: { dir: 0 as -1 | 0 | 1, at: 0 },
       padIndex: this.padSeatIndex(i, humans.length),
+      /*
+       * 자리 번호는 로컬에서도 적는다.
+       *
+       * 온라인 전용처럼 보이지만 **유령이 이 번호로 갈린다**(ghostOf).
+       * 안 적으면 전부 0번으로 접히고, 로컬에서 둘째가 상장폐지되는 순간
+       * 첫째의 유령을 함께 조종하게 된다 — 유령은 하나만 그려지고 두 사람의
+       * 좌우 입력이 같은 것을 밀고 당긴다. 사람이 둘까지일 때는 둘 다 죽으면
+       * 판이 끝나서 드러나지 않던 것이, 넷이 되면서 실제로 보인다.
+       *
+       * 온라인 자리 관리(handOverToBot·quietSlots)는 remote 인 자리만 보므로
+       * 여기에 번호가 있어도 건드리지 않는다.
+       */
+      slot: i,
     }));
 
     /* 지면·발판 충돌 + 파이터 간 밀림 */

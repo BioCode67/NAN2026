@@ -486,24 +486,37 @@ await page.waitForSelector('canvas', { timeout: 30000 });
 const sceneAlive = (key) =>
   page.evaluate((k) => !!window.game?.scene?.isActive(k), key).catch(() => false);
 
+/*
+ * 한 번 누르고 **길게** 기다린다.
+ *
+ * 700ms 만 기다리고 다시 눌렀더니 그중 하나가 선택 화면으로 새어 들어가
+ * 캐릭터를 즉시 확정해 버렸다. 그러면 그 뒤의 검사들이 통째로 엉뚱한
+ * 화면에서 돌고, 제일 먼저 "메뉴 곡이 아닙니다: battle" 로 나타난다 —
+ * 소리가 고장난 것처럼 보이지만 실제로는 이미 전투 중이었던 것이다.
+ * (그 실패 메시지에 화면 이름을 같이 적어 두고서야 알았다)
+ *
+ * 700ms 로는 모자란 이유가 있다. 타이틀 페이드는 0.28초인데 이 브라우저는
+ * 게임 시간이 실제의 1/5 로 흘러, 벽시계로는 1.5초 가까이 걸린다.
+ * 누르는 횟수를 최소로 줄이고, 한 번 누른 뒤에는 6초까지 참는다.
+ */
 let atSelect = false;
-for (let i = 0; i < 60; i++) {
+for (let attempt = 0; attempt < 4 && !atSelect; attempt++) {
   if (await sceneAlive('Select')) {
     atSelect = true;
     break;
   }
-  if (await sceneAlive('Title')) {
-    if (i === 0) await shot('title');
-    await page.keyboard.press('Enter');
-    /*
-     * 한 번 누르고 페이드가 끝날 때까지 기다린다.
-     * 짧게 끊어 여러 번 누르면 그중 하나가 선택 화면으로 새어 들어가
-     * 캐릭터를 즉시 확정해 버려, 이후 단계가 통째로 엉뚱해진다.
-     */
-    await page.waitForTimeout(700);
+  if (!(await sceneAlive('Title'))) {
+    await page.waitForTimeout(300);
     continue;
   }
-  await page.waitForTimeout(250);
+
+  if (attempt === 0) await shot('title');
+  await page.keyboard.press('Enter');
+
+  for (let i = 0; i < 24 && !atSelect; i++) {
+    await page.waitForTimeout(250);
+    if (await sceneAlive('Select')) atSelect = true;
+  }
 }
 if (!atSelect) errors.push('[부팅] 캐릭터 선택 화면까지 넘어가지 못했습니다');
 
@@ -2457,6 +2470,63 @@ console.log('조작감');
       `  ✓ 벗어나기(DI) — 크기는 그대로, 궤도만 ${di.turned.toFixed(0)}도`,
     );
   }
+
+  /* --- 거품이 클수록 크게 터진다 — 등급별 넉백 ---------------------- */
+
+  /*
+   * 같은 기술을 같은 사람에게 세 번 맞히되, 주가만 바꾼다.
+   *
+   * ── 왜 이걸 검사에 넣는가 ──────────────────────────────────────
+   * 넷이 붙는 판에서 앞선 사람을 끌어내릴 수단이 이것 하나다. 조용히
+   * 죽어도 화면은 멀쩡하다 — 오라도 불꽃도 그대로 뜨고, 그저 왕관 쓴
+   * 사람이 안 날아갈 뿐이라 "원래 이런 게임"으로 보인다. 그러면 판은
+   * 앞선 사람이 굳은 채로 흘러가고, 아무도 이유를 모른다.
+   */
+  const bubble = await page.evaluate(async () => {
+    const s = window.game.scene.getScene('Battle');
+    const p = s.player;
+    const atk = p.cfg.moves.heavy;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const launchAt = async (stock) => {
+      s.stock.setExact(p.fighterId, stock);
+      await wait(60);
+      p.attackPhase = 'none';
+      p.stunUntil = 0;
+      p.invulnUntil = 0;
+      p.setDodgeInfluence(0, 0);
+      p.body.setVelocity(0, 0);
+      p.receiveHit(atk, p.x - 40);
+      const v = Math.hypot(p.body.velocity.x, p.body.velocity.y);
+      p.invulnUntil = s.time.now + 600000;
+      await wait(40);
+      return v;
+    };
+
+    return {
+      crisis: await launchAt(20),
+      normal: await launchAt(100),
+      surge: await launchAt(300),
+    };
+  });
+
+  if (bubble.normal < 1) {
+    errors.push('[거품] 넉백이 아예 없어 등급 차이를 잴 수 없습니다');
+  } else if (!(bubble.surge > bubble.normal * 1.2)) {
+    errors.push(
+      `[거품] 떡상해도 더 멀리 안 날아갑니다 (100% ${bubble.normal.toFixed(0)} → 300% ${bubble.surge.toFixed(0)})`,
+    );
+  } else if (!(bubble.crisis < bubble.normal * 0.95)) {
+    errors.push(
+      `[거품] 바닥인데 덜 밀리지 않습니다 (100% ${bubble.normal.toFixed(0)} → 20% ${bubble.crisis.toFixed(0)})`,
+    );
+  } else {
+    const rel = (v) => (v / bubble.normal).toFixed(2);
+    console.log(
+      `  ✓ 거품 — 위기 ×${rel(bubble.crisis)} · 보통 ×1.00 · 초!떡상 ×${rel(bubble.surge)}`,
+    );
+  }
+
   await releasePlayer();
 }
 

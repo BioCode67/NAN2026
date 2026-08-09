@@ -139,6 +139,25 @@ export const STOCK = {
  *
  * 명세의 "100%: 기본 (시작 상태)"와 "100~149%: 상승"이 겹치므로,
  * 시작값인 100%는 NORMAL(기본)로 두고 101%부터 RISING(상승)으로 판정한다.
+ *
+ * ── 거품이 클수록 크게 터진다 (kbTakenMul) ─────────────────────────
+ * 떡상한 사람은 **더 멀리 날아간다.** 0.82배(위기)에서 1.55배(초!떡상)까지.
+ *
+ * 넷이 붙는 판에서 이 한 줄이 하는 일이 크다. 지금까지 앞서 나가는 사람은
+ * 공격력·속도·쿨다운이 전부 좋아지기만 했다 — 한 번 벌어지면 그대로
+ * 굳어서, 나머지 셋은 판이 끝나기를 기다리는 시간이 됐다. 셋이 힘을 합쳐도
+ * 되돌릴 수단이 없으면 합칠 이유도 없다.
+ *
+ * 이제 앞선 사람은 세지만 **가볍다.** 왕관 쓴 사람을 장외로 밀어내는 것이
+ * 실제로 되는 일이 되고, 그 순간 셋의 이해가 맞아떨어진다. 파티 게임에서
+ * 제일 시끄러운 순간이 거기서 나온다.
+ *
+ * 반대쪽도 같은 이유다. 주가가 바닥이면(위기) 0.82배로 잘 안 밀린다 —
+ * 어차피 0%면 상장폐지라 이미 벼랑 끝인데 장외로도 쉽게 나가면 손쓸
+ * 시간이 아예 없다. 바닥에 눌어붙은 동전주는 잘 안 움직인다.
+ *
+ * **규칙이 이미 화면에 있다.** 오라와 불꽃이 등급 표시라, 새로 그릴 것이
+ * 없다 — "불타는 사람은 멀리 날아간다" 한 줄이면 설명이 끝난다.
  */
 export const TIERS: Record<StockTier, TierEffect> = {
   [StockTier.DELISTED]: {
@@ -148,6 +167,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1,
     speedMul: 1,
     cooldownMul: 1,
+    kbTakenMul: 1,
     color: 0x4b5563,
     aura: false,
     flame: 0,
@@ -159,6 +179,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1,
     speedMul: 1,
     cooldownMul: 1,
+    kbTakenMul: 0.82,
     color: 0xef4444,
     aura: false,
     flame: 0,
@@ -170,6 +191,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1,
     speedMul: 1,
     cooldownMul: 1,
+    kbTakenMul: 1,
     color: 0xcbd5e1,
     aura: false,
     flame: 0,
@@ -181,6 +203,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1.1,
     speedMul: 1,
     cooldownMul: 1,
+    kbTakenMul: 1.12,
     color: 0x4ade80,
     aura: true,
     flame: 0,
@@ -192,6 +215,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1.25,
     speedMul: 1.1,
     cooldownMul: 1,
+    kbTakenMul: 1.24,
     color: 0xfacc15,
     aura: true,
     flame: 1,
@@ -203,6 +227,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1.45,
     speedMul: 1.15,
     cooldownMul: 0.8,
+    kbTakenMul: 1.38,
     color: 0xfb923c,
     aura: true,
     flame: 2,
@@ -214,6 +239,7 @@ export const TIERS: Record<StockTier, TierEffect> = {
     atkMul: 1.7,
     speedMul: 1.25,
     cooldownMul: 0.6,
+    kbTakenMul: 1.55,
     color: 0xffffff,
     aura: true,
     flame: 3,

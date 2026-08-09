@@ -355,6 +355,13 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
 
   /* --- 능력치 배율 (StockSystem이 갱신) --------------------------- */
   private tier: StockTier = StockTier.NORMAL;
+  /**
+   * 맞았을 때 날아가는 거리 배율 — 등급이 정한다.
+   *
+   * 떡상할수록 크다. 거품이 클수록 크게 터진다는 뜻이고, 넷이 붙는 판에서
+   * 앞선 사람을 실제로 끌어내릴 수단이 된다. (TIERS 표에 이유가 적혀 있다)
+   */
+  private kbTakenMul = 1;
   private atkMul = 1;
   private speedMul = 1;
   private cooldownMul = 1;
@@ -1679,9 +1686,15 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     const dir = this.x >= fromX ? 1 : -1;
     const guarded = this.guarding;
 
-    // 무게가 무거울수록, 방어 중이면 더욱 덜 밀린다
+    /*
+     * 무게가 무거울수록, 방어 중이면 더욱 덜 밀린다.
+     * 그리고 **떡상했을수록 멀리 날아간다** — 거품이 클수록 크게 터진다.
+     * 등급이 곧 배율이라(TIERS.kbTakenMul), 화면의 오라와 불꽃이 그대로
+     * "이 사람은 지금 잘 날아간다"는 표시가 된다.
+     */
     const kbScale =
       (1 / this.cfg.stats.weight) *
+      this.kbTakenMul *
       (guarded ? FIGHTER.GUARD_KNOCKBACK_MUL : 1);
 
     let kx = atk.knockbackX * dir * kbScale;
@@ -1895,6 +1908,7 @@ export class BaseCharacter extends Phaser.GameObjects.Container {
     this.atkMul = effect.atkMul;
     this.speedMul = effect.speedMul;
     this.cooldownMul = effect.cooldownMul;
+    this.kbTakenMul = effect.kbTakenMul;
 
     /* 오라 */
     this.auraTween?.stop();

@@ -67,6 +67,12 @@ export interface TierEffect {
   speedMul: number;
   /** 스킬 쿨다운 배율 (작을수록 빠름) */
   cooldownMul: number;
+  /**
+   * 이 등급에서 **맞았을 때 날아가는 거리** 배율.
+   *
+   * 떡상할수록 크다 — 거품이 클수록 크게 터진다. 자세한 이유는 TIERS 표에.
+   */
+  kbTakenMul: number;
   /** 오라/게이지 색상 */
   color: number;
   /** 오라 표시 여부 */
